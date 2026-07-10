@@ -1,0 +1,247 @@
+
+rtp-aac.o:     file format elf32-littlearm
+
+
+Disassembly of section .text:
+
+00000000 <aac_get_sdp>:
+   0:	e92d4800 	push	{fp, lr}
+   4:	e28db004 	add	fp, sp, #4
+   8:	e24dd028 	sub	sp, sp, #40	; 0x28
+   c:	e50b0010 	str	r0, [fp, #-16]
+  10:	e50b1014 	str	r1, [fp, #-20]
+  14:	e50b2018 	str	r2, [fp, #-24]
+  18:	e50b301c 	str	r3, [fp, #-28]
+  1c:	e59b3004 	ldr	r3, [fp, #4]
+  20:	e50b3008 	str	r3, [fp, #-8]
+  24:	e59f307c 	ldr	r3, [pc, #124]	; a8 <aac_get_sdp+0xa8>
+  28:	e51b2008 	ldr	r2, [fp, #-8]
+  2c:	e592101c 	ldr	r1, [r2, #28]
+  30:	e51b2008 	ldr	r2, [fp, #-8]
+  34:	e5922018 	ldr	r2, [r2, #24]
+  38:	e58d1000 	str	r1, [sp]
+  3c:	e58d2004 	str	r2, [sp, #4]
+  40:	e1a00003 	mov	r0, r3
+  44:	e51b101c 	ldr	r1, [fp, #-28]
+  48:	e51b2018 	ldr	r2, [fp, #-24]
+  4c:	e51b3018 	ldr	r3, [fp, #-24]
+  50:	ebfffffe 	bl	0 <printf>
+  54:	e51b2014 	ldr	r2, [fp, #-20]
+  58:	e59f3048 	ldr	r3, [pc, #72]	; a8 <aac_get_sdp+0xa8>
+  5c:	e51b1008 	ldr	r1, [fp, #-8]
+  60:	e591001c 	ldr	r0, [r1, #28]
+  64:	e51b1008 	ldr	r1, [fp, #-8]
+  68:	e5911018 	ldr	r1, [r1, #24]
+  6c:	e51bc018 	ldr	ip, [fp, #-24]
+  70:	e58dc000 	str	ip, [sp]
+  74:	e51bc018 	ldr	ip, [fp, #-24]
+  78:	e58dc004 	str	ip, [sp, #4]
+  7c:	e58d0008 	str	r0, [sp, #8]
+  80:	e58d100c 	str	r1, [sp, #12]
+  84:	e51b0010 	ldr	r0, [fp, #-16]
+  88:	e1a01002 	mov	r1, r2
+  8c:	e1a02003 	mov	r2, r3
+  90:	e51b301c 	ldr	r3, [fp, #-28]
+  94:	ebfffffe 	bl	0 <snprintf>
+  98:	e1a03000 	mov	r3, r0
+  9c:	e1a00003 	mov	r0, r3
+  a0:	e24bd004 	sub	sp, fp, #4
+  a4:	e8bd8800 	pop	{fp, pc}
+  a8:	00000000 	.word	0x00000000
+
+000000ac <aac_get_payload>:
+  ac:	e52db004 	push	{fp}		; (str fp, [sp, #-4]!)
+  b0:	e28db000 	add	fp, sp, #0
+  b4:	e24dd00c 	sub	sp, sp, #12
+  b8:	e50b0008 	str	r0, [fp, #-8]
+  bc:	e50b100c 	str	r1, [fp, #-12]
+  c0:	e3a03061 	mov	r3, #97	; 0x61
+  c4:	e1a00003 	mov	r0, r3
+  c8:	e28bd000 	add	sp, fp, #0
+  cc:	e8bd0800 	pop	{fp}
+  d0:	e12fff1e 	bx	lr
+
+000000d4 <aac_process_frame>:
+  d4:	e52db004 	push	{fp}		; (str fp, [sp, #-4]!)
+  d8:	e28db000 	add	fp, sp, #0
+  dc:	e24dd014 	sub	sp, sp, #20
+  e0:	e50b0010 	str	r0, [fp, #-16]
+  e4:	e50b1014 	str	r1, [fp, #-20]
+  e8:	e51b3014 	ldr	r3, [fp, #-20]
+  ec:	e50b3008 	str	r3, [fp, #-8]
+  f0:	e51b3010 	ldr	r3, [fp, #-16]
+  f4:	e3530000 	cmp	r3, #0
+  f8:	0a00000d 	beq	134 <aac_process_frame+0x60>
+  fc:	e51b3010 	ldr	r3, [fp, #-16]
+ 100:	e5932024 	ldr	r2, [r3, #36]	; 0x24
+ 104:	e51b3008 	ldr	r3, [fp, #-8]
+ 108:	e5832000 	str	r2, [r3]
+ 10c:	e51b3010 	ldr	r3, [fp, #-16]
+ 110:	e5932020 	ldr	r2, [r3, #32]
+ 114:	e51b3008 	ldr	r3, [fp, #-8]
+ 118:	e5832004 	str	r2, [r3, #4]
+ 11c:	e51b3010 	ldr	r3, [fp, #-16]
+ 120:	e593302c 	ldr	r3, [r3, #44]	; 0x2c
+ 124:	e5932000 	ldr	r2, [r3]
+ 128:	e51b3008 	ldr	r3, [fp, #-8]
+ 12c:	e583200c 	str	r2, [r3, #12]
+ 130:	ea000002 	b	140 <aac_process_frame+0x6c>
+ 134:	e51b3008 	ldr	r3, [fp, #-8]
+ 138:	e3a02000 	mov	r2, #0
+ 13c:	e5832004 	str	r2, [r3, #4]
+ 140:	e3a03001 	mov	r3, #1
+ 144:	e1a00003 	mov	r0, r3
+ 148:	e28bd000 	add	sp, fp, #0
+ 14c:	e8bd0800 	pop	{fp}
+ 150:	e12fff1e 	bx	lr
+
+00000154 <aac_send>:
+ 154:	e92d4800 	push	{fp, lr}
+ 158:	e28db004 	add	fp, sp, #4
+ 15c:	e24dd038 	sub	sp, sp, #56	; 0x38
+ 160:	e50b0028 	str	r0, [fp, #-40]	; 0x28
+ 164:	e50b102c 	str	r1, [fp, #-44]	; 0x2c
+ 168:	e50b2030 	str	r2, [fp, #-48]	; 0x30
+ 16c:	e50b3034 	str	r3, [fp, #-52]	; 0x34
+ 170:	e51b302c 	ldr	r3, [fp, #-44]	; 0x2c
+ 174:	e50b3014 	str	r3, [fp, #-20]
+ 178:	e51b0028 	ldr	r0, [fp, #-40]	; 0x28
+ 17c:	e51b1030 	ldr	r1, [fp, #-48]	; 0x30
+ 180:	ebfffffe 	bl	0 <avsync>
+ 184:	e3a03000 	mov	r3, #0
+ 188:	e50b3010 	str	r3, [fp, #-16]
+ 18c:	ea00002a 	b	23c <aac_send+0xe8>
+ 190:	e51b3014 	ldr	r3, [fp, #-20]
+ 194:	e5932004 	ldr	r2, [r3, #4]
+ 198:	e51b3010 	ldr	r3, [fp, #-16]
+ 19c:	e0633002 	rsb	r3, r3, r2
+ 1a0:	e50b300c 	str	r3, [fp, #-12]
+ 1a4:	e51b3028 	ldr	r3, [fp, #-40]	; 0x28
+ 1a8:	e5932008 	ldr	r2, [r3, #8]
+ 1ac:	e51b300c 	ldr	r3, [fp, #-12]
+ 1b0:	e1520003 	cmp	r2, r3
+ 1b4:	aa000005 	bge	1d0 <aac_send+0x7c>
+ 1b8:	e51b3028 	ldr	r3, [fp, #-40]	; 0x28
+ 1bc:	e5933008 	ldr	r3, [r3, #8]
+ 1c0:	e50b300c 	str	r3, [fp, #-12]
+ 1c4:	e3a03000 	mov	r3, #0
+ 1c8:	e50b3008 	str	r3, [fp, #-8]
+ 1cc:	ea000001 	b	1d8 <aac_send+0x84>
+ 1d0:	e3a03001 	mov	r3, #1
+ 1d4:	e50b3008 	str	r3, [fp, #-8]
+ 1d8:	e51b3014 	ldr	r3, [fp, #-20]
+ 1dc:	e5932000 	ldr	r2, [r3]
+ 1e0:	e51b3010 	ldr	r3, [fp, #-16]
+ 1e4:	e0823003 	add	r3, r2, r3
+ 1e8:	e50b301c 	str	r3, [fp, #-28]
+ 1ec:	e51b300c 	ldr	r3, [fp, #-12]
+ 1f0:	e50b3018 	str	r3, [fp, #-24]
+ 1f4:	e51b3028 	ldr	r3, [fp, #-40]	; 0x28
+ 1f8:	e5933010 	ldr	r3, [r3, #16]
+ 1fc:	e24b2024 	sub	r2, fp, #36	; 0x24
+ 200:	e51b1008 	ldr	r1, [fp, #-8]
+ 204:	e58d1000 	str	r1, [sp]
+ 208:	e51b0028 	ldr	r0, [fp, #-40]	; 0x28
+ 20c:	e1a01002 	mov	r1, r2
+ 210:	e3a02002 	mov	r2, #2
+ 214:	ebfffffe 	bl	0 <send_rtp_packet>
+ 218:	e1a03000 	mov	r3, r0
+ 21c:	e3530000 	cmp	r3, #0
+ 220:	aa000001 	bge	22c <aac_send+0xd8>
+ 224:	e3e03000 	mvn	r3, #0
+ 228:	ea000010 	b	270 <aac_send+0x11c>
+ 22c:	e51b2010 	ldr	r2, [fp, #-16]
+ 230:	e51b300c 	ldr	r3, [fp, #-12]
+ 234:	e0823003 	add	r3, r2, r3
+ 238:	e50b3010 	str	r3, [fp, #-16]
+ 23c:	e51b3014 	ldr	r3, [fp, #-20]
+ 240:	e5932004 	ldr	r2, [r3, #4]
+ 244:	e51b3010 	ldr	r3, [fp, #-16]
+ 248:	e1520003 	cmp	r2, r3
+ 24c:	caffffcf 	bgt	190 <aac_send+0x3c>
+ 250:	e51b3028 	ldr	r3, [fp, #-40]	; 0x28
+ 254:	e5932010 	ldr	r2, [r3, #16]
+ 258:	e51b3014 	ldr	r3, [fp, #-20]
+ 25c:	e5933008 	ldr	r3, [r3, #8]
+ 260:	e0822003 	add	r2, r2, r3
+ 264:	e51b3028 	ldr	r3, [fp, #-40]	; 0x28
+ 268:	e5832010 	str	r2, [r3, #16]
+ 26c:	e3a03000 	mov	r3, #0
+ 270:	e1a00003 	mov	r0, r3
+ 274:	e24bd004 	sub	sp, fp, #4
+ 278:	e8bd8800 	pop	{fp, pc}
+
+0000027c <aac_release>:
+ 27c:	e92d4800 	push	{fp, lr}
+ 280:	e28db004 	add	fp, sp, #4
+ 284:	e24dd008 	sub	sp, sp, #8
+ 288:	e50b0008 	str	r0, [fp, #-8]
+ 28c:	e51b3008 	ldr	r3, [fp, #-8]
+ 290:	e3530000 	cmp	r3, #0
+ 294:	1a000001 	bne	2a0 <aac_release+0x24>
+ 298:	e3e03000 	mvn	r3, #0
+ 29c:	ea000002 	b	2ac <aac_release+0x30>
+ 2a0:	e51b0008 	ldr	r0, [fp, #-8]
+ 2a4:	ebfffffe 	bl	0 <free>
+ 2a8:	e3a03000 	mov	r3, #0
+ 2ac:	e1a00003 	mov	r0, r3
+ 2b0:	e24bd004 	sub	sp, fp, #4
+ 2b4:	e8bd8800 	pop	{fp, pc}
+
+000002b8 <new_rtp_media_aac>:
+ 2b8:	e92d4800 	push	{fp, lr}
+ 2bc:	e28db004 	add	fp, sp, #4
+ 2c0:	e24dd018 	sub	sp, sp, #24
+ 2c4:	e50b0010 	str	r0, [fp, #-16]
+ 2c8:	e3a00020 	mov	r0, #32
+ 2cc:	ebfffffe 	bl	0 <malloc>
+ 2d0:	e1a03000 	mov	r3, r0
+ 2d4:	e50b300c 	str	r3, [fp, #-12]
+ 2d8:	e51b300c 	ldr	r3, [fp, #-12]
+ 2dc:	e3a02000 	mov	r2, #0
+ 2e0:	e5832004 	str	r2, [r3, #4]
+ 2e4:	e3a03b02 	mov	r3, #2048	; 0x800
+ 2e8:	e50b3008 	str	r3, [fp, #-8]
+ 2ec:	e51b300c 	ldr	r3, [fp, #-12]
+ 2f0:	e3a02002 	mov	r2, #2
+ 2f4:	e5832018 	str	r2, [r3, #24]
+ 2f8:	e51b300c 	ldr	r3, [fp, #-12]
+ 2fc:	e3a02d7d 	mov	r2, #8000	; 0x1f40
+ 300:	e583201c 	str	r2, [r3, #28]
+ 304:	e51b300c 	ldr	r3, [fp, #-12]
+ 308:	e593201c 	ldr	r2, [r3, #28]
+ 30c:	e51b300c 	ldr	r3, [fp, #-12]
+ 310:	e5933018 	ldr	r3, [r3, #24]
+ 314:	e1a00002 	mov	r0, r2
+ 318:	e1a01003 	mov	r1, r3
+ 31c:	ebfffffe 	bl	0 <__aeabi_idiv>
+ 320:	e1a03000 	mov	r3, r0
+ 324:	e1a02003 	mov	r2, r3
+ 328:	e51b300c 	ldr	r3, [fp, #-12]
+ 32c:	e583201c 	str	r2, [r3, #28]
+ 330:	e51b300c 	ldr	r3, [fp, #-12]
+ 334:	e5933018 	ldr	r3, [r3, #24]
+ 338:	e51b0008 	ldr	r0, [fp, #-8]
+ 33c:	e1a01003 	mov	r1, r3
+ 340:	ebfffffe 	bl	0 <__aeabi_idiv>
+ 344:	e1a03000 	mov	r3, r0
+ 348:	e1a02003 	mov	r2, r3
+ 34c:	e51b300c 	ldr	r3, [fp, #-12]
+ 350:	e5832008 	str	r2, [r3, #8]
+ 354:	e51b300c 	ldr	r3, [fp, #-12]
+ 358:	e3a02000 	mov	r2, #0
+ 35c:	e583200c 	str	r2, [r3, #12]
+ 360:	e59f302c 	ldr	r3, [pc, #44]	; 394 <new_rtp_media_aac+0xdc>
+ 364:	e58d3000 	str	r3, [sp]
+ 368:	e51b300c 	ldr	r3, [fp, #-12]
+ 36c:	e58d3004 	str	r3, [sp, #4]
+ 370:	e59f0020 	ldr	r0, [pc, #32]	; 398 <new_rtp_media_aac+0xe0>
+ 374:	e59f1020 	ldr	r1, [pc, #32]	; 39c <new_rtp_media_aac+0xe4>
+ 378:	e59f2020 	ldr	r2, [pc, #32]	; 3a0 <new_rtp_media_aac+0xe8>
+ 37c:	e59f3020 	ldr	r3, [pc, #32]	; 3a4 <new_rtp_media_aac+0xec>
+ 380:	ebfffffe 	bl	0 <new_rtp_media>
+ 384:	e1a03000 	mov	r3, r0
+ 388:	e1a00003 	mov	r0, r3
+ 38c:	e24bd004 	sub	sp, fp, #4
+ 390:	e8bd8800 	pop	{fp, pc}
+	...

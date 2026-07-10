@@ -126,17 +126,38 @@ $(BUILDDIR)/rtspd: $(PREFIXDIR)/bin
 	@mkdir -p $(BUILDDIR) $(TOOLSDIR)/bin
 	cd $(RTSPDDIR) 				&& \
 	$(TARGET)-gcc 				\
+		-Os 					\
 		-DLOG_USE_COLOR			\
 		-Wall					\
 		-I$(GMLIBDIR)/inc		\
-		$(RTSPDDIR)/$(@F).c		\
+		$(RTSPDDIR)/rtspd2MP.c		\
 		$(RTSPDDIR)/log/log.c	\
 		$(RTSPDDIR)/librtsp.a	\
 		-L$(GMLIBDIR)/lib		\
-		-lpthread -lm -lrt -lgm -o $(TOOLSDIR)/bin/rtspd && \
-		$(TARGET)-strip $(TOOLSDIR)/bin/rtspd
+		-lpthread -lm -lrt -lgm -o $(TOOLSDIR)/bin/rtspd2MP && \
+		$(TARGET)-strip $(TOOLSDIR)/bin/rtspd2MP
+	@touch $@
+$(BUILDDIR)/aac_play: $(PREFIXDIR)/bin
+	@mkdir -p $(BUILDDIR) $(TOOLSDIR)/bin
+	cd $(RTSPDDIR) 			&& \
+	$(TARGET)-gcc 			\
+		-Os \
+		-DLOG_USE_COLOR		\
+		-Wall			\
+		-I$(GMLIBDIR)/inc		\
+		$(RTSPDDIR)/audio_playback.c	\
+		$(RTSPDDIR)/log/log.c	\
+		$(RTSPDDIR)/librtsp.a	\
+		-L$(GMLIBDIR)/lib	\
+		-lpthread -lm -lrt -lgm -o $(TOOLSDIR)/bin/aac_play && \
+		$(TARGET)-strip $(TOOLSDIR)/bin/aac_play
 	@touch $@
 
+build/rtspd: $(BUILDDIR)/rtspd
+	@:
+
+build/aac_play: $(BUILDDIR)/aac_play
+	@:
 
 #################################################################
 ## UTILS                                                       ##
