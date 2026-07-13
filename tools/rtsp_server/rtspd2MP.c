@@ -2267,17 +2267,6 @@ void *encode_thread(void *ptr)
                     log_error("BITSTREAM retval=%d ch=%d sub=%d bindfd=%p",bs[i][j].retval,i,j,bs[i][j].bindfd);
 
                 else if (bs[i][j].retval == GM_SUCCESS) {
-					log_error("FRAME key=%d len=%d play=%d first=%d ts=%u",bs[i][j].bs.keyframe,bs[i][j].bs.bs_len,pb->play,first_play[i][j],bs[i][j].bs.timestamp);
-                    static FILE *raw_fp = NULL;
-                    if (raw_fp == NULL) {
-                        raw_fp = fopen("/tmp/sd/raw.h264", "wb");}
-                    if (raw_fp) {
-                        fwrite(bs[i][j].bs.bs_buf,1,bs[i][j].bs.bs_len,raw_fp);
-                        fflush(raw_fp);
-                    }
-
-                    log_error("TEST BUILD ACTIVE");
-                    log_info("ENC FRAME len=%d",bs[i][j].bs.bs_len);
                     static unsigned int last_video_ts[CAP_CH_NUM][RTSP_NUM_PER_CAP] = {{0}};
                     unsigned int cur_ts = bs[i][j].bs.timestamp;
                     if (last_video_ts[i][j] != 0) {
@@ -2289,15 +2278,7 @@ void *encode_thread(void *ptr)
                     last_video_ts[i][j] = cur_ts;    
                     if (bs[i][j].bs.keyframe == 1)
                         VideoRecorder.waiting_for_keyframe = 0;
-
-                    FILE *fp = fopen("/tmp/raw.h264", "ab");
-                    if (!fp) {
-                        log_error("cannot open /tmp/raw.h264 errno=%d", errno);
-                    } else {
-                        fwrite(bs[i][j].bs.bs_buf, 1, bs[i][j].bs.bs_len, fp);
-                        fclose(fp);
-                    }
-
+					
                     // * Write buffer to file in case recording is enabled
                     if (VideoRecorder.recording == 1 && VideoRecorder.fh != NULL && VideoRecorder.waiting_for_keyframe == 0) {
                         fwrite(bs[i][j].bs.bs_buf, 1, bs[i][j].bs.bs_len, VideoRecorder.fh);
@@ -2305,8 +2286,7 @@ void *encode_thread(void *ptr)
                     }
 
                     if (avbs->video.enc_type != ENC_TYPE_MJPEG) {
-                        if ((pb->play == 1)) { 
-							//&& (bs[i][j].bs.keyframe == 1)){
+                        if ((pb->play == 1)) && (bs[i][j].bs.keyframe == 1)){
                             first_play[i][j] = 1;
                         }
                     }
