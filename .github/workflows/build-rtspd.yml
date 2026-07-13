@@ -55,5 +55,8 @@ jobs:
           # 3. Tiến hành commit file chạy
           git commit -m "Automated build: update camera binary rtspd2MP" || echo "No changes to commit"
           
-          # 4. Đẩy thẳng file lên chính nhánh (branch) hiện tại đang kích hoạt workflow
+          # 4. Kéo code mới nhất từ GitHub về gộp tự động trước khi đẩy (Tránh lỗi fetch first)
+          git pull origin HEAD --no-rebase || true
+          
+          # 5. Đẩy thẳng file lên chính nhánh (branch) hiện tại
           git push origin HEAD
