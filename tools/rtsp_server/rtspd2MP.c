@@ -1279,7 +1279,6 @@ static int frm_cb(int type, int qno, gm_ss_entity *entity)
             pb = &enc[ch_num].priv_bs[sub_num];
 
             if (pb->video.offs == (uintptr_t)(entity->data) && pb->video.len == entity->size && pb->video.qno == qno) {
-				log_error("FRM_CB q=%d size=%d",qno,entity->size);
                 pthread_mutex_lock(&pb->video.priv_vbs_mutex);
                 pb->video.offs = 0;
                 pb->video.len  = 0;
