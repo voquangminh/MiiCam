@@ -43,8 +43,17 @@ jobs:
           # 5. Kích hoạt lệnh make biên dịch riêng rtspd
           make TARGET="$REAL_TARGET_PREFIX" build/rtspd
 
-      - name: Tải file Binary rtspd về máy
-        uses: actions/upload-artifact@v4
-        with:
-          name: rtspd-camera-binary
-          path: tools/bin/rtspd2MP
+      - name: Commit và Push file Binary trực tiếp lên GitHub (Siêu tốc 1 giây)
+        run: |
+          # 1. Cấu hình định danh Git cá nhân của Bot hệ thống
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@://github.com"
+          
+          # 2. Ép Git nhận diện thư mục tools/bin/ bất chấp file .gitignore chặn
+          git add -f tools/bin/rtspd2MP
+          
+          # 3. Tiến hành commit file chạy
+          git commit -m "Automated build: update camera binary rtspd2MP" || echo "No changes to commit"
+          
+          # 4. Đẩy thẳng file lên chính nhánh (branch) hiện tại đang kích hoạt workflow
+          git push origin HEAD
