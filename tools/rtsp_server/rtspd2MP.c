@@ -2286,7 +2286,7 @@ void *encode_thread(void *ptr)
                     }
 
                     if (avbs->video.enc_type != ENC_TYPE_MJPEG) {
-                        if ((pb->play == 1)) && (bs[i][j].bs.keyframe == 1)){
+                        if ((pb->play == 1) && (bs[i][j].bs.keyframe == 1)) {
                             first_play[i][j] = 1;
                         }
                     }
