@@ -62,7 +62,7 @@ UTILS :=                             \
 	$(BUILDDIR)/camera_adjust        \
 	$(BUILDDIR)/auto_night_mode
 
-website: C:/GitHub/MiiCam/sdcard/firmware/www
+#website: C:/GitHub/MiiCam/sdcard/firmware/www
 
 utils: $(UTILS)
 
