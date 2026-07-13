@@ -1,6 +1,6 @@
 name: Build MiiCam RTSPD
 on: 
-  workflow_dispatch: # Cho phép bạn bấm nút Run trên web bất cứ lúc nào
+  workflow_dispatch: # Cho phép bấm nút chạy thủ công trên Web GitHub
 
 jobs:
   build:
@@ -9,16 +9,18 @@ jobs:
       - name: Checkout Source Code
         uses: actions/checkout@v4
 
-      - name: Pull Docker Environment
-        run: docker pull quay.io/miicam/miicam
-
-      - name: Build Binary RTSPD
+      - name: Tự build môi trường từ Dockerfile của Repo
         run: |
-          # Gắn code hiện tại vào môi trường Docker và chạy lệnh biên dịch rtspd
-          docker run -i -v "${{ github.workspace }}:/workspace" -w /workspace quay.io/miicam/miicam /bin/bash -c 'make rtspd'
+          # Server GitHub sẽ tự cài trình biên dịch từ Dockerfile của bạn
+          docker build -t my-miicam-env .
 
-      - name: Upload RTSPD Binary to GitHub
+      - name: Biên dịch file Binary RTSPD
+        run: |
+          # Chạy lệnh make bên trong môi trường vừa tự build
+          docker run -i -v "${{ github.workspace }}:/workspace" -w /workspace my-miicam-env /bin/bash -c 'make rtspd'
+
+      - name: Tải file Binary rtspd về máy
         uses: actions/upload-artifact@v4
         with:
           name: rtspd-camera-binary
-          path: tools/bin/rtspd2MP # Đường dẫn file đầu ra sau khi build xong
+          path: tools/bin/rtspd2MP # Kiểm tra thư mục này sau khi workflow chạy xong
