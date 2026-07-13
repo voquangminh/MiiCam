@@ -1,5 +1,5 @@
 name: Build MiiCam RTSPD
-on: 
+on:
   workflow_dispatch:
 
 jobs:
@@ -9,13 +9,39 @@ jobs:
       - name: Checkout Source Code
         uses: actions/checkout@v4
 
-      - name: Tự build môi trường từ Dockerfile
+      - name: Giải nén SDK sạch trực tiếp trên Linux (Siêu tốc 2 giây)
         run: |
-          docker build -t my-miicam-env .
+          cd ${{ github.workspace }}/sdk
+          # Giải nén trực tiếp trên Linux để bảo toàn các liên kết mềm không bị hỏng
+          tar -xzf toolchain_gnueabi-4.4.0_ARMv5TE.tgz
+          tar -xzf gm_lib_2015-01-09-IPCAM.tgz
 
-      - name: Biên dịch file Binary RTSPD
+      - name: Cài đặt nóng thư viện MPFR 32-bit (Sửa lỗi cc1 trong 2 giây)
         run: |
-          docker run -i -v "${{ github.workspace }}:/workspace" -w /workspace my-miicam-env /bin/bash -c 'make rtspd'
+          sudo dpkg --add-architecture i386
+          sudo apt-get update || true
+          sudo apt-get install -y libc6:i386 libstdc++6:i386 lib32z1 libmpfr6:i386 libgmp10:i386
+          sudo ln -sf /usr/lib/i386-linux-gnu/libmpfr.so.6 /usr/lib/i386-linux-gnu/libmpfr.so.4
+          sudo ln -sf /usr/lib/i386-linux-gnu/libgmp.so.10 /usr/lib/i386-linux-gnu/libgmp.so.3
+
+      - name: Biên dịch file Binary RTSPD trực tiếp
+        run: |
+          # 1. Tự động dò tìm đường dẫn thư mục bin của bộ compiler vừa giải nén xịn trên Linux
+          REAL_BIN_DIR=$(dirname $(find ${{ github.workspace }}/sdk -name "arm-unknown-linux-uclibcgnueabi-gcc" | head -n 1))
+          echo "Đường dẫn Toolchain chuẩn: $REAL_BIN_DIR"
+          
+          # 2. Cấp quyền thực thi toàn bộ cho bộ compiler và các tiến trình con
+          REAL_SDK_ROOT=$(dirname $(dirname $REAL_BIN_DIR))
+          chmod -R +x $REAL_SDK_ROOT/
+          
+          # 3. Đưa đường dẫn bộ compiler vào PATH hệ thống
+          export PATH="$REAL_BIN_DIR:$PATH"
+          
+          # 4. Định nghĩa tiền tố TARGET chuẩn cho Makefile
+          REAL_TARGET_PREFIX=${REAL_BIN_DIR}/arm-unknown-linux-uclibcgnueabi
+          
+          # 5. Kích hoạt lệnh make biên dịch riêng rtspd
+          make TARGET="$REAL_TARGET_PREFIX" build/rtspd
 
       - name: Tải file Binary rtspd về máy
         uses: actions/upload-artifact@v4
