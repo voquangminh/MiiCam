@@ -1356,6 +1356,7 @@ static int cmd_cb(char *name, int sno, int cmd, void *p)
             if ( strncmp(name, "live/", 5) == 0 ) {
                 if ((pb = find_file_sr(name, sno)) == NULL)
                     ERR_GOTO(-1, cmd_cb_err);
+				pb->play = 0;
             }
             ret = 0;
             break;
@@ -2265,6 +2266,7 @@ void *encode_thread(void *ptr)
                     log_error("BITSTREAM retval=%d ch=%d sub=%d bindfd=%p",bs[i][j].retval,i,j,bs[i][j].bindfd);
 
                 else if (bs[i][j].retval == GM_SUCCESS) {
+					log_error("FRAME key=%d len=%d play=%d first=%d ts=%u",bs[i][j].bs.keyframe,bs[i][j].bs.bs_len,pb->play,first_play[i][j],bs[i][j].bs.timestamp);
                     static FILE *raw_fp = NULL;
                     if (raw_fp == NULL) {
                         raw_fp = fopen("/tmp/sd/raw.h264", "wb");}
@@ -2302,7 +2304,8 @@ void *encode_thread(void *ptr)
                     }
 
                     if (avbs->video.enc_type != ENC_TYPE_MJPEG) {
-                        if ((pb->play == 1) && (bs[i][j].bs.keyframe == 1)){
+                        if ((pb->play == 1)) { 
+							//&& (bs[i][j].bs.keyframe == 1)){
                             first_play[i][j] = 1;
                         }
                     }
@@ -2401,6 +2404,7 @@ void update_video_sdp(int cap_ch, int cap_path, int rec_track)
             switch (cliArgs.encoderType) {
                 case 0:
                     stream_sdp_parameter_encoder("H264", (unsigned char *) bs.bs.bs_buf, bs.bs.bs_len, pb->video.sdpstr, SDPSTR_MAX);
+					log_error("SDP WAIT key=%d len=%d",bs.bs.keyframe,bs.bs.bs_len);
                     break;
                 case 1:
                     stream_sdp_parameter_encoder("H264", (unsigned char *) bs.bs.bs_buf, bs.bs.bs_len, pb->video.sdpstr, SDPSTR_MAX);
