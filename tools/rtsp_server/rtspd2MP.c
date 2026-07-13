@@ -1323,6 +1323,7 @@ static int cmd_cb(char *name, int sno, int cmd, void *p)
             break;
 
         case GM_STREAM_CMD_DESCRIBE:
+			log_info("RTSP DESCRIBE sr=%d stream=%s", sno, name);
             ret = 0;
             break;
 
@@ -1332,6 +1333,7 @@ static int cmd_cb(char *name, int sno, int cmd, void *p)
             break;
 
         case GM_STREAM_CMD_SETUP:
+			log_info("RTSP SETUP sr=%d stream=%s", sno, name);
             ret = 0;
             break;
 
@@ -1358,6 +1360,7 @@ static int cmd_cb(char *name, int sno, int cmd, void *p)
                     ERR_GOTO(-1, cmd_cb_err);
 				pb->play = 0;
             }
+			log_info("RTSP TEARDOWN sr=%d stream=%s", sno, name);
             ret = 0;
             break;
 
@@ -2288,6 +2291,14 @@ void *encode_thread(void *ptr)
                         if ((pb->play == 1) && (bs[i][j].bs.keyframe == 1)) {
                             first_play[i][j] = 1;
                         }
+						static int last_play = -1;
+						if (last_play != pb->play) {
+						    log_info("PLAY STATE %d -> %d",
+						             last_play,
+						             pb->play);
+						    last_play = pb->play;
+						}
+
                     }
 
                     if (first_play[i][j] == 1) {
