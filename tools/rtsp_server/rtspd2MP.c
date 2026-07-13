@@ -2265,6 +2265,14 @@ void *encode_thread(void *ptr)
                     log_error("BITSTREAM retval=%d ch=%d sub=%d bindfd=%p",bs[i][j].retval,i,j,bs[i][j].bindfd);
 
                 else if (bs[i][j].retval == GM_SUCCESS) {
+                    static FILE *raw_fp = NULL;
+                    if (raw_fp == NULL) {
+                        raw_fp = fopen("/tmp/sd/raw.h264", "wb");}
+                    if (raw_fp) {
+                        fwrite(bs[i][j].bs.bs_buf,1,bs[i][j].bs.bs_len,raw_fp);
+                        fflush(raw_fp);
+                    }
+
                     log_error("TEST BUILD ACTIVE");
                     log_info("ENC FRAME len=%d",bs[i][j].bs.bs_len);
                     static unsigned int last_video_ts[CAP_CH_NUM][RTSP_NUM_PER_CAP] = {{0}};
@@ -2378,11 +2386,6 @@ void update_video_sdp(int cap_ch, int cap_path, int rec_track)
         bs.bs.mv_buf = 0;
         bs.bs.mv_buf_len = 0;
         
-    if (bs.bs.keyframe == 1) {
-        unsigned char *p = (unsigned char *)bs.bs.bs_buf;
-        printf("NAL %02X %02X %02X %02X %02X %02X %02X %02X\n",p[0], p[1], p[2], p[3],p[4], p[5], p[6], p[7]);
-    }
-        
     ret = gm_recv_multi_bitstreams(&bs, 1);     // * -1: Fail 0: Success
     if ( ret < 0 )
         log_error("Failed to receive bitstream (gm_recv_multi_bitstreams).");
@@ -2390,6 +2393,10 @@ void update_video_sdp(int cap_ch, int cap_path, int rec_track)
         log_error("Failed to receive bitstream.");
 
     else if ( ret == 0 && bs.retval == GM_SUCCESS ) {
+        if (bs.bs.keyframe == 1) {
+        unsigned char *p = (unsigned char *)bs.bs.bs_buf;
+        printf("NAL %02X %02X %02X %02X %02X %02X %02X %02X\n",p[0], p[1], p[2], p[3],p[4], p[5], p[6], p[7]);
+    }
         if (bs.bs.keyframe == 1 ) {
             switch (cliArgs.encoderType) {
                 case 0:

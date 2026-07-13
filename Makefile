@@ -62,7 +62,7 @@ UTILS :=                             \
 	$(BUILDDIR)/camera_adjust        \
 	$(BUILDDIR)/auto_night_mode
 
-website: $(WEBCONTENTDIR)
+website: C:/GitHub/MiiCam/sdcard/firmware/www
 
 utils: $(UTILS)
 
@@ -218,15 +218,15 @@ $(UTILS): $(PREFIXDIR)/bin $(LIBS)
 ## WEB INTERFACE                                               ##
 #################################################################
 
-$(SOURCEDIR)/$(WEBSITEARCHIVE):
-	echo "*** Downloading webui content" \
-	&& $(TOPDIR)/tools/dev/download-website.sh
+#$(SOURCEDIR)/$(WEBSITEARCHIVE):
+#	echo "*** Downloading webui content" \#
+#	&& $(TOPDIR)/tools/dev/download-website.sh
 
 
-$(WEBCONTENTDIR): $(SOURCEDIR)/$(WEBSITEARCHIVE)
-	mkdir -p $(WEBCONTENTDIR)                         \
-	&& echo "*** Unpacking webui to $(WEBCONTENTDIR)" \
-	&& tar -xzf $(SOURCEDIR)/$(WEBSITEARCHIVE) -C $(WEBCONTENTDIR)
+#$(WEBCONTENTDIR): $(SOURCEDIR)/$(WEBSITEARCHIVE)
+#	mkdir -p $(WEBCONTENTDIR)                         
+#	&& echo "*** Unpacking webui to $(WEBCONTENTDIR)" 
+#	&& tar -xzf $(SOURCEDIR)/$(WEBSITEARCHIVE) -C $(WEBCONTENTDIR)
 
 
 #################################################################
