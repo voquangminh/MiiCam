@@ -271,6 +271,33 @@ struct CommandLineArguments {
     char osd_text[32];
 } cliArgs;
 
+/* Dump client RTSP play */
+static void dump_clients(int sno)
+{
+    gm_ss_sr_t *tree = NULL;
+
+    if (stream_query_clients(GM_SS_QUERY_SR, sno, &tree) < 0) {
+        log_error("stream_query_clients failed sno=%d", sno);
+        return;
+    }
+
+    if (!tree) {
+        log_info("NO CLIENT TREE sno=%d", sno);
+        return;
+    }
+
+    gm_ss_clnt_t *c = tree->client;
+
+    while (c) {
+        log_info("CLIENT sno=%d ip=%s port=%d",
+                 sno,
+                 inet_ntoa(c->addr.sin_addr),
+                 ntohs(c->addr.sin_port));
+
+        c = c->next;
+    }
+}
+
 /* Read HOSTNAME from config file. Try common locations. */
 static void read_hostname(char *out, size_t outlen)
 {
@@ -1345,6 +1372,7 @@ static int cmd_cb(char *name, int sno, int cmd, void *p)
                 }
                 log_info("RTSP PLAY: sr=%d stream=%s video_q=%d audio_q=%d",sno, name, pb->video.qno, pb->audio.qno);
 				log_info("CMD=%d sno=%d p=%p name=%s",cmd,sno,p,name);
+				dump_clients(sno);
                 if (pb->video.qno >= 0)
                     pb->play = 1;
             }
@@ -1358,6 +1386,7 @@ static int cmd_cb(char *name, int sno, int cmd, void *p)
 
         case GM_STREAM_CMD_TEARDOWN:
             if ( strncmp(name, "live/", 5) == 0 ) {
+				dump_clients(sno);
                 if ((pb = find_file_sr(name, sno)) == NULL)
                     ERR_GOTO(-1, cmd_cb_err);
 				pb->play = 0;
@@ -2291,17 +2320,15 @@ void *encode_thread(void *ptr)
                     }
 
                     if (avbs->video.enc_type != ENC_TYPE_MJPEG) {
-                        if ((pb->play == 1) && (bs[i][j].bs.keyframe == 1)) {
+                        if ((pb->play == 1) && (first_play[i][j] == 0) && (bs[i][j].bs.keyframe == 1)) {
+							log_info("FIRST KEYFRAME AFTER PLAY");
                             first_play[i][j] = 1;
                         }
-						static int last_play = -1;
+						static int last_play = -1;	
 						if (last_play != pb->play) {
-						    log_info("PLAY STATE %d -> %d",
-						             last_play,
-						             pb->play);
+						    log_info("PLAY STATE %d -> %d",last_play,pb->play);
 						    last_play = pb->play;
 						}
-
                     }
 
                     if (first_play[i][j] == 1) {
@@ -2316,6 +2343,12 @@ void *encode_thread(void *ptr)
                             pb->video.offs = (uintptr_t)NULL;
                             pb->video.len  = 0;
                         }
+						
+						if (pb->play == 1 && first_play[i][j] == 0) {
+ 					  		static int wait_cnt = 0;
+    						if ((wait_cnt++ % 20) == 0)
+        						log_info("WAITING FOR KEYFRAME");
+						}
                     print_enc_average(i, j, bs[i][j].bs.bs_len, &cur);
                     }
                 }
