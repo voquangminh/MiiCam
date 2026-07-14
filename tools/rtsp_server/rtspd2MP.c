@@ -2344,7 +2344,7 @@ void *encode_thread(void *ptr)
 						    last_play = pb->play;
 						}
                     }
-
+					
                     if (first_play[i][j] == 1) {
                         pthread_mutex_lock(&pb->video.priv_vbs_mutex);
                         pb->video.offs  = (uintptr_t) (bs[i][j].bs.bs_buf);
@@ -2358,10 +2358,6 @@ void *encode_thread(void *ptr)
                             pb->video.len  = 0;
                         }
 						
-						if (pb->play == 1 && first_play[i][j] == 0) {
- 					  		static int wait_cnt = 0;
-    						if ((wait_cnt++ % 20) == 0)
-        				}
                     print_enc_average(i, j, bs[i][j].bs.bs_len, &cur);
                     }
                 }
