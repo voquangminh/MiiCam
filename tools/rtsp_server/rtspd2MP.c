@@ -2361,8 +2361,7 @@ void *encode_thread(void *ptr)
 						if (pb->play == 1 && first_play[i][j] == 0) {
  					  		static int wait_cnt = 0;
     						if ((wait_cnt++ % 20) == 0)
-        						//log_info("WAITING FOR KEYFRAME");
-						}
+        				}
                     print_enc_average(i, j, bs[i][j].bs.bs_len, &cur);
                     }
                 }
