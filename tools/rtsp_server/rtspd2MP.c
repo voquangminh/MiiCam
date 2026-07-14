@@ -282,18 +282,14 @@ static void dump_clients(int sno)
     }
 
     if (!tree) {
-        log_info("NO CLIENT TREE sno=%d", sno);
+        //log_info("NO CLIENT TREE sno=%d", sno);
         return;
     }
 
     gm_ss_clnt_t *c = tree->client;
 
     while (c) {
-        log_info("CLIENT sno=%d ip=%s port=%d",
-                 sno,
-                 inet_ntoa(c->addr.sin_addr),
-                 ntohs(c->addr.sin_port));
-
+        //log_info("CLIENT sno=%d ip=%s port=%d",sno,inet_ntoa(c->addr.sin_addr),ntohs(c->addr.sin_port));
         c = c->next;
     }
 }
@@ -919,18 +915,18 @@ static int write_rtp_frame_ext(int ch_num, int sub_num, void *data, int data_len
     entity.data = (char *) data;
     entity.size = data_len;
     entity.timestamp = get_tick_gm(tv_ms);
-	log_info("BS TS=%u RTP TS=%u",tv_ms,get_tick_gm(tv_ms));
+	/*log_info("BS TS=%u RTP TS=%u",tv_ms,get_tick_gm(tv_ms));
 	if (entity.size > 10000) {
 	    log_info("SEND RTP len=%d ts=%u",entity.size,entity.timestamp);
 	}
 	static int cnt = 0;
 	if ((cnt++ % 20) == 0) {
     	log_info("WRITE_RTP play=%d len=%d ts=%u",pb->play,data_len,tv_ms);
-	}
+	}*/
     media_type = convert_gmss_media_type(b->video.enc_type);
 	pthread_mutex_lock(&stream_queue_mutex);
 	ret = stream_media_enqueue(media_type,pb->video.qno,&entity);
-    if (ret == 0) {
+    /*if (ret == 0) {
     	static int ok_cnt = 0;
 		if ((ok_cnt++ % 100) == 0) {
         	log_info("ENQUEUE OK q=%d len=%d ts=%u",pb->video.qno,entity.size,entity.timestamp);
@@ -938,11 +934,11 @@ static int write_rtp_frame_ext(int ch_num, int sub_num, void *data, int data_len
 	}
 	else {
     	log_error("ENQUEUE FAIL ret=%d q=%d len=%d",ret,pb->video.qno,entity.size);
-	}
-    if (ret == 0) {
+	}*/
+    /*if (ret == 0) {
         pb->video.offs = 0;
         pb->video.len  = 0;
-    }
+    }*/
     if (ret == ERR_FULL) {
         log_error("QUEUE FULL q=%d sr=%d play=%d",pb->video.qno,pb->sr,pb->play);
     }
@@ -1366,18 +1362,18 @@ static int cmd_cb(char *name, int sno, int cmd, void *p)
             break;
 
         case GM_STREAM_CMD_DESCRIBE:
-			log_info("RTSP DESCRIBE sr=%d stream=%s", sno, name);
+			//log_info("RTSP DESCRIBE sr=%d stream=%s", sno, name);
             ret = 0;
             break;
 
         case GM_STREAM_CMD_OPEN:
-            log_error("%s:%d <GM_STREAM_CMD_OPEN>", __FUNCTION__, __LINE__);
+            //log_error("%s:%d <GM_STREAM_CMD_OPEN>", __FUNCTION__, __LINE__);
             ERR_GOTO(-10, cmd_cb_err);
             break;
 
         case GM_STREAM_CMD_SETUP:
-			log_info("RTSP SETUP sr=%d stream=%s", sno, name);
-			log_info("CMD=%d sno=%d p=%p name=%s",cmd,sno,p,name);
+			//log_info("RTSP SETUP sr=%d stream=%s", sno, name);
+			//log_info("CMD=%d sno=%d p=%p name=%s",cmd,sno,p,name);
             ret = 0;
             break;
 
@@ -1386,8 +1382,8 @@ static int cmd_cb(char *name, int sno, int cmd, void *p)
                 if ((pb = find_file_sr(name, sno)) == NULL){
                     ERR_GOTO(-1, cmd_cb_err);
                 }
-                log_info("RTSP PLAY: sr=%d stream=%s video_q=%d audio_q=%d",sno, name, pb->video.qno, pb->audio.qno);
-				log_info("CMD=%d sno=%d p=%p name=%s",cmd,sno,p,name);
+                //log_info("RTSP PLAY: sr=%d stream=%s video_q=%d audio_q=%d",sno, name, pb->video.qno, pb->audio.qno);
+				//log_info("CMD=%d sno=%d p=%p name=%s",cmd,sno,p,name);
 				dump_clients(sno);
                 if (pb->video.qno >= 0)
                     pb->play = 1;
@@ -1396,7 +1392,7 @@ static int cmd_cb(char *name, int sno, int cmd, void *p)
             break;
             
         case GM_STREAM_CMD_PAUSE:
-            log_info("%s:%d <GM_STREAM_CMD_PAUSE>", __FUNCTION__, __LINE__);
+            //log_info("%s:%d <GM_STREAM_CMD_PAUSE>", __FUNCTION__, __LINE__);
             ret = 0;
             break;
 
@@ -1407,8 +1403,8 @@ static int cmd_cb(char *name, int sno, int cmd, void *p)
                     ERR_GOTO(-1, cmd_cb_err);
 				pb->play = 0;
             }
-			log_info("RTSP TEARDOWN sr=%d stream=%s", sno, name);
-			log_info("CMD=%d sno=%d p=%p name=%s",cmd,sno,p,name);
+			//log_info("RTSP TEARDOWN sr=%d stream=%s", sno, name);
+			//log_info("CMD=%d sno=%d p=%p name=%s",cmd,sno,p,name);
             ret = 0;
             break;
 
@@ -2327,7 +2323,7 @@ void *encode_thread(void *ptr)
                     }
                     last_video_ts[i][j] = cur_ts;    
                     if (bs[i][j].bs.keyframe == 1) {
-					    log_info("IDR FRAME len=%d ts=%u",bs[i][j].bs.bs_len,bs[i][j].bs.timestamp);
+					    //log_info("IDR FRAME len=%d ts=%u",bs[i][j].bs.bs_len,bs[i][j].bs.timestamp);
 					}
                         VideoRecorder.waiting_for_keyframe = 0;
 					
@@ -2339,12 +2335,12 @@ void *encode_thread(void *ptr)
 
                     if (avbs->video.enc_type != ENC_TYPE_MJPEG) {
                         if ((pb->play == 1) && (first_play[i][j] == 0) && (bs[i][j].bs.keyframe == 1)) {
-							log_info("FIRST KEYFRAME AFTER PLAY");
+							//log_info("FIRST KEYFRAME AFTER PLAY");
                             first_play[i][j] = 1;
                         }
 						static int last_play = -1;	
 						if (last_play != pb->play) {
-						    log_info("PLAY STATE %d -> %d",last_play,pb->play);
+						    //log_info("PLAY STATE %d -> %d",last_play,pb->play);
 						    last_play = pb->play;
 						}
                     }
@@ -2365,7 +2361,7 @@ void *encode_thread(void *ptr)
 						if (pb->play == 1 && first_play[i][j] == 0) {
  					  		static int wait_cnt = 0;
     						if ((wait_cnt++ % 20) == 0)
-        						log_info("WAITING FOR KEYFRAME");
+        						//log_info("WAITING FOR KEYFRAME");
 						}
                     print_enc_average(i, j, bs[i][j].bs.bs_len, &cur);
                     }
@@ -2449,15 +2445,15 @@ void update_video_sdp(int cap_ch, int cap_path, int rec_track)
             switch (cliArgs.encoderType) {
                 case 0:
                     stream_sdp_parameter_encoder("H264", (unsigned char *) bs.bs.bs_buf, bs.bs.bs_len, pb->video.sdpstr, SDPSTR_MAX);
-					log_info("SDP =[%s]",pb->video.sdpstr);
+					//log_info("SDP =[%s]",pb->video.sdpstr);
                     break;
                 case 1:
                     stream_sdp_parameter_encoder("H264", (unsigned char *) bs.bs.bs_buf, bs.bs.bs_len, pb->video.sdpstr, SDPSTR_MAX);
-					log_info("SDP =[%s]",pb->video.sdpstr);
+					//log_info("SDP =[%s]",pb->video.sdpstr);
                     break;
                 case 2:
                     stream_sdp_parameter_encoder("H264", (unsigned char *) bs.bs.bs_buf, bs.bs.bs_len, pb->video.sdpstr, SDPSTR_MAX);
-					log_info("SDP =[%s]",pb->video.sdpstr);
+					//log_info("SDP =[%s]",pb->video.sdpstr);
                     break;
             }
             memset(pb->video.sdpstr + SDPSTR_MAX - 1, 0, 1);
