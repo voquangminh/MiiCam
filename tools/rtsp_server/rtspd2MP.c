@@ -920,6 +920,9 @@ static int write_rtp_frame_ext(int ch_num, int sub_num, void *data, int data_len
     entity.data = (char *) data;
     entity.size = data_len;
     entity.timestamp = get_tick_gm(tv_ms);
+	if (entity.size > 10000) {
+	    log_info("SEND RTP len=%d ts=%u",entity.size,entity.timestamp);
+	}	
     media_type = convert_gmss_media_type(b->video.enc_type);
     pthread_mutex_lock(&stream_queue_mutex);
     ret = stream_media_enqueue(media_type, pb->video.qno, &entity);
@@ -2314,7 +2317,9 @@ void *encode_thread(void *ptr)
                         }
                     }
                     last_video_ts[i][j] = cur_ts;    
-                    if (bs[i][j].bs.keyframe == 1)
+                    if (bs[i][j].bs.keyframe == 1) {
+					    log_info("IDR FRAME len=%d ts=%u",bs[i][j].bs.bs_len,bs[i][j].bs.timestamp);
+					}
                         VideoRecorder.waiting_for_keyframe = 0;
 					
                     // * Write buffer to file in case recording is enabled
