@@ -1334,6 +1334,7 @@ static int cmd_cb(char *name, int sno, int cmd, void *p)
 
         case GM_STREAM_CMD_SETUP:
 			log_info("RTSP SETUP sr=%d stream=%s", sno, name);
+			log_info("CMD=%d sno=%d p=%p name=%s",cmd,sno,p,name);
             ret = 0;
             break;
 
@@ -1343,6 +1344,7 @@ static int cmd_cb(char *name, int sno, int cmd, void *p)
                     ERR_GOTO(-1, cmd_cb_err);
                 }
                 log_info("RTSP PLAY: sr=%d stream=%s video_q=%d audio_q=%d",sno, name, pb->video.qno, pb->audio.qno);
+				log_info("CMD=%d sno=%d p=%p name=%s",cmd,sno,p,name);
                 if (pb->video.qno >= 0)
                     pb->play = 1;
             }
@@ -1361,6 +1363,7 @@ static int cmd_cb(char *name, int sno, int cmd, void *p)
 				pb->play = 0;
             }
 			log_info("RTSP TEARDOWN sr=%d stream=%s", sno, name);
+			log_info("CMD=%d sno=%d p=%p name=%s",cmd,sno,p,name);
             ret = 0;
             break;
 
