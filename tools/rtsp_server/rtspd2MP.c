@@ -923,6 +923,10 @@ static int write_rtp_frame_ext(int ch_num, int sub_num, void *data, int data_len
     media_type = convert_gmss_media_type(b->video.enc_type);
     pthread_mutex_lock(&stream_queue_mutex);
     ret = stream_media_enqueue(media_type, pb->video.qno, &entity);
+	static int rtp_cnt = 0;
+	if ((rtp_cnt++ % 100) == 0) {
+    	log_info("RTP ENQUEUE q=%d len=%d ts=%u",pb->video.qno,entity.size,entity.timestamp);
+	}
     if (ret == 0) {
         pb->video.offs = 0;
         pb->video.len  = 0;
@@ -2431,13 +2435,15 @@ void update_video_sdp(int cap_ch, int cap_path, int rec_track)
             switch (cliArgs.encoderType) {
                 case 0:
                     stream_sdp_parameter_encoder("H264", (unsigned char *) bs.bs.bs_buf, bs.bs.bs_len, pb->video.sdpstr, SDPSTR_MAX);
-					log_error("SDP WAIT key=%d len=%d",bs.bs.keyframe,bs.bs.bs_len);
+					log_info("SDP =[%s]",pb->video.sdpstr);
                     break;
                 case 1:
                     stream_sdp_parameter_encoder("H264", (unsigned char *) bs.bs.bs_buf, bs.bs.bs_len, pb->video.sdpstr, SDPSTR_MAX);
+					log_info("SDP =[%s]",pb->video.sdpstr);
                     break;
                 case 2:
                     stream_sdp_parameter_encoder("H264", (unsigned char *) bs.bs.bs_buf, bs.bs.bs_len, pb->video.sdpstr, SDPSTR_MAX);
+					log_info("SDP =[%s]",pb->video.sdpstr);
                     break;
             }
             memset(pb->video.sdpstr + SDPSTR_MAX - 1, 0, 1);
