@@ -905,15 +905,12 @@ static int write_rtp_frame_ext(int ch_num, int sub_num, void *data, int data_len
     gm_ss_entity entity;
     struct timeval curr_tval;
     static struct timeval err_print_tval;
-
-	log_error("ENTER write_rtp_frame_ext play=%d len=%d",pb->play,data_len);
 	
     pb = &enc[ch_num].priv_bs[sub_num];
     b  = &enc[ch_num].bs[sub_num];
 
-    pb = &enc[ch_num].priv_bs[sub_num];
-    b  = &enc[ch_num].bs[sub_num];
-
+	log_error("ENTER write_rtp_frame_ext play=%d len=%d",pb->play,data_len);
+	
     if ( pb->play == 0 || (b->event != NONE_BS_EVENT) ) {
         ret = 1;
         goto exit_free_as_buf;
@@ -931,8 +928,8 @@ static int write_rtp_frame_ext(int ch_num, int sub_num, void *data, int data_len
     	log_info("WRITE_RTP play=%d len=%d ts=%u",pb->play,data_len,tv_ms);
 	}
     media_type = convert_gmss_media_type(b->video.enc_type);
-    ret = stream_media_enqueue(media_type,pb->video.qno,&entity);
 	pthread_mutex_lock(&stream_queue_mutex);
+	ret = stream_media_enqueue(media_type,pb->video.qno,&entity);
     if (ret == 0) {
     	static int ok_cnt = 0;
 		if ((ok_cnt++ % 100) == 0) {
