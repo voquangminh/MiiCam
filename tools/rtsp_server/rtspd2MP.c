@@ -272,7 +272,7 @@ struct CommandLineArguments {
 } cliArgs;
 
 /* Dump client RTSP play */
-static void dump_clients(int sno)
+/*static void dump_clients(int sno)
 {
     gm_ss_sr_t *tree = NULL;
 
@@ -292,7 +292,7 @@ static void dump_clients(int sno)
         //log_info("CLIENT sno=%d ip=%s port=%d",sno,inet_ntoa(c->addr.sin_addr),ntohs(c->addr.sin_port));
         c = c->next;
     }
-}
+}*/
 
 /* Read HOSTNAME from config file. Try common locations. */
 static void read_hostname(char *out, size_t outlen)
@@ -1384,7 +1384,7 @@ static int cmd_cb(char *name, int sno, int cmd, void *p)
                 }
                 //log_info("RTSP PLAY: sr=%d stream=%s video_q=%d audio_q=%d",sno, name, pb->video.qno, pb->audio.qno);
 				//log_info("CMD=%d sno=%d p=%p name=%s",cmd,sno,p,name);
-				dump_clients(sno);
+				//dump_clients(sno);
                 if (pb->video.qno >= 0)
                     pb->play = 1;
             }
@@ -1398,7 +1398,7 @@ static int cmd_cb(char *name, int sno, int cmd, void *p)
 
         case GM_STREAM_CMD_TEARDOWN:
             if ( strncmp(name, "live/", 5) == 0 ) {
-				dump_clients(sno);
+				//dump_clients(sno);
                 if ((pb = find_file_sr(name, sno)) == NULL)
                     ERR_GOTO(-1, cmd_cb_err);
 				pb->play = 0;
