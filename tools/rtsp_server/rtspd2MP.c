@@ -899,6 +899,11 @@ static int open_live_streaming(int ch_num, int sub_num)
 #define TIMEVAL_DIFF(start, end) (((end.tv_sec)-(start.tv_sec))*1000000+((end.tv_usec)-(start.tv_usec)))
 static int write_rtp_frame_ext(int ch_num, int sub_num, void *data, int data_len, unsigned int tv_ms)
 {
+	static int cnt = 0;
+	if ((cnt++ % 20) == 0) {
+    	log_info("WRITE_RTP play=%d len=%d ts=%u",pb->play,data_len,tv_ms);
+	}
+	
     int ret = 0, media_type;
     avbs_t *b;
     priv_avbs_t *pb;
@@ -920,15 +925,20 @@ static int write_rtp_frame_ext(int ch_num, int sub_num, void *data, int data_len
     entity.data = (char *) data;
     entity.size = data_len;
     entity.timestamp = get_tick_gm(tv_ms);
+	log_info("BS TS=%u RTP TS=%u",tv_ms,get_tick_gm(tv_ms));
 	if (entity.size > 10000) {
 	    log_info("SEND RTP len=%d ts=%u",entity.size,entity.timestamp);
 	}	
     media_type = convert_gmss_media_type(b->video.enc_type);
     pthread_mutex_lock(&stream_queue_mutex);
-    ret = stream_media_enqueue(media_type, pb->video.qno, &entity);
-	static int rtp_cnt = 0;
-	if ((rtp_cnt++ % 100) == 0) {
-    	log_info("RTP ENQUEUE q=%d len=%d ts=%u",pb->video.qno,entity.size,entity.timestamp);
+    if (ret == 0) {
+    	static int ok_cnt = 0;
+		if ((ok_cnt++ % 100) == 0) {
+        	log_info("ENQUEUE OK q=%d len=%d ts=%u",pb->video.qno,entity.size,entity.timestamp);
+    	}
+	}
+	else {
+    	log_error("ENQUEUE FAIL ret=%d q=%d len=%d",ret,pb->video.qno,entity.size);
 	}
     if (ret == 0) {
         pb->video.offs = 0;
