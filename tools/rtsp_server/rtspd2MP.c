@@ -1853,7 +1853,7 @@ void gm_enc_init(int cap_ch, int cap_path, int rec_track, int enc_type, int mode
         cap_attr.cap_vch = cap_ch;
 
         // * GM813x capture path 0(liveview), 1(substream), 2(substream), 3(mainstream)
-        cap_attr.path = cap_path;
+        cap_attr.path = 3; // cap_path;
         cap_attr.enable_mv_data = 1;
         gm_set_attr(param->cap.obj, &cap_attr);                // * Set capture attribute
 
