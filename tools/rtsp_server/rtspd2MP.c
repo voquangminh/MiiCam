@@ -541,7 +541,7 @@ int start_recording(void)
     char filestring[40];
     char audio_filestring[40];
 
-    strftime(dirstring, sizeof(dirstring), "/tmp/sd/RECORDED_VIDEOS/%Y/%m/%d", sTm);
+    strftime(dirstring, sizeof(dirstring), "/tmp/sd/RECORDED_VIDEOS/%Y%m%d", sTm);
 
     struct stat st = {0};
     if (stat(dirstring, &st) != 0) {
@@ -760,7 +760,7 @@ void take_snapshot(void)
     snapshot_len = gm_request_snapshot(&snapshot, 500); // Timeout value 500ms
 
     if (snapshot_len > 0) {
-        strftime(dirstring, sizeof(dirstring), "/tmp/sd/RECORDED_IMAGES/%Y/%m/%d", sTm);
+        strftime(dirstring, sizeof(dirstring), "/tmp/sd/RECORDED_IMAGES/%Y%m%d", sTm);
 
         struct stat st = {0};
         if (stat(dirstring, &st) != 0) {
@@ -915,32 +915,11 @@ static int write_rtp_frame_ext(int ch_num, int sub_num, void *data, int data_len
     entity.data = (char *) data;
     entity.size = data_len;
     entity.timestamp = get_tick_gm(tv_ms);
-	/*log_info("BS TS=%u RTP TS=%u",tv_ms,get_tick_gm(tv_ms));
-	if (entity.size > 10000) {
-	    log_info("SEND RTP len=%d ts=%u",entity.size,entity.timestamp);
-	}
-	static int cnt = 0;
-	if ((cnt++ % 20) == 0) {
-    	log_info("WRITE_RTP play=%d len=%d ts=%u",pb->play,data_len,tv_ms);
-	}*/
     media_type = convert_gmss_media_type(b->video.enc_type);
 	pthread_mutex_lock(&stream_queue_mutex);
 	ret = stream_media_enqueue(media_type,pb->video.qno,&entity);
-    /*if (ret == 0) {
-    	static int ok_cnt = 0;
-		if ((ok_cnt++ % 100) == 0) {
-        	log_info("ENQUEUE OK q=%d len=%d ts=%u",pb->video.qno,entity.size,entity.timestamp);
-    	}
-	}
-	else {
-    	log_error("ENQUEUE FAIL ret=%d q=%d len=%d",ret,pb->video.qno,entity.size);
-	}*/
-    /*if (ret == 0) {
-        pb->video.offs = 0;
-        pb->video.len  = 0;
-    }*/
     if (ret == ERR_FULL) {
-        log_error("QUEUE FULL q=%d sr=%d play=%d",pb->video.qno,pb->sr,pb->play);
+        log_error("QUEUE FULL");
     }
     pthread_mutex_unlock(&stream_queue_mutex);
 
@@ -1087,7 +1066,6 @@ void bs_new_event(void)
             b = &enc[ch_num].bs[sub_num];
             pb = &enc[ch_num].priv_bs[sub_num];
             switch (b->event) {
-
                 case START_BS_EVENT:
                     open_bs(ch_num, sub_num);
                     if (pb->open) pb->open(ch_num, sub_num);
@@ -1103,7 +1081,7 @@ void bs_new_event(void)
                     }
                     b->event = NONE_BS_EVENT;
                     break;
-
+                    
                 default:
                     break;
             }
@@ -1362,7 +1340,6 @@ static int cmd_cb(char *name, int sno, int cmd, void *p)
             break;
 
         case GM_STREAM_CMD_DESCRIBE:
-			//log_info("RTSP DESCRIBE sr=%d stream=%s", sno, name);
             ret = 0;
             break;
 
@@ -1372,8 +1349,6 @@ static int cmd_cb(char *name, int sno, int cmd, void *p)
             break;
 
         case GM_STREAM_CMD_SETUP:
-			//log_info("RTSP SETUP sr=%d stream=%s", sno, name);
-			//log_info("CMD=%d sno=%d p=%p name=%s",cmd,sno,p,name);
             ret = 0;
             break;
 
@@ -1382,9 +1357,6 @@ static int cmd_cb(char *name, int sno, int cmd, void *p)
                 if ((pb = find_file_sr(name, sno)) == NULL){
                     ERR_GOTO(-1, cmd_cb_err);
                 }
-                //log_info("RTSP PLAY: sr=%d stream=%s video_q=%d audio_q=%d",sno, name, pb->video.qno, pb->audio.qno);
-				//log_info("CMD=%d sno=%d p=%p name=%s",cmd,sno,p,name);
-				//dump_clients(sno);
                 if (pb->video.qno >= 0)
                     pb->play = 1;
             }
@@ -1398,13 +1370,10 @@ static int cmd_cb(char *name, int sno, int cmd, void *p)
 
         case GM_STREAM_CMD_TEARDOWN:
             if ( strncmp(name, "live/", 5) == 0 ) {
-				//dump_clients(sno);
                 if ((pb = find_file_sr(name, sno)) == NULL)
                     ERR_GOTO(-1, cmd_cb_err);
 				pb->play = 0;
             }
-			//log_info("RTSP TEARDOWN sr=%d stream=%s", sno, name);
-			//log_info("CMD=%d sno=%d p=%p name=%s",cmd,sno,p,name);
             ret = 0;
             break;
 
@@ -1486,7 +1455,7 @@ static void *media_thread(void *arg)
     return 0;
 }
 
-__attribute__((unused))
+//__attribute__((unused))
 static void *audio_thread(void *arg)
 {
     int ret;
@@ -2092,12 +2061,6 @@ void gm_graph_init(void)
     if (cliArgs.osd)
         rtspd_set_osd_palette();
 
-    if (cliArgs.osd)
-        rtspd_set_osd_palette();
-
-    if (cliArgs.osd)
-        rtspd_set_osd_palette();
-
     if (cliArgs.framerate > 0)
         poll_wait_time = 1000000 / (cliArgs.framerate + 2);
     else
@@ -2435,11 +2398,9 @@ void update_video_sdp(int cap_ch, int cap_path, int rec_track)
                     break;
                 case 1:
                     stream_sdp_parameter_encoder("H264", (unsigned char *) bs.bs.bs_buf, bs.bs.bs_len, pb->video.sdpstr, SDPSTR_MAX);
-					//log_info("SDP =[%s]",pb->video.sdpstr);
                     break;
                 case 2:
                     stream_sdp_parameter_encoder("H264", (unsigned char *) bs.bs.bs_buf, bs.bs.bs_len, pb->video.sdpstr, SDPSTR_MAX);
-					//log_info("SDP =[%s]",pb->video.sdpstr);
                     break;
             }
             memset(pb->video.sdpstr + SDPSTR_MAX - 1, 0, 1);
@@ -2618,8 +2579,8 @@ static void print_usage(void)
 
         "-j (optional)  - Use MJPEG encoding      (default: off)\n"
         "-4 (optional)  - Use MPEG4 encoding      (default: off)\n"
-        "-o (optional)  - Enable OSD overlay with (default: on, timestamp updated every second)\n"
-        "-t [text]      - Set OSD overlay text    (default: 'hostname')\n"
+        "-o (optional)  - Enable OSD timestamp    (default: on)\n"
+        "-t [text]      - Set OSD string text     (default: 'hostname')\n"
         "-z [0-4]       - Set OSD font zoom (0=none,1=2x,2=3x,3=4x,4=1/2) (default: 0)\n"
         "-d (optional)  - Enable motion detection (default: off)\n"
         "-s (optional)  - Take a snapshot when motion detected (default: off)\n"
@@ -2629,7 +2590,6 @@ static void print_usage(void)
 
 	exit(EXIT_FAILURE);
 }
-
 
 void signal_handler(int sig)
 {
