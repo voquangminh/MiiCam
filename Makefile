@@ -130,7 +130,7 @@ $(BUILDDIR)/rtspd: $(PREFIXDIR)/bin
 		-DLOG_USE_COLOR			\
 		-Wall					\
 		-I$(GMLIBDIR)/inc		\
-		$(RTSPDDIR)/rtspd2MP.c		\
+		$(RTSPDDIR)/rtspd2MPfixed.c		\
 		$(RTSPDDIR)/log/log.c	\
 		$(RTSPDDIR)/librtsp.a	\
 		-L$(GMLIBDIR)/lib		\
