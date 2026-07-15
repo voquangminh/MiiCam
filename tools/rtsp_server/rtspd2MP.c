@@ -904,8 +904,6 @@ static int write_rtp_frame_ext(int ch_num, int sub_num, void *data, int data_len
 	
     pb = &enc[ch_num].priv_bs[sub_num];
     b  = &enc[ch_num].bs[sub_num];
-
-	log_error("ENTER write_rtp_frame_ext play=%d len=%d",pb->play,data_len);
 	
     if ( pb->play == 0 || (b->event != NONE_BS_EVENT) ) {
         ret = 1;
@@ -2295,23 +2293,17 @@ void *encode_thread(void *ptr)
         if ( (ret = gm_recv_multi_bitstreams(&bs[0][0], rcv_nr)) < 0 ) {
             // <= -1: fail, 0: success
             log_error("Failed to receive bitstream (gm_recv_multi_bitstreams).");
-            log_error("gm_recv_multi_bitstreams FAILED ret=%d rcv_nr=%d",ret,rcv_nr);
             continue;
         }
 
         for (i = 0; i < CAP_CH_NUM; i++) {
             for (j = 0; j < RTSP_NUM_PER_CAP; j++) {
-
                 if (rtspd_sysinit == 0)
                     continue;
-
                 pb = &enc[i].priv_bs[j];
                 avbs = &enc[i].bs[j];
-
                 if ((bs[i][j].retval < 0) && bs[i][j].bindfd)
-                    //log_error("Failed to receive bitstream.");
-                    log_error("BITSTREAM retval=%d ch=%d sub=%d bindfd=%p",bs[i][j].retval,i,j,bs[i][j].bindfd);
-
+                    log_error("Failed to receive bitstream.");
                 else if (bs[i][j].retval == GM_SUCCESS) {
                     static unsigned int last_video_ts[CAP_CH_NUM][RTSP_NUM_PER_CAP] = {{0}};
                     unsigned int cur_ts = bs[i][j].bs.timestamp;
@@ -2433,10 +2425,11 @@ void update_video_sdp(int cap_ch, int cap_path, int rec_track)
 
     else if ( ret == 0 && bs.retval == GM_SUCCESS ) {
         if (bs.bs.keyframe == 1) {
-        unsigned char *p = (unsigned char *)bs.bs.bs_buf;
-        printf("NAL %02X %02X %02X %02X %02X %02X %02X %02X\n",p[0], p[1], p[2], p[3],p[4], p[5], p[6], p[7]);
-    }
-        if (bs.bs.keyframe == 1 ) {
+        	unsigned char *p = (unsigned char *)bs.bs.bs_buf;
+        	printf("NAL %02X %02X %02X %02X %02X %02X %02X %02X\n",p[0], p[1], p[2], p[3],p[4], p[5], p[6], p[7]);
+    	}
+        
+		if (bs.bs.keyframe == 1 ) {
             switch (cliArgs.encoderType) {
                 case 0:
                     stream_sdp_parameter_encoder("H264", (unsigned char *) bs.bs.bs_buf, bs.bs.bs_len, pb->video.sdpstr, SDPSTR_MAX);
@@ -2454,13 +2447,14 @@ void update_video_sdp(int cap_ch, int cap_path, int rec_track)
             memset(pb->video.sdpstr + SDPSTR_MAX - 1, 0, 1);
             break;
         }
-        else {
-            if (++cnt > 100)
-                log_error("Timeout reached while waiting for keyframe");
-                break;
-            }
-        }
-    }
+        	else {
+            	if (++cnt > 100) {
+                	log_error("Timeout reached while waiting for keyframe");
+                	break;
+				}
+        	}
+    	}
+	}
     if (bitstream_data)
         free(bitstream_data);
 }
