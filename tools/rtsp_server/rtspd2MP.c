@@ -61,6 +61,7 @@
 #define ERR_GOTO(x, y)           do { ret = x; goto y; } while(0)
 #define MUTEX_FAILED(x)          (x == ERR_MUTEX)
 #define VIDEO_FRAME_NUMBER       VQ_LEN+1
+#define VIDEO_BUF_STALE_MS		 500
 
 #define NONE_BS_EVENT            0
 #define START_BS_EVENT           1
@@ -164,6 +165,7 @@ typedef struct st_priv_vbs {
     char *bs_buf;
     unsigned int bs_buf_len;
     pthread_mutex_t priv_vbs_mutex;
+	struct timeval lock_tv;
 } priv_vbs_t;
 
 typedef struct st_bs {
@@ -2253,18 +2255,13 @@ void *encode_thread(void *ptr)
         for (i = 0; i < CAP_CH_NUM; i++) {
             for (j = 0; j < RTSP_NUM_PER_CAP; j++) {
                 pb = &enc[i].priv_bs[j];
-
-                if (pb->video.offs || pb->video.len){
-                    log_error("VIDEO BUFFER BUSY offs=%p len=%d",(void *)pb->video.offs,pb->video.len);
+				
+                if (pb->video.offs || pb->video.len)
                     continue;
-                }
                 if (poll_fds[i][j].revent.event != GM_POLL_READ)
                     continue;
-
-                if (poll_fds[i][j].revent.bs_len > pb->video.bs_buf_len) {
-                    log_error("%d_%d: bindfd(%p) bitstream buffer length is not enough! (%d_bytes vs %d_bytes)", i, j, poll_fds[i][j].bindfd, poll_fds[i][j].revent.bs_len, pb->video.bs_buf_len);
+                if (poll_fds[i][j].revent.bs_len > pb->video.bs_buf_len)
                     continue;
-                }
 
                 rcv_nr++;
                 bs[i][j].bindfd = poll_fds[i][j].bindfd;
@@ -2342,6 +2339,7 @@ void *encode_thread(void *ptr)
                         pb->video.offs  = (uintptr_t) (bs[i][j].bs.bs_buf);
                         pb->video.len   = bs[i][j].bs.bs_len;
                         pb->video.tv_ms = bs[i][j].bs.timestamp;
+						gettimeofday(&pb->video.lock_tv, NULL);
                         pthread_mutex_unlock(&pb->video.priv_vbs_mutex);
 
                         // * Write buffer to the rtsp service and empty buffers
