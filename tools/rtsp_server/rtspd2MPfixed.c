@@ -1977,14 +1977,24 @@ void gm_enc_init(int cap_ch, int cap_path, int rec_track, int enc_type, int mode
     }
 
     // * Enable Scaler Encoder if downscaling is required (only for H264)
-    if (enc_type == ENC_TYPE_H264 && (width < 1920 || height < 1080)) {
-        /* FIX #2: sub_enc_object was previously used here without ever
-         * being created via gm_new_obj(). That meant gm_set_attr()/gm_bind()
-         * below were being called with a NULL object whenever a sub-1080p
-         * resolution was requested (-w/-h), which is undefined behaviour in
-         * the vendor gmlib and a likely cause of crashes / memory
-         * corruption that only surface after some seconds of streaming.
-         * Allocate it (once) before use. */
+    /* FIX #2 (revised): this block binds a SECOND encoder object
+     * (sub_enc_object) to the same capture object that already has a
+     * primary encoder bound above (param->bindfd[rec_track]). The
+     * resulting sub_bindfd is never read anywhere else in this file
+     * (not polled, not passed to gm_recv_multi_bitstreams(), not sent
+     * out over RTP) -- it is dead code left over from an unfinished
+     * feature. Actually creating this second bind consumes an extra
+     * hardware encode path for no benefit, and on at least this chip
+     * causes the vendor library to abort graph setup ("Abnormal AP
+     * exit ... graph(1) ...") the moment a sub-1080p resolution (-w/-h)
+     * is requested, breaking the primary live stream too.
+     *
+     * Until someone actually wires up consumption of sub_bindfd's
+     * bitstream (poll it in encode_thread(), receive it, and either
+     * write it to its own RTSP substream or drop it on purpose), this
+     * block must stay disabled. Do NOT re-enable without also adding
+     * that consumption logic and testing hardware encode-path limits. */
+    if (0 && enc_type == ENC_TYPE_H264 && (width < 1920 || height < 1080)) {
         if (sub_enc_object == NULL) {
             sub_enc_object = gm_new_obj(GM_ENCODER_OBJECT);
             if (sub_enc_object == NULL) {
