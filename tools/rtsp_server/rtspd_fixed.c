@@ -1,0 +1,2925 @@
+/* @file rtspd.c
+ *  Simple RTSP server demo
+ * Copyright (C) 2013 GM Corp. (http://www.grain-media.com)
+ *
+ * $Revision: 1.5 $
+ * $Date: 2014/12/30 05:37:57 $
+ *
+ */
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <pthread.h>
+#include <ctype.h>
+#include <string.h>
+#include <signal.h>
+#include <time.h>
+#include <unistd.h>
+#include <errno.h>
+#include <libgen.h>
+#include <arpa/inet.h>
+#include <netdb.h>
+#include <stdint.h>
+#include <sys/time.h>
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <sys/stat.h>
+#include <sys/ioctl.h>
+#include <netinet/in.h>
+#include <net/if.h>
+#include <dirent.h>
+
+#include "gmlib.h"
+#include <ctype.h>
+#include "librtsp.h"
+#include "log/log.h"
+#include "algorithm/capture_motion_detection.c"
+
+#define DVR_ENC_EBST_ENABLE      0x55887799
+#define DVR_ENC_EBST_DISABLE     0
+
+#define ENC_TYPE_H264            0
+#define ENC_TYPE_MPEG4           1
+#define ENC_TYPE_MJPEG           2
+
+#define CAP_CH_NUM               1
+#define RTSP_NUM_PER_CAP         1
+#define CAP_PATH_NUM             4
+#define ENC_TRACK_NUM            4
+
+#define SDPSTR_MAX               128
+#define SR_MAX                   64
+#define VQ_MAX                   (SR_MAX)
+#define VQ_LEN                   64            // Video queue length
+#define AQ_MAX                   64            // * 1 MP2 and 1 AMR for live streaming, another 2 for file streaming.
+#define AQ_LEN                   8             // * 1 MP2 and 1 AMR for live streaming, another 2 for file streaming.
+#define AV_NAME_MAX              127
+#define AU_BITSTREAM_LEN         12800
+
+#define RTP_HZ                   90000
+
+#define ERR_GOTO(x, y)           do { ret = x; goto y; } while(0)
+#define MUTEX_FAILED(x)          (x == ERR_MUTEX)
+#define VIDEO_FRAME_NUMBER       VQ_LEN+1
+
+#define NONE_BS_EVENT            0
+#define START_BS_EVENT           1
+#define STOP_BS_EVENT            2
+
+#define MAX_SNAPSHOT_LEN         (512 * 1024)
+#define MD_DATA_LEN              (720 * 576 / 4)
+
+#define MOTION_ON_SCRIPT         "/tmp/sd/tools/motion_on.sh"
+#define MOTION_OFF_SCRIPT        "/tmp/sd/tools/motion_off.sh"
+
+#define RTSPD_LOGFILE            "/tmp/sd/log/rtspd.log"
+
+#define CREATE_SNAPSHOT_FILE     "/dev/shm/rtspd_snapshot"
+#define LAST_SNAPSHOT_PATH       "/dev/shm/rtspd_last_snapshot_path"
+
+#define CREATE_VIDEO_FILE        "/dev/shm/rtspd_video"
+#define LAST_VIDEO_PATH          "/dev/shm/rtspd_last_video_path"
+
+#define OSD_PALETTE_COLOR_AQUA              0xCA48CA93        /* YCrYCb */
+#define OSD_PALETTE_COLOR_BLACK             0x10801080
+#define OSD_PALETTE_COLOR_BLUE              0x296e29f0
+#define OSD_PALETTE_COLOR_BROWN             0x51A1515B
+#define OSD_PALETTE_COLOR_DODGERBLUE        0x693F69CB
+#define OSD_PALETTE_COLOR_GRAY              0xB580B580
+#define OSD_PALETTE_COLOR_GREEN             0x5151515B
+#define OSD_PALETTE_COLOR_KHAKI             0x72897248
+#define OSD_PALETTE_COLOR_LIGHTGREEN        0x90229036
+#define OSD_PALETTE_COLOR_MAGENTA           0x6EDE6ECA
+#define OSD_PALETTE_COLOR_ORANGE            0x98BC9851
+#define OSD_PALETTE_COLOR_PINK              0xA5B3A589
+#define OSD_PALETTE_COLOR_RED               0x52F0525A
+#define OSD_PALETTE_COLOR_SLATEBLUE         0x3D603DA6
+#define OSD_PALETTE_COLOR_WHITE             0xEB80EB80
+#define OSD_PALETTE_COLOR_YELLOW            0xD292D210
+
+#define RECORDING_DURATION       20
+#define RECORDING_MAX_DURATION   30
+
+/* FIX #4: timeout (ms) after which a video buffer slot that is still
+ * marked "busy" (offs/len non-zero) and has not been cleared by frm_cb()
+ * is force-released. This prevents a channel from being permanently
+ * stuck ("VIDEO BUFFER BUSY" forever) if the RTSP library never calls
+ * frm_cb() back for a frame (e.g. client disconnects mid-send). */
+#define VIDEO_BUF_STALE_MS       500
+
+#define CHECK_CHANNUM_AND_SUBNUM(ch_num, sub_num)    \
+    do {    \
+        if ((ch_num >= CAP_CH_NUM || ch_num < 0) || \
+            (sub_num >= RTSP_NUM_PER_CAP || sub_num < 0)) {    \
+            log_error("%s: ch_num=%d, sub_num=%d error!",__FUNCTION__, ch_num, sub_num);    \
+            return -1; \
+        }    \
+    } while(0)    \
+
+struct mdt_alg_t mdt_alg = {mb_cell_en: NULL};
+struct mdt_result_t mdt_result[ENC_TRACK_NUM];
+
+typedef struct {
+    void *obj;
+    gm_cap_attr_t cap_attr;
+    gm_3dnr_attr_t dnr_attr;
+} gm_cap_info_t;
+
+
+typedef struct {
+    void *obj;
+    int enc_type;
+    union {
+        gm_h264e_attr_t h264e_attr;
+        gm_mpeg4e_attr_t mpeg4e_attr;
+        gm_mjpege_attr_t mjpege_attr;
+    } codec;
+} gm_enc_info_t;
+
+
+typedef struct {
+    gm_cap_info_t cap;
+    gm_enc_info_t enc[ENC_TRACK_NUM];
+    void *bindfd[ENC_TRACK_NUM];
+} gm_enc_t;
+
+void *enc_groupfd;
+gm_enc_t enc_param[CAP_CH_NUM][CAP_PATH_NUM];
+
+typedef int (*open_container_fn)(int ch_num, int sub_num);
+typedef int (*close_container_fn)(int ch_num, int sub_num);
+
+typedef enum st_opt_type {
+    OPT_NONE=0,
+    RTSP_LIVE_STREAMING,
+} opt_type_t;
+
+typedef struct st_vbs {
+    int enabled;                  // * DVR_ENC_EBST_ENABLE: enabled, DVR_ENC_EBST_DISABLE: disabled
+    int enc_type;                 // * 0:ENC_TYPE_H264, 1:ENC_TYPE_MPEG4, 2:ENC_TYPE_MJPEG
+} vbs_t;
+
+typedef struct st_priv_vbs {
+    char sdpstr[SDPSTR_MAX];
+    int qno;
+    uintptr_t offs;
+    int len;
+    unsigned int tv_ms;
+    int cap_ch;
+    int cap_path;
+    int rec_track;
+    char *bs_buf;
+    unsigned int bs_buf_len;
+    pthread_mutex_t priv_vbs_mutex;
+    struct timeval lock_tv;       /* FIX #4: timestamp when offs/len were locked */
+    unsigned int gen;             /* FIX #4: generation counter, bumped each time
+                                    * this slot is (re)assigned a new frame */
+} priv_vbs_t;
+
+typedef struct st_bs {
+    int event;                    // * Config change please set 1 for enqueue_thread to config this
+    int enabled;                  // * DVR_ENC_EBST_ENABLE: enabled, DVR_ENC_EBST_DISABLE: disabled
+    opt_type_t opt_type;          // * 1:rtsp_live_streaming, 2: file_avi_recording 3:file_h264_recording
+    vbs_t video;                  // * VIDEO, 0: main-bitstream, 1: sub1-bitstream, 2:sub2-bitstream
+    vbs_t audio;                  // * AUDIO
+} avbs_t;
+
+typedef struct st_priv_bs {
+    int play;
+    int congest;
+    int sr;
+     char name[AV_NAME_MAX];
+    open_container_fn open;
+    close_container_fn close;
+    priv_vbs_t video;             // * VIDEO, 0: main-bitstream, 1: sub1-bitstream, 2:sub2-bitstream
+    priv_vbs_t audio;             // * AUDIO
+} priv_avbs_t;
+
+typedef struct st_av {
+    // * Public data
+    avbs_t bs[RTSP_NUM_PER_CAP];  // * VIDEO, 0: main-bitstream, 1: sub1-bitstream, 2:sub2-bitstream
+
+    // * Update data
+    pthread_mutex_t ubs_mutex;
+
+    // * Private data
+    int enabled;                  // * DVR_ENC_EBST_ENABLE: enabled, DVR_ENC_EBST_DISABLE: disabled
+    priv_avbs_t priv_bs[RTSP_NUM_PER_CAP];
+} av_t;
+
+pthread_t enqueue_thread_id   = 0;
+pthread_t encode_thread_id    = 0;
+pthread_t motion_thread_id    = 0;
+pthread_t media_thread_id     = 0;
+pthread_t osd_thread_id       = 0;
+pthread_t audio_thread_id     = 0;
+
+unsigned int sys_tick         = 0;
+struct timeval sys_sec        = {-1, -1};
+int sys_port                  = 554;
+char *ipptr                   = NULL;
+
+void *audio_groupfd           = NULL;
+void *audio_grab_object_a     = NULL;
+void *audio_encode_object_a   = NULL;
+void *audio_bindfd            = NULL;
+char audio_sdpstr[SDPSTR_MAX] = {0};
+int audio_sdp_ready           = 0;
+
+static int rtspd_sysinit      = 0;
+static int rtspd_set_event    = 0;
+static int rtspd_avail_ch     = 0;
+
+char *snapshot_buf            = 0;
+static int snapshot_create    = 0;
+static int video_create       = 0;
+
+static int motion_detected    = 0;
+
+pthread_mutex_t stream_queue_mutex;
+av_t enc[CAP_CH_NUM];
+gm_system_t gm_system;
+
+void *groupfd;                    // * Return of gm_new_groupfd()
+void *bindfd;                     // * Return of gm_bind()
+void *capture_object;
+void *encode_object;
+void *sub_enc_object;             // * Create encoder object (scaler)
+void *sub_bindfd;                 // * Create encoder object (scaler) bind
+
+static unsigned short rtspd_osd_font2_text[64];
+static int rtspd_osd_font2_ready = 0;
+static pthread_mutex_t rtspd_osd_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+FILE *logfile = NULL;             // * File for logging
+
+struct VideoRecording {
+    int recording;
+    int waiting_for_keyframe;
+    struct timeval record_start;
+    FILE *fh;
+    FILE *fh_aac;
+    char file_path[80];
+    char audio_file_path[80];
+} VideoRecorder;
+
+struct timeval last_motion;
+
+struct CommandLineArguments {
+    int framerate;
+    int height;
+    int width;
+    int bitrate;
+    int bitrateMode;
+    int encoderType;
+    int snapshot;
+    int record;
+    int motion;
+    int osd;
+    int font_zoom;
+    int osd_bg_color;
+    char osd_text[32];
+} cliArgs;
+
+/* Dump client RTSP play */
+/*static void dump_clients(int sno)
+{
+    gm_ss_sr_t *tree = NULL;
+
+    if (stream_query_clients(GM_SS_QUERY_SR, sno, &tree) < 0) {
+        log_error("stream_query_clients failed sno=%d", sno);
+        return;
+    }
+
+    if (!tree) {
+        //log_info("NO CLIENT TREE sno=%d", sno);
+        return;
+    }
+
+    gm_ss_clnt_t *c = tree->client;
+
+    while (c) {
+        //log_info("CLIENT sno=%d ip=%s port=%d",sno,inet_ntoa(c->addr.sin_addr),ntohs(c->addr.sin_port));
+        c = c->next;
+    }
+}*/
+
+/* Read HOSTNAME from config file. Try common locations. */
+static void read_hostname(char *out, size_t outlen)
+{
+    FILE *f;
+    char line[256];
+
+    out[0] = '\0';
+
+    f = fopen("/tmp/sd/midgard.ini", "r");
+    if (!f)
+        return;
+
+    while (fgets(line, sizeof(line), f)) {
+
+        if (strncmp(line, "HOSTNAME=", 9) != 0)
+            continue;
+
+        char *v = line + 9;
+
+        if (*v == '"')
+            v++;
+
+        char *end = v + strlen(v);
+
+        while (end > v &&
+              (end[-1] == '\n' ||
+               end[-1] == '\r' ||
+               end[-1] == '"'  ||
+               end[-1] == ' '))
+        {
+            *--end = '\0';
+        }
+
+        strncpy(out, v, outlen - 1);
+        out[outlen - 1] = '\0';
+
+        break;
+    }
+
+    fclose(f);
+}
+
+static gm_palette_table_t rtspd_osd_palette = {
+    palette_table: {
+        OSD_PALETTE_COLOR_AQUA,
+        OSD_PALETTE_COLOR_BLACK,
+        OSD_PALETTE_COLOR_BLUE,
+        OSD_PALETTE_COLOR_BROWN,
+        OSD_PALETTE_COLOR_DODGERBLUE,
+        OSD_PALETTE_COLOR_GRAY,
+        OSD_PALETTE_COLOR_GREEN,
+        OSD_PALETTE_COLOR_KHAKI,
+        OSD_PALETTE_COLOR_LIGHTGREEN,
+        OSD_PALETTE_COLOR_MAGENTA,
+        OSD_PALETTE_COLOR_ORANGE,
+        OSD_PALETTE_COLOR_PINK,
+        OSD_PALETTE_COLOR_RED,
+        OSD_PALETTE_COLOR_SLATEBLUE,
+        OSD_PALETTE_COLOR_WHITE,
+        OSD_PALETTE_COLOR_YELLOW
+    }
+};
+
+static void rtspd_set_osd_text(void *capture_obj, const char *line1, const char *line2);
+static void rtspd_update_osd_text(void *capture_obj);
+static void rtspd_enable_osd_font(void *capture_obj, const char *text)
+{
+    char line1[64];
+    char timestamp[32];
+    time_t now;
+    struct tm tm;
+
+    if (text == NULL || text[0] == '\0')
+        snprintf(line1, sizeof(line1), "chuangmi");
+    else
+        snprintf(line1, sizeof(line1), "%s", text);
+
+    if (capture_obj != NULL) {
+        now = time(NULL);
+        localtime_r(&now, &tm);
+        strftime(timestamp, sizeof(timestamp), "%Y-%m-%d %H:%M:%S", &tm);
+        rtspd_set_osd_text(capture_obj, line1, timestamp);
+        rtspd_update_osd_text(capture_obj);
+    }
+}
+
+static void rtspd_set_osd_palette(void)
+{
+    gm_set_palette_table(&rtspd_osd_palette);
+}
+
+static void rtspd_set_osd_text(void *capture_obj, const char *line1, const char *line2)
+{
+    gm_osd_font2_t osd_font2;
+    
+    int h_words;
+    int v_words;
+    int line1_len;
+    int line2_len;
+    int i;
+
+    if (capture_obj == NULL || line1 == NULL || line2 == NULL)
+        return;
+
+    line1_len = strlen(line1);
+    line2_len = strlen(line2);
+    h_words = (line1_len > line2_len) ? line1_len : line2_len;
+    v_words = 2;
+
+    if (h_words > 32)
+        h_words = 32;
+
+    if (capture_obj == NULL || line1 == NULL || line2 == NULL)
+        return;
+
+    line1_len = strlen(line1);
+    if (line1_len > h_words)
+        line1_len = h_words;
+
+    line2_len = strlen(line2);
+    if (line2_len > h_words)
+        line2_len = h_words;
+
+    pthread_mutex_lock(&rtspd_osd_mutex);
+
+    for (i = 0; i < (int)(sizeof(rtspd_osd_font2_text) / sizeof(rtspd_osd_font2_text[0])); i++)
+        rtspd_osd_font2_text[i] = (unsigned short) ' ';
+    for (i = 0; i < line1_len; i++)
+        rtspd_osd_font2_text[i] = (unsigned short) line1[i];
+    for (i = 0; i < line2_len; i++)
+        rtspd_osd_font2_text[h_words + i] = (unsigned short) line2[i];
+
+    memset(&osd_font2, 0, sizeof(osd_font2));
+    osd_font2.enabled = 1;
+    osd_font2.win_idx = 0;
+    osd_font2.align_type = GM_OSD_ALIGN_TOP_LEFT;
+    osd_font2.x = 10;
+    osd_font2.y = 10;
+    osd_font2.h_words = h_words;
+    osd_font2.v_words = v_words;
+    osd_font2.h_space = 0;
+    osd_font2.v_space = 0;
+    osd_font2.font_index_len = h_words * v_words;
+    osd_font2.font_index = rtspd_osd_font2_text;
+    osd_font2.font_alpha = GM_OSD_FONT_ALPHA_75;
+    osd_font2.win_alpha = GM_OSD_FONT_ALPHA_75;
+    osd_font2.font_palette_idx = 14;   // WHITE
+    osd_font2.priority = GM_OSD_PRIORITY_MARK_ON_OSD;
+    osd_font2.smooth.enabled = 1;
+    osd_font2.smooth.level = GM_OSD_FONT_SMOOTH_LEVEL_WEAK;
+    osd_font2.marquee.mode = GM_OSD_MARQUEE_MODE_NONE;
+    osd_font2.win_palette_idx  = cliArgs.osd_bg_color;  // background color
+    osd_font2.border.enabled = 0;   // without border
+    osd_font2.border.width = 1;
+    osd_font2.border.type = GM_OSD_BORDER_TYPE_WIN;
+    osd_font2.border.palette_idx = 1;
+    osd_font2.font_zoom = cliArgs.font_zoom;
+
+    int ret;
+    ret = gm_set_osd_font2(capture_obj, &osd_font2);
+    
+    rtspd_osd_font2_ready = 1;
+
+    pthread_mutex_unlock(&rtspd_osd_mutex);
+}
+
+
+static void rtspd_update_osd_text(void *capture_obj)
+{
+    char timestamp[32];
+    char line1[64];
+    time_t now;
+    struct tm tm;
+
+    if (capture_obj == NULL)
+        return;
+
+    if (cliArgs.osd_text[0] != '\0')
+        snprintf(line1, sizeof(line1), "%s", cliArgs.osd_text);
+    else
+        snprintf(line1, sizeof(line1), "chuangmi");
+
+    now = time(NULL);
+    localtime_r(&now, &tm);
+    strftime(timestamp, sizeof(timestamp), "%Y-%m-%d %H:%M:%S", &tm);
+
+    rtspd_set_osd_text(capture_obj, line1, timestamp);
+}
+
+static void *rtspd_osd_thread(void *arg)
+{
+    void *capture_obj = arg;
+
+    while (rtspd_sysinit == 1) {
+        rtspd_update_osd_text(capture_obj);
+        sleep(1);
+    }
+
+    return NULL;
+}
+
+static char *rtsp_enc_type_str[] = {
+    "H264 ",
+    "MPEG4",
+    "MJPEG"
+};
+
+char *rtsp_password = NULL;
+char *rtsp_username = NULL;
+static int rtsp_use_auth = 0;
+
+
+static void create_directory(const char *dir)
+{
+    char tmp[256];
+    char *p = NULL;
+    size_t len;
+
+    snprintf(tmp, sizeof(tmp), "%s", dir);
+    len = strlen(tmp);
+
+    if (tmp[len - 1] == '/')
+        tmp[len - 1] = 0;
+
+    for(p = tmp + 1; *p; p++) {
+        if(*p == '/') {
+           *p = 0;
+           mkdir(tmp, S_IRWXU);
+           *p = '/';
+        }
+    }
+    mkdir(tmp, S_IRWXU);
+}
+
+
+int start_recording(void)
+{
+    struct tm *sTm;
+    time_t now = time(0);
+    sTm = gmtime(&now);
+
+    char dirstring[40];
+    char filestring[40];
+    char audio_filestring[40];
+
+    strftime(dirstring, sizeof(dirstring), "/tmp/sd/RECORDED_VIDEOS/%Y/%m/%d", sTm);
+
+    struct stat st = {0};
+    if (stat(dirstring, &st) != 0) {
+        create_directory(dirstring);
+    }
+
+    strftime(filestring, sizeof(filestring), "video_%H%M%S.h264", sTm);
+    strftime(audio_filestring, sizeof(audio_filestring), "audio_%H%M%S.aac", sTm);
+
+    sprintf(VideoRecorder.file_path, "%s/%s%c", dirstring, filestring, '\0');
+    sprintf(VideoRecorder.audio_file_path, "%s/%s%c", dirstring, audio_filestring, '\0');
+    log_info("Video recording to %s", VideoRecorder.file_path);
+    log_info("Audio recording to %s", VideoRecorder.audio_file_path);
+
+    // * Open video recording file
+    VideoRecorder.fh = fopen(VideoRecorder.file_path, "wb");
+    if (VideoRecorder.fh == NULL) {
+        log_error("Failed to open file %s", VideoRecorder.file_path);
+        return -1;
+    }
+
+    VideoRecorder.fh_aac = fopen(VideoRecorder.audio_file_path, "wb");
+    if (VideoRecorder.fh_aac == NULL) {
+        log_error("Failed to open audio file %s", VideoRecorder.audio_file_path);
+        fclose(VideoRecorder.fh);
+        VideoRecorder.fh = NULL;
+        return -1;
+    }
+
+    // * Write filename of last video to file
+    FILE *last_video_path = fopen(LAST_VIDEO_PATH, "wb");
+    if (last_video_path == NULL) {
+        log_error("Failed to open file: %s", LAST_VIDEO_PATH);
+        return -1;
+    }
+
+    fputs(VideoRecorder.file_path, last_video_path);
+    fclose(last_video_path);
+
+    gettimeofday(&VideoRecorder.record_start, NULL);
+    VideoRecorder.recording = 1;
+    VideoRecorder.waiting_for_keyframe = 1;
+
+    return 0;
+}
+
+
+int stop_recording(void)
+{
+    struct timeval now;
+    gettimeofday(&now, NULL);
+
+    log_info("Stopping video recording after %ld seconds", now.tv_sec - VideoRecorder.record_start.tv_sec);
+
+    // * Close video file
+    if (VideoRecorder.fh)
+        fclose(VideoRecorder.fh);
+    VideoRecorder.fh = NULL;
+
+    if (VideoRecorder.fh_aac)
+        fclose(VideoRecorder.fh_aac);
+    VideoRecorder.fh_aac = NULL;
+
+    // * Reset all Recorder settings to zero
+    VideoRecorder.waiting_for_keyframe = 1;
+    VideoRecorder.recording = 0;
+    VideoRecorder.file_path[0] = '\0';
+    VideoRecorder.audio_file_path[0] = '\0';
+
+    return 0;
+}
+
+int init_recording(void) {
+    // * Only create when it doesn't exist (we'll write it in init script)
+    if (access(LAST_VIDEO_PATH, F_OK ) == -1) {
+        FILE *last_video_path = fopen(LAST_VIDEO_PATH, "wb");
+        if (last_video_path == NULL) {
+            log_error("Failed to open file: %s", LAST_VIDEO_PATH);
+            return -1;
+        }
+        fputs("unknown", last_video_path);
+        fclose(last_video_path);
+    }
+    return 0;
+}
+
+static int set_cap_motion(int cap_vch, unsigned int id, unsigned int value)
+{
+    int ret = 0;
+    gm_cap_motion_t cap_motion;
+
+    cap_motion.id = id; //alpha
+    cap_motion.value = value;
+
+    ret = gm_set_cap_motion(cap_vch, &cap_motion);
+    if (ret < 0) {
+        log_error("Failed to run gm_set_cap_motion");
+        return -1;
+    }
+    return 0;
+}
+
+
+static int set_interesting_area(int ch)
+{
+    int ret = 0;
+    int mb_w_num, mb_h_num;
+    int h, w;
+    gm_enc_t *param;
+
+    mdt_alg.u_width       = gm_system.cap[ch].dim.width;
+    mdt_alg.u_height      = gm_system.cap[ch].dim.height;
+    mdt_alg.u_mb_width    = 32;
+    mdt_alg.u_mb_height   = 32;
+    mdt_alg.training_time = 15;
+    mdt_alg.frame_count   = 0;
+    mdt_alg.sensitive_th  = 80;
+    mdt_alg.alarm_th      = 17;  // mb_h_num * mb_w_num * (5/100)
+
+    mb_w_num              = (mdt_alg.u_width + (mdt_alg.u_mb_width - 1)) / mdt_alg.u_mb_width;
+    mb_h_num              = (mdt_alg.u_height + (mdt_alg.u_mb_height - 1)) / mdt_alg.u_mb_height;
+    mdt_alg.mb_w_num      = mb_w_num;
+    mdt_alg.mb_h_num      = mb_h_num;
+
+    mdt_alg.mb_cell_en = (unsigned char *)malloc(sizeof(unsigned char) * mb_w_num * mb_h_num);
+    if (mdt_alg.mb_cell_en == NULL) {
+        log_error("Failed to allocate mb_cell_en");
+        ret = -1;
+        goto err_ext;
+    }
+
+    memset(mdt_alg.mb_cell_en, 0, (sizeof(unsigned char) * mb_w_num * mb_h_num));
+
+    // * Set Area
+    for (h = 0; h < mb_h_num; h++) {
+        for (w = 0; w < mb_w_num; w++) {
+            mdt_alg.mb_cell_en[(h * mb_w_num + w)] = 1;
+        }
+    }
+
+    set_cap_motion(ch, 0, 32);      // * Alpha
+    set_cap_motion(ch, 1, 7371);    // * TBG
+    set_cap_motion(ch, 2, 7);       // * Init val
+    set_cap_motion(ch, 3, 9);       // * TB
+    set_cap_motion(ch, 4, 11);      // * Sigma
+    set_cap_motion(ch, 5, 15);      // * Prune
+    set_cap_motion(ch, 7, 0x9ffb0); // * Alpha accuracy
+    set_cap_motion(ch, 8, 9);       // * TG
+    set_cap_motion(ch, 10, 0x7fe0); // * One min alpha
+
+    param = &enc_param[0][0];
+    ret = motion_detection_update(param->bindfd[0], &mdt_alg);
+
+    if (ret != 0) {
+        log_error("Failed to execute motion_detection_update");
+        ret = -1;
+        goto err_ext;
+    }
+
+err_ext:
+    if (mdt_alg.mb_cell_en)
+        free(mdt_alg.mb_cell_en);
+    return ret;
+}
+
+
+int init_snapshot(void)
+{
+    // * Only create the file if it doesn't exist (it's filled it init script)
+    if (access(LAST_SNAPSHOT_PATH, F_OK ) == -1) {
+        FILE *fd = fopen(LAST_SNAPSHOT_PATH, "wb");
+        if (fd == NULL) {
+            log_error("Failed to open file %s", LAST_SNAPSHOT_PATH);
+            return -1;
+        }
+        fputs("unknown", fd);
+        fclose(fd);
+    }
+
+    return 0;
+}
+
+void take_snapshot(void)
+{
+    struct tm *sTm;
+    time_t now = time(0);
+    sTm = gmtime(&now);
+
+    char dirstring[40];
+    char filestring[40];
+    char full_file_path[80];
+
+    int snapshot_len = 0;
+    FILE *snapshot_fd = NULL;
+    FILE *snapshot_name_fd = NULL;
+
+    gm_enc_t *param;
+    snapshot_t snapshot;
+
+    if (snapshot_buf == NULL) {
+        snapshot_buf = (char *)malloc(MAX_SNAPSHOT_LEN);
+        if (snapshot_buf == NULL) {
+            log_error("Failed allocating snapshot memory buffer");
+            return;
+        }
+    }
+
+    param = &enc_param[0][0];
+    snapshot.bindfd = param->bindfd[0];
+    snapshot.image_quality = 80;                        // The value of image quality from 1(worst) ~ 100(best)
+    snapshot.bs_buf = snapshot_buf;
+    snapshot.bs_buf_len = MAX_SNAPSHOT_LEN;
+    snapshot.bs_width = 1920;
+    snapshot.bs_height = 1080;
+
+    snapshot_len = gm_request_snapshot(&snapshot, 500); // Timeout value 500ms
+
+    if (snapshot_len > 0) {
+        strftime(dirstring, sizeof(dirstring), "/tmp/sd/RECORDED_IMAGES/%Y/%m/%d", sTm);
+
+        struct stat st = {0};
+        if (stat(dirstring, &st) != 0) {
+            create_directory(dirstring);
+        }
+
+        strftime(filestring, sizeof(filestring), "snapshot_%H%M%S.jpg", sTm);
+        sprintf(full_file_path, "%s/%s%c", dirstring, filestring, '\0');
+
+        log_info("Image %s size %d bytes", full_file_path, snapshot_len);
+
+        // * Write image to file
+        snapshot_fd = fopen(full_file_path, "wb");
+        if (snapshot_fd == NULL) {
+            log_error("Failed to open file %s", full_file_path);
+            exit(EXIT_FAILURE);
+        }
+        fwrite(snapshot_buf, 1, snapshot_len, snapshot_fd);
+        fclose(snapshot_fd);
+
+        // * Write filename to /dev/shm
+        snapshot_name_fd = fopen(LAST_SNAPSHOT_PATH, "wb");
+        if (snapshot_name_fd == NULL) {
+            log_error("Failed to open file %s", LAST_SNAPSHOT_PATH);
+            exit(EXIT_FAILURE);
+        }
+        fputs(full_file_path, snapshot_name_fd);
+        fclose(snapshot_name_fd);
+        free(snapshot_buf);
+        snapshot_buf = NULL;
+    }
+	else {
+        if (snapshot_len == -1) {
+            log_error("Failed to retrieve snapshot data");
+        } else if (snapshot_len == -2) {
+            log_error("Buffer too small to store snapshot data");
+        } else if (snapshot_len == -4) {
+            log_error("Timeout while waiting for snapshot data");
+        }
+        if (snapshot_buf) {
+            free(snapshot_buf);
+            snapshot_buf = NULL;
+        }
+	}
+}
+
+static int do_queue_alloc(int type)
+{
+    int rc;
+    do {
+        rc = stream_queue_alloc(type);
+    } while MUTEX_FAILED(rc);
+
+    return rc;
+}
+
+
+static unsigned int get_tick_gm(unsigned int tv_ms)
+{
+    sys_tick = tv_ms*(RTP_HZ / 1000);
+    return sys_tick;
+}
+
+
+static int convert_gmss_media_type(int type)
+{
+    int media_type;
+
+    switch(type) {
+        case ENC_TYPE_H264:
+            media_type = GM_SS_TYPE_H264;
+            break;
+        case ENC_TYPE_MPEG4:
+            media_type = GM_SS_TYPE_MP4;
+            break;
+        case ENC_TYPE_MJPEG:
+            media_type = GM_SS_TYPE_MJPEG;
+            break;
+        default:
+            media_type  = -1;
+            log_error("convert_gmss_media_type: type=%d, error!", type);
+            break;
+    }
+    return media_type;
+}
+
+
+static int open_live_streaming(int ch_num, int sub_num)
+{
+    int media_type;
+    int ret;
+    avbs_t *b;
+    priv_avbs_t *pb;
+    char livename[64];
+
+    CHECK_CHANNUM_AND_SUBNUM(ch_num, sub_num);
+    b = &enc[ch_num].bs[sub_num];
+    pb = &enc[ch_num].priv_bs[sub_num];
+    media_type = convert_gmss_media_type(b->video.enc_type);
+    pb->video.qno = do_queue_alloc(media_type);
+    log_info("STREAM OPEN audio_en=%d video_q=%d audio_q=%d",b->audio.enabled,pb->video.qno,pb->audio.qno);
+    sprintf(livename, "live/ch%02d_%d", ch_num, sub_num);
+
+    if (b->audio.enabled == DVR_ENC_EBST_ENABLE) {
+        int a_media_type = GM_SS_TYPE_G711A; /* default to G711A audio */
+        pb->audio.qno = do_queue_alloc(a_media_type);
+        pb->sr = stream_reg(livename, pb->video.qno, pb->video.sdpstr, pb->audio.qno, pb->audio.sdpstr,1,0,0,0,0,NULL,NULL);
+        pb->play = 0;
+    } else {
+        pb->sr = stream_reg(livename, pb->video.qno, pb->video.sdpstr, pb->audio.qno, pb->audio.sdpstr,1,0,0,0,0,NULL,NULL);
+        pb->play = 0;
+    }
+        
+    if (audio_sdpstr[0] != '\0') {
+        strncpy(pb->audio.sdpstr,audio_sdpstr,SDPSTR_MAX - 1);
+        pb->audio.sdpstr[SDPSTR_MAX - 1] = '\0';
+        ret = stream_updatesdp(pb->sr,pb->video.sdpstr,pb->audio.sdpstr);
+    } else {
+        ret = stream_updatesdp(pb->sr, pb->video.sdpstr, NULL);
+    }
+
+    if (pb->sr < 0){
+        log_error("open_live_streaming: ch_num=%d, sub_num=%d setup error", ch_num, sub_num);
+    }
+
+    // * Enable authentication for the stream if the username and password are set
+    if (rtsp_use_auth == 1) {
+        stream_authorization(pb->sr, rtsp_username, rtsp_password);
+    }
+    strcpy(pb->name, livename);
+    return 0;
+}
+
+#define TIMEVAL_DIFF(start, end) (((end.tv_sec)-(start.tv_sec))*1000000+((end.tv_usec)-(start.tv_usec)))
+static int write_rtp_frame_ext(int ch_num, int sub_num, void *data, int data_len, unsigned int tv_ms)
+{
+    int ret = 0, media_type;
+    avbs_t *b;
+    priv_avbs_t *pb;
+    gm_ss_entity entity;
+    struct timeval curr_tval;
+    static struct timeval err_print_tval;
+
+    pb = &enc[ch_num].priv_bs[sub_num];
+    b  = &enc[ch_num].bs[sub_num];
+
+    /* FIX #3: removed per-frame log_error() debug call that was firing on
+     * every single video frame (20-30x/sec) and doing synchronous file I/O
+     * to RTSPD_LOGFILE inside the real-time encode/enqueue path. This was
+     * a likely cause of enqueue jitter / ERR_FULL / dropped frames leading
+     * to client disconnects. */
+
+    if ( pb->play == 0 || (b->event != NONE_BS_EVENT) ) {
+        ret = 1;
+        goto exit_free_as_buf;
+    }
+
+    entity.data = (char *) data;
+    entity.size = data_len;
+    entity.timestamp = get_tick_gm(tv_ms);
+	/*log_info("BS TS=%u RTP TS=%u",tv_ms,get_tick_gm(tv_ms));
+	if (entity.size > 10000) {
+	    log_info("SEND RTP len=%d ts=%u",entity.size,entity.timestamp);
+	}
+	static int cnt = 0;
+	if ((cnt++ % 20) == 0) {
+    	log_info("WRITE_RTP play=%d len=%d ts=%u",pb->play,data_len,tv_ms);
+	}*/
+    media_type = convert_gmss_media_type(b->video.enc_type);
+	pthread_mutex_lock(&stream_queue_mutex);
+	ret = stream_media_enqueue(media_type,pb->video.qno,&entity);
+    /*if (ret == 0) {
+    	static int ok_cnt = 0;
+		if ((ok_cnt++ % 100) == 0) {
+        	log_info("ENQUEUE OK q=%d len=%d ts=%u",pb->video.qno,entity.size,entity.timestamp);
+    	}
+	}
+	else {
+    	log_error("ENQUEUE FAIL ret=%d q=%d len=%d",ret,pb->video.qno,entity.size);
+	}*/
+    /*if (ret == 0) {
+        pb->video.offs = 0;
+        pb->video.len  = 0;
+    }*/
+    if (ret == ERR_FULL) {
+        log_error("QUEUE FULL q=%d sr=%d play=%d",pb->video.qno,pb->sr,pb->play);
+    }
+    pthread_mutex_unlock(&stream_queue_mutex);
+
+    if ( ret < 0 ) {
+        gettimeofday(&curr_tval, NULL );
+
+        if ( ret == ERR_FULL) {
+            pb->congest = 1;
+
+            if ( TIMEVAL_DIFF(err_print_tval, curr_tval) > 5000000 )
+                log_error("ext enqueue queue ch_num=%d, sub_num=%d full", ch_num, sub_num);
+        }
+        else if ((ret != ERR_NOTINIT)&& (ret != ERR_MUTEX) && (ret != ERR_NOTRUN)) {
+
+            if (TIMEVAL_DIFF(err_print_tval, curr_tval) > 5000000)
+                log_error("ext enqueue queue ch_num=%d, sub_num=%d error %d", ch_num, sub_num, ret);
+        }
+
+        if ( TIMEVAL_DIFF(err_print_tval, curr_tval) > 5000000) {
+            log_error("ext enqueue queue ch_num=%d, sub_num=%d error %d", ch_num, sub_num, ret);
+            gettimeofday(&err_print_tval, NULL );
+        }
+        goto exit_free_audio_buf;
+    }
+    
+    return 0;
+
+exit_free_audio_buf:
+    //put_video_frame(pb->video.qno, fs);
+exit_free_as_buf:
+    //free_bs_data(ch_num, sub_num, q);
+    return 1;
+}
+
+static int close_live_streaming(int ch_num, int sub_num)
+{
+    avbs_t *b;
+    priv_avbs_t *pb;
+    int ret = 0;
+
+    CHECK_CHANNUM_AND_SUBNUM(ch_num, sub_num);
+    b = &enc[ch_num].bs[sub_num];
+    pb = &enc[ch_num].priv_bs[sub_num];
+
+    if (pb->sr >= 0) {
+        ret = stream_dereg(pb->sr, 1);
+
+        if (ret < 0)
+            goto err_exit;
+
+        pb->sr = -1;
+        pb->video.qno = -1;
+        pb->play = 0;
+    }
+
+err_exit:
+    if (ret < 0)
+        log_error("%s: stream_dereg(%d) err %d", __func__, pb->sr, ret);
+
+    return ret;
+}
+
+int open_bs(int ch_num, int sub_num)
+{
+    avbs_t *b;
+    priv_avbs_t *pb;
+
+    CHECK_CHANNUM_AND_SUBNUM(ch_num, sub_num);
+    pb = &enc[ch_num].priv_bs[sub_num];
+    b = &enc[ch_num].bs[sub_num];
+
+    enc[ch_num].enabled = DVR_ENC_EBST_ENABLE;
+    enc[ch_num].bs[sub_num].enabled = DVR_ENC_EBST_ENABLE;
+    enc[ch_num].bs[sub_num].video.enabled = DVR_ENC_EBST_ENABLE;
+
+    switch (b->opt_type) {
+        case RTSP_LIVE_STREAMING:
+            pb->open = open_live_streaming;
+            pb->close = close_live_streaming;
+            break;
+        case OPT_NONE:
+        default:
+            break;
+    }
+    return 0;
+}
+
+int close_bs(int ch_num, int sub_num)
+{
+    av_t *e;
+    int sub, is_close_channel = 1;
+
+    CHECK_CHANNUM_AND_SUBNUM(ch_num, sub_num);
+    e = &enc[ch_num];
+
+    e->bs[sub_num].video.enabled = DVR_ENC_EBST_DISABLE;
+    e->bs[sub_num].enabled = DVR_ENC_EBST_DISABLE;
+
+    for (sub = 0; sub < RTSP_NUM_PER_CAP; sub++) {
+        if (e->bs[sub].video.enabled == DVR_ENC_EBST_ENABLE) {
+            is_close_channel = 0;
+            break;
+        }
+    }
+
+    if (is_close_channel == 1)
+        enc[ch_num].enabled = DVR_ENC_EBST_DISABLE;
+
+    return 0;
+}
+
+static int bs_check_event(void)
+{
+    int ch_num, sub_num, ret = 0;
+    avbs_t *b;
+
+    for (ch_num = 0; ch_num < CAP_CH_NUM; ch_num++) {
+        for (sub_num = 0; sub_num < RTSP_NUM_PER_CAP; sub_num++) {
+            b = &enc[ch_num].bs[sub_num];
+            if (b->event != NONE_BS_EVENT) {
+                ret = 1;
+                break;
+            }
+        }
+    }
+    return ret;
+}
+
+void bs_new_event(void)
+{
+    int ch_num, sub_num;
+    avbs_t *b;
+    priv_avbs_t *pb;
+
+    if (bs_check_event() == 0) {
+        rtspd_set_event = 0;
+        return;
+    }
+
+    for (ch_num = 0; ch_num < CAP_CH_NUM; ch_num++) {
+        pthread_mutex_lock(&enc[ch_num].ubs_mutex);
+
+        for (sub_num = 0; sub_num < RTSP_NUM_PER_CAP; sub_num++) {
+            b = &enc[ch_num].bs[sub_num];
+            pb = &enc[ch_num].priv_bs[sub_num];
+            switch (b->event) {
+
+                case START_BS_EVENT:
+                    open_bs(ch_num, sub_num);
+                    if (pb->open) pb->open(ch_num, sub_num);
+                    b->event = NONE_BS_EVENT;
+                    break;
+
+                case STOP_BS_EVENT:
+                    pb->open = NULL;
+                    if (pb->close) {
+                        pb->close(ch_num, sub_num);
+                        pb->close = NULL;
+                        close_bs(ch_num, sub_num);
+                    }
+                    b->event = NONE_BS_EVENT;
+                    break;
+
+                default:
+                    break;
+            }
+        }
+        pthread_mutex_unlock(&enc[ch_num].ubs_mutex);
+    }
+}
+
+
+
+int env_set_bs_new_event(int ch_num, int sub_num, int event)
+{
+    avbs_t *b;
+    int ret = 0;
+
+    CHECK_CHANNUM_AND_SUBNUM(ch_num, sub_num);
+    b = &enc[ch_num].bs[sub_num];
+
+    switch (event) {
+        case START_BS_EVENT:
+            if (b->opt_type == OPT_NONE)
+                goto err_exit;
+
+            if (b->enabled == DVR_ENC_EBST_ENABLE) {
+                log_error("Already enabled: ch_num=%d, sub_num=%d", ch_num, sub_num);
+                ret = -1;
+                goto err_exit;
+            }
+            break;
+        case STOP_BS_EVENT:
+            if (b->enabled != DVR_ENC_EBST_ENABLE) {
+                log_error("Already disabled: ch_num=%d, sub_num=%d", ch_num, sub_num);
+                ret = -1;
+                goto err_exit;
+            }
+            break;
+        default:
+            log_error("env_set_bs_new_event: ch_num=%d, sub_num=%d, event=%d, error", ch_num, sub_num, event);
+            ret = -1;
+            goto err_exit;
+    }
+    b->event = event;
+    rtspd_set_event = 1;
+
+err_exit:
+    return ret;
+}
+
+
+int set_poll_event(void)
+{
+    int ch_num, sub_num, ret = -1;
+    av_t *e;
+    avbs_t *b;
+
+    for (ch_num = 0; ch_num < CAP_CH_NUM; ch_num++) {
+        e = &enc[ch_num];
+
+        if (e->enabled != DVR_ENC_EBST_ENABLE)
+            continue;
+
+        for (sub_num = 0; sub_num < RTSP_NUM_PER_CAP; sub_num++) {
+            b = &e->bs[sub_num];
+            if (b->video.enabled == DVR_ENC_EBST_ENABLE)
+                ret = 0;
+        }
+    }
+
+    return ret;
+}
+
+
+void get_enc_res(gm_enc_info_t *enc, int *enc_type, int *width, int *height)
+{
+    int w = 0; 
+    int h = 0;
+    gm_h264e_attr_t *h264e_attr;
+    gm_mpeg4e_attr_t *mpeg4e_attr;
+    gm_mjpege_attr_t *mjpege_attr;
+
+    switch (enc->enc_type) {
+        case ENC_TYPE_H264:
+            h264e_attr  = &enc->codec.h264e_attr;
+            w           = h264e_attr->dim.width;
+            h           = h264e_attr->dim.height;
+            break;
+
+        case ENC_TYPE_MPEG4:
+            mpeg4e_attr = &enc->codec.mpeg4e_attr;
+            w           = mpeg4e_attr->dim.width;
+            h           = mpeg4e_attr->dim.height;
+            break;
+
+        case ENC_TYPE_MJPEG:
+            mjpege_attr = &enc->codec.mjpege_attr;
+            w           = mjpege_attr->dim.width;
+            h           = mjpege_attr->dim.height;
+            break;
+    }
+
+    if (enc_type)
+        *enc_type = enc->enc_type;
+
+    if (width)
+        *width = w;
+
+    if (height)
+        *height = h;
+}
+
+
+#define PRINT_INTERVAL_MS 30000
+static unsigned int frame_counts[CAP_CH_NUM][RTSP_NUM_PER_CAP] = {{0}};
+static unsigned int rec_bs_len[CAP_CH_NUM][RTSP_NUM_PER_CAP]   = {{0}};
+static void print_enc_average(int ch_num, int sub_num, int bs_len, struct timeval *cur_timeval)
+{
+    int enc_type, w, h;
+    static struct timeval last_timeval;
+    static unsigned int total_ms, print_init = 0;
+    unsigned int diff_ms, i, j;
+    char res_str[20];
+    priv_avbs_t *pb;
+    gm_enc_info_t *gm_enc;
+
+    frame_counts[ch_num][sub_num]++;
+    rec_bs_len[ch_num][sub_num] += bs_len;
+
+    if (print_init == 0) {
+        last_timeval.tv_sec = cur_timeval->tv_sec;
+        last_timeval.tv_usec = cur_timeval->tv_usec;
+        print_init = 1;
+        total_ms = 0;
+        return;
+    }
+
+    // * Get diff time
+    if (cur_timeval->tv_sec > last_timeval.tv_sec) {
+        diff_ms = 1000 + (cur_timeval->tv_usec / 1000) - (last_timeval.tv_usec / 1000);
+        diff_ms += (cur_timeval->tv_sec - last_timeval.tv_sec - 1) * 1000;
+    } else {
+        diff_ms = (cur_timeval->tv_usec - last_timeval.tv_usec) / 1000;
+    }
+
+    total_ms += diff_ms;
+
+    // * Show statistic
+    if (total_ms >= PRINT_INTERVAL_MS) {
+        for (i = 0; i < CAP_CH_NUM; i++) {
+            for (j = 0; j < RTSP_NUM_PER_CAP; j++) {
+                if (frame_counts[i][j] == 0)
+                    continue;
+
+                pb = &enc[i].priv_bs[j];
+                gm_enc = &enc_param[pb->video.cap_ch][pb->video.cap_path].enc[pb->video.rec_track];
+                get_enc_res(gm_enc, &enc_type, &w, &h);
+                sprintf(res_str, "%dx%d", w, h);
+
+                log_info("path=/live/ch%02d_%d cap=%d_%d size=%s enc=%s fps=%d.%d kbps=%d record=%d motion=%d",
+                        i,
+                        j,
+                        pb->video.cap_ch,
+                        pb->video.cap_path,
+                        res_str,
+                        rtsp_enc_type_str[enc_type],
+                        (frame_counts[i][j] * 1000 / total_ms),
+                        (frame_counts[i][j] * 100000 / total_ms) % 100,
+                        (rec_bs_len[i][j] * 8 / 1024) * 1000 / total_ms,
+                        VideoRecorder.recording,
+                        motion_detected
+                );
+
+                if (VideoRecorder.recording == 1) {
+                    log_info("Recording to %s", VideoRecorder.file_path);
+                }
+
+                frame_counts[i][j] = 0;
+                rec_bs_len[i][j] = 0;
+            }
+        }
+        total_ms = 0;
+    }
+
+    last_timeval.tv_sec = cur_timeval->tv_sec;
+    last_timeval.tv_usec = cur_timeval->tv_usec;
+}
+
+
+#define POLL_WAIT_TIME 15000
+static unsigned int poll_wait_time = 0;
+static void env_release_resources(void)
+{
+    int ret, ch_num;
+    av_t *e;
+
+    if ((ret = stream_server_stop()))
+        log_error("stream_server_stop() error %d", ret);
+
+    for (ch_num = 0; ch_num < CAP_CH_NUM; ch_num++) {
+        e = &enc[ch_num];
+        pthread_mutex_destroy(&e->ubs_mutex);
+    }
+}
+
+
+static int frm_cb(int type, int qno, gm_ss_entity *entity)
+{
+    priv_avbs_t *pb;
+    int ch_num, sub_num;
+
+    for (ch_num = 0; ch_num < CAP_CH_NUM; ch_num++) {
+        for (sub_num = 0; sub_num < RTSP_NUM_PER_CAP; sub_num++) {
+            pb = &enc[ch_num].priv_bs[sub_num];
+
+            if (pb->video.offs == (uintptr_t)(entity->data) && pb->video.len == entity->size && pb->video.qno == qno) {
+                pthread_mutex_lock(&pb->video.priv_vbs_mutex);
+                pb->video.offs = 0;
+                pb->video.len  = 0;
+                pthread_mutex_unlock(&pb->video.priv_vbs_mutex);
+            }
+        }
+    }
+
+    return 0;
+}
+
+
+priv_avbs_t *find_file_sr(char *name, int srno)
+{
+    int ch_num, sub_num, hit=0;
+    priv_avbs_t *pb;
+
+    for (ch_num = 0; ch_num < CAP_CH_NUM; ch_num++) {
+        for (sub_num = 0; sub_num < RTSP_NUM_PER_CAP; sub_num++) {
+            pb = &enc[ch_num].priv_bs[sub_num];
+            if ((pb->sr == srno) && (pb->name) && (strcmp(pb->name, name) == 0)) {
+                hit = 1;
+                break;
+            }
+        }
+
+        if (hit)
+            break;
+    }
+
+    return (hit ? pb : NULL);
+}
+
+static int cmd_cb(char *name, int sno, int cmd, void *p)
+{
+    int ret = -1;
+    priv_avbs_t *pb = NULL;
+
+    switch(cmd) {
+        case GM_STREAM_CMD_OPTION:
+            ret = 0;
+            break;
+
+        case GM_STREAM_CMD_DESCRIBE:
+			//log_info("RTSP DESCRIBE sr=%d stream=%s", sno, name);
+            ret = 0;
+            break;
+
+        case GM_STREAM_CMD_OPEN:
+            //log_error("%s:%d <GM_STREAM_CMD_OPEN>", __FUNCTION__, __LINE__);
+            ERR_GOTO(-10, cmd_cb_err);
+            break;
+
+        case GM_STREAM_CMD_SETUP:
+			//log_info("RTSP SETUP sr=%d stream=%s", sno, name);
+			//log_info("CMD=%d sno=%d p=%p name=%s",cmd,sno,p,name);
+            ret = 0;
+            break;
+
+        case GM_STREAM_CMD_PLAY:
+            if ( strncmp(name, "live/", 5) == 0 ) {
+                if ((pb = find_file_sr(name, sno)) == NULL){
+                    ERR_GOTO(-1, cmd_cb_err);
+                }
+                //log_info("RTSP PLAY: sr=%d stream=%s video_q=%d audio_q=%d",sno, name, pb->video.qno, pb->audio.qno);
+				//log_info("CMD=%d sno=%d p=%p name=%s",cmd,sno,p,name);
+				//dump_clients(sno);
+                if (pb->video.qno >= 0)
+                    pb->play = 1;
+            }
+            ret = 0;
+            break;
+            
+        case GM_STREAM_CMD_PAUSE:
+            //log_info("%s:%d <GM_STREAM_CMD_PAUSE>", __FUNCTION__, __LINE__);
+            ret = 0;
+            break;
+
+        case GM_STREAM_CMD_TEARDOWN:
+            if ( strncmp(name, "live/", 5) == 0 ) {
+				//dump_clients(sno);
+                if ((pb = find_file_sr(name, sno)) == NULL)
+                    ERR_GOTO(-1, cmd_cb_err);
+				pb->play = 0;
+            }
+			//log_info("RTSP TEARDOWN sr=%d stream=%s", sno, name);
+			//log_info("CMD=%d sno=%d p=%p name=%s",cmd,sno,p,name);
+            ret = 0;
+            break;
+
+        default:
+            log_error("%s: not support cmd %d", __func__, cmd);
+            break;
+    }
+
+    cmd_cb_err:
+        if ( ret < 0 ) {
+            log_error("%s: cmd %d error %d", __func__, cmd, ret);
+        }
+    return ret;
+}
+
+static void *media_thread(void *arg)
+{
+    struct timeval now;
+
+    // * Reset all to zero before entering loop
+    VideoRecorder.recording    = 0;
+    VideoRecorder.file_path[0] = '\0';
+    VideoRecorder.audio_file_path[0] = '\0';
+    VideoRecorder.fh           = NULL;
+    VideoRecorder.fh_aac       = NULL;
+
+    // * Inititialize recording
+    if (init_recording() < 0)
+        log_error("Failed to initialize recording");
+
+    // * Inititialize snapshot
+    if (init_snapshot() < 0)
+        log_error("Failed to initialize snapshot");
+
+    while (rtspd_sysinit) {
+        // * Check for external snapshot trigger
+        if (access(CREATE_SNAPSHOT_FILE, F_OK ) != -1 ) {
+            unlink(CREATE_SNAPSHOT_FILE);
+            snapshot_create = 1;
+        }
+
+        // * Check for internal snapshot trigger
+        if (snapshot_create == 1) {
+            log_info("Creating a snapshot of the current data stream");
+            snapshot_create = 0;
+            take_snapshot();
+        }
+
+        // * Check for external video record trigger
+        if (access(CREATE_VIDEO_FILE, F_OK ) != -1 ) {
+            unlink(CREATE_VIDEO_FILE);
+            video_create = 1;
+        }
+
+        // * Check for internal video record trigger
+        if (video_create == 1) {
+            video_create = 0;
+
+            if (VideoRecorder.recording != 1) {
+                log_info("Creating a video of the next %d seconds of the data stream", RECORDING_DURATION);
+
+                if (start_recording() < 0)
+                    log_error("Failed to start recording in media thread");
+            }
+        }
+
+        // * Check if recordings duration is over 30 seconds
+        if (VideoRecorder.recording == 1) {
+            gettimeofday(&now, NULL);
+            if (now.tv_sec - VideoRecorder.record_start.tv_sec > (long)RECORDING_MAX_DURATION) {
+                if (stop_recording() < 0)
+                    log_error("Failed to stop recording in media thread");
+            }
+        }
+
+        usleep(1000);
+    }
+
+    return 0;
+}
+
+__attribute__((unused))
+static void *audio_thread(void *arg)
+{
+    int ret;
+    void *groupfd_a = NULL;
+    void *audio_grab_object = NULL;
+    void *audio_encode_object = NULL;
+    void *bindfd_a = NULL;
+    char *bitstream_data = NULL;
+
+    groupfd_a = gm_new_groupfd();
+    if (!groupfd_a) {
+        log_error("gm_new_groupfd failed");
+        goto thread_exit;
+    }
+
+    audio_grab_object = gm_new_obj(GM_AUDIO_GRAB_OBJECT);
+    audio_encode_object = gm_new_obj(GM_AUDIO_ENCODER_OBJECT);
+
+    if (!audio_grab_object || !audio_encode_object) {
+        log_error("audio object create failed");
+        goto thread_exit;
+    }
+
+    gm_pollfd_t poll_fd;
+    gm_enc_multi_bitstream_t multi_bs[1];
+    
+    DECLARE_ATTR(audio_grab_attr, gm_audio_grab_attr_t);
+    DECLARE_ATTR(audio_encode_attr, gm_audio_enc_attr_t);
+
+    audio_grab_attr.vch = 0; /* default input vch */
+    audio_grab_attr.sample_rate = 8000;
+    audio_grab_attr.sample_size = 16;
+    audio_grab_attr.channel_type = GM_MONO;
+    
+    ret = gm_set_attr(audio_grab_object, &audio_grab_attr);
+    
+    audio_encode_attr.encode_type = GM_G711_ALAW;
+    audio_encode_attr.bitrate = 32000;
+    audio_encode_attr.frame_samples = 320;
+    ret = gm_set_attr(audio_encode_object, &audio_encode_attr);
+    
+    bindfd_a = gm_bind(groupfd_a, audio_grab_object, audio_encode_object);
+    if (!bindfd_a) {
+        log_error("gm_bind failed");
+        goto thread_exit;
+    }
+
+    ret = gm_apply(groupfd_a);
+    if (ret < 0) {
+        log_error("audio_thread: gm_apply failed");
+        goto thread_exit;
+    }
+
+    bitstream_data = malloc(AU_BITSTREAM_LEN);
+    if (!bitstream_data)
+        goto thread_exit;
+
+    poll_fd.bindfd = bindfd_a;
+    poll_fd.event = GM_POLL_READ;
+
+    while (rtspd_sysinit) {
+        ret = gm_poll(&poll_fd, 1, 1000);
+        if (ret == GM_TIMEOUT)
+            continue;
+
+        memset(multi_bs, 0, sizeof(multi_bs));
+        multi_bs[0].bindfd = bindfd_a;
+        multi_bs[0].bs.bs_buf = bitstream_data;
+        multi_bs[0].bs.bs_buf_len = AU_BITSTREAM_LEN;
+
+        if ((ret = gm_recv_multi_bitstreams(multi_bs, 1)) < 0) {
+            log_error("audio_thread: gm_recv_multi_bitstreams failed %d", ret);
+            continue;
+        }
+
+        if (multi_bs[0].retval == GM_SUCCESS){
+            if (!audio_sdp_ready && multi_bs[0].bs.bs_len > 0) {
+                stream_sdp_parameter_encoder("G711A", (unsigned char *) multi_bs[0].bs.bs_buf, multi_bs[0].bs.bs_len, audio_sdpstr, SDPSTR_MAX);
+                if (!audio_sdp_ready)
+                {
+                    int ch_num;
+                    int sub_num;
+
+                    for (ch_num = 0; ch_num < CAP_CH_NUM; ch_num++) {
+                        for (sub_num = 0; sub_num < RTSP_NUM_PER_CAP; sub_num++) {
+                            priv_avbs_t *pb = &enc[ch_num].priv_bs[sub_num];
+                            if (enc[ch_num].bs[sub_num].audio.enabled == DVR_ENC_EBST_ENABLE) {
+                                strncpy(pb->audio.sdpstr, audio_sdpstr, SDPSTR_MAX - 1);
+                                pb->audio.sdpstr[SDPSTR_MAX - 1] = '\0';                        
+                                if (pb->sr >= 0 && pb->audio.sdpstr[0] != '\0') {
+                                    ret = stream_updatesdp(pb->sr, pb->video.sdpstr, pb->audio.sdpstr);
+                                    if (ret == 0)
+                                        audio_sdp_ready = 1;           
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (VideoRecorder.recording == 1 && VideoRecorder.fh_aac != NULL) {
+                fwrite(multi_bs[0].bs.bs_buf, 1, multi_bs[0].bs.bs_len, VideoRecorder.fh_aac);
+                fflush(VideoRecorder.fh_aac);
+            }
+            
+            if (multi_bs[0].bs.bs_len <= 7)
+                continue;
+            gm_ss_entity entity;
+            entity.data = multi_bs[0].bs.bs_buf;
+            entity.size = multi_bs[0].bs.bs_len;
+            static int cnt = 0;
+                if (cnt++ < 10) {
+                }
+            entity.timestamp = get_tick_gm(multi_bs[0].bs.timestamp);
+            
+            int ch_num, sub_num;
+            for (ch_num = 0; ch_num < CAP_CH_NUM; ch_num++) {
+                for (sub_num = 0; sub_num < RTSP_NUM_PER_CAP; sub_num++) {
+                    priv_avbs_t *pb = &enc[ch_num].priv_bs[sub_num];
+                    if (enc[ch_num].bs[sub_num].audio.enabled == DVR_ENC_EBST_ENABLE && pb->audio.qno >= 0 && pb->sr >= 0 && pb->audio.sdpstr[0] != '\0') {
+                        pthread_mutex_lock(&stream_queue_mutex);
+                        ret = stream_media_enqueue(GM_SS_TYPE_G711A, pb->audio.qno, &entity);
+                        if (ret < 0) {
+                            log_error("G711A ENQ FAIL ret=%d size=%d ts=%u",ret, entity.size, entity.timestamp);
+                        }
+                        pthread_mutex_unlock(&stream_queue_mutex);
+                        if (ret < 0){
+                            log_error("AUDIO ENQUEUE FAILED: ret=%d qno=%d sr=%d play=%d", ret, pb->audio.qno, pb->sr, pb->play);
+                        }
+                    }
+                }
+            }
+        }        
+    }
+
+thread_exit:
+    if (bitstream_data)
+        free(bitstream_data);
+    if (bindfd_a)
+        gm_unbind(bindfd_a);
+    if (audio_grab_object)
+        gm_delete_obj(audio_grab_object);
+    if (audio_encode_object)
+        gm_delete_obj(audio_encode_object);
+    if (groupfd_a) {
+        gm_delete_groupfd(groupfd_a);
+    }
+    return NULL;
+}
+
+static void *motion_thread(void *arg)
+{
+    int ch;
+    int ret;
+    struct timeval now;
+
+    gm_enc_t *param;
+    param = &enc_param[0][0];
+
+    gm_multi_cap_md_t *cap_md = NULL;
+    cap_md = (gm_multi_cap_md_t *) malloc(sizeof(gm_multi_cap_md_t) * 1);
+    if (cap_md == NULL) {
+        log_fatal("Failed to allocate capture motion info!");
+        goto thread_exit;
+    }
+
+    memset((void *) cap_md, 0, (sizeof(gm_multi_cap_md_t) * 1));
+
+    cap_md[0].bindfd = param->bindfd[0];
+    cap_md[0].cap_md_info.md_buf_len = CAP_MOTION_SIZE;
+    cap_md[0].cap_md_info.md_buf = (char *) malloc(CAP_MOTION_SIZE);
+
+    if (cap_md[0].cap_md_info.md_buf == NULL) {
+        log_fatal("Failed to allocate capture motion buffer!");
+        goto thread_exit;
+    }
+
+    int training_detected = 0;
+
+    while (rtspd_sysinit) {
+        ret = gm_recv_multi_cap_md(cap_md, 1);
+
+        if (ret < 0) {                  // * -1: Error, 0: Success
+            log_error("Failed to retrieve motion data (gm_recv_multi_cap_md)");
+            continue;
+        }
+
+        ret = motion_detection_handling(cap_md, &mdt_result[0], 1);
+        if (ret < 0) {                  // * -1: Error, 0: Success
+            log_fatal("Failed to handle motion data (motion_detection_handling)");
+            goto thread_exit;
+        }
+
+        for (ch = 0; ch < 1; ch++) {
+            if (mdt_result[ch].result == MOTION_PARSING_ERROR)
+                log_error("Failed parsing motion data.");
+
+            else if (mdt_result[ch].result == MOTION_INIT_ERROR)
+                log_error("Motion init error.");
+
+            else if (mdt_result[ch].result == MOTION_ALGO_ERROR)
+                log_error("Motion algorithm failed.");
+
+            else if (mdt_result[ch].result == MOTION_DATA_ERROR)
+                log_error("Motion data retrieval failed.");
+
+            // * Motion Training
+            else if (mdt_result[ch].result == MOTION_IS_TRAINING) {
+                if (training_detected == 0) {
+                    training_detected = 1;
+                    log_info("Motion detection training running.");
+                }
+            }
+
+            // * Motion ON
+            else if (mdt_result[ch].result == MOTION_DETECTED) {
+                if (motion_detected == 0) {
+                    gettimeofday(&last_motion, NULL);
+                    motion_detected = 1;
+
+                    if (cliArgs.snapshot == 1)
+                        snapshot_create = 1;
+
+                    if (cliArgs.record == 1)
+                        video_create = 1;
+
+                    log_info("Motion ON - executing motion on script");
+                    system(MOTION_ON_SCRIPT);
+                }
+            }
+
+            // * Motion OFF
+            else if (mdt_result[ch].result == NO_MOTION) {
+                if (motion_detected == 1) {
+                    motion_detected = 0;
+
+                    // * Turn recording off after 20 seconds
+                    if (VideoRecorder.recording == 1) {
+                        gettimeofday(&now, NULL);
+
+                        if (now.tv_sec - last_motion.tv_sec >= (long)RECORDING_DURATION) {
+                            if (stop_recording() < 0)
+                                log_error("Failed to stop recording in motion thread");
+                        }
+                    }
+                    log_info("Motion OFF - executing motion off script");
+                    system(MOTION_OFF_SCRIPT);
+                }
+            }
+
+            else {
+                log_error("Undefined Motion Event");
+            }
+        }
+        usleep(200000);   // * Use a two second period to detect motion
+    }
+
+thread_exit:
+
+    if (cap_md) {
+        for (ch = 0 ; ch < 1; ch++) {
+            if (cap_md[ch].cap_md_info.md_buf)
+                free(cap_md[ch].cap_md_info.md_buf);
+        }
+    }
+
+    if (cap_md)
+        free(cap_md);
+
+    motion_detection_end();
+    pthread_exit(NULL);
+    motion_thread_id = (pthread_t)NULL;
+
+    return 0;
+}
+
+
+void *enqueue_thread(void *ptr)
+{
+    while (rtspd_sysinit) {
+        if (rtspd_set_event)
+            bs_new_event();
+
+        if (set_poll_event() < 0) {
+            sleep(1);
+            continue;
+        }
+        usleep(1000);
+    }
+    env_release_resources();
+    pthread_exit(NULL);
+
+    return NULL;
+}
+
+
+void gm_update_bs_info(void)
+{
+    int cap_ch,cap_path,rec_track;
+    int ch=0;
+    avbs_t *avbs;
+    gm_enc_t *param;
+    
+    for (cap_ch = 0; cap_ch < CAP_CH_NUM; cap_ch++) {
+        for (cap_path = 0; cap_path < CAP_PATH_NUM; cap_path++) {
+            param = &enc_param[cap_ch][cap_path];
+            for (rec_track = 0; rec_track < ENC_TRACK_NUM; rec_track++) {
+                if (param->bindfd[rec_track]) {
+                    avbs = &enc[cap_ch].bs[ch];
+                    avbs->video.enc_type = param->enc[rec_track].enc_type;
+                    ch++;
+                }
+            }
+        }
+    }
+}
+
+int env_init(void)
+{
+    int ret = 0;
+    int ch_num, sub_num;
+    av_t *e;
+    avbs_t *b;
+    priv_avbs_t *pb;
+
+    memset(enc,0,sizeof(enc));
+
+    // * Initial private data
+    for (ch_num = 0; ch_num < CAP_CH_NUM; ch_num++) {
+        e = &enc[ch_num];
+
+        if (pthread_mutex_init(&e->ubs_mutex, NULL)) {
+            log_error("env_init: mutex init failed");
+            exit(-1);
+        }
+
+        for (sub_num = 0; sub_num < RTSP_NUM_PER_CAP; sub_num++) {
+            b                 = &e->bs[sub_num];
+            b->opt_type       = RTSP_LIVE_STREAMING;
+            b->video.enc_type = ENC_TYPE_H264;
+            b->event          = NONE_BS_EVENT;
+            b->enabled        = DVR_ENC_EBST_DISABLE;
+            b->video.enabled  = DVR_ENC_EBST_DISABLE;
+            b->audio.enabled  = DVR_ENC_EBST_DISABLE; /* disable audio by default */
+
+            pb                = &e->priv_bs[sub_num];
+            pb->video.qno     = -1;
+            pb->video.offs    = 0;
+            pb->video.len     = 0;
+            pb->video.gen     = 0;
+            pb->audio.qno     = -1;
+            pb->audio.offs    = 0;
+            pb->audio.len     = 0;
+            pb->sr            = -1;
+
+            if (pthread_mutex_init(&pb->video.priv_vbs_mutex, NULL)) {
+                log_error("env_enc_init: priv_vbs mutex init failed");
+                exit(-1);
+            }
+            if (pthread_mutex_init(&pb->audio.priv_vbs_mutex, NULL)) {
+                log_error("env_enc_init: audio priv_vbs mutex init failed");
+                exit(-1);
+            }
+        }
+    }
+
+    // * Update bs info from decoder
+    gm_update_bs_info();
+
+    srand((unsigned int)time(NULL));
+
+    if ((ret = stream_server_init(ipptr, (int) sys_port, 0, 1444, 256, SR_MAX, VQ_MAX, VQ_LEN, AQ_MAX, AQ_LEN, frm_cb, cmd_cb)) < 0)
+        log_error("stream_server_init, ret %d", ret);
+
+    if ((ret = stream_server_start()) < 0)
+        log_error("stream_server_start, ret %d", ret);
+
+    return ret;
+}
+
+
+static unsigned chipid;
+void gm_enc_init(int cap_ch, int cap_path, int rec_track, int enc_type, int mode, int framerate, int bitrate, int width, int height)
+{
+    gm_enc_t *param;
+    DECLARE_ATTR(cap_attr, gm_cap_attr_t);
+    DECLARE_ATTR(h264e_attr, gm_h264e_attr_t);
+    DECLARE_ATTR(mpeg4e_attr, gm_mpeg4e_attr_t);
+    DECLARE_ATTR(dnr_attr, gm_3dnr_attr_t);
+    DECLARE_ATTR(mjpege_attr, gm_mjpege_attr_t);
+
+    param = &enc_param[cap_ch][cap_path];
+
+    if (param->cap.obj == NULL) {
+        param->cap.obj = gm_new_obj(GM_CAP_OBJECT);            // * New capture object
+        cap_attr.cap_vch = cap_ch;
+
+        // * GM813x capture path 0(liveview), 1(substream), 2(substream), 3(mainstream)
+        cap_attr.path = cap_path;
+        cap_attr.enable_mv_data = 1;
+        gm_set_attr(param->cap.obj, &cap_attr);                // * Set capture attribute
+
+        memcpy(&param->cap.cap_attr, &cap_attr, sizeof(gm_cap_attr_t));
+        memcpy(&param->cap.dnr_attr, &dnr_attr, sizeof(gm_3dnr_attr_t));
+    }
+
+    param->enc[rec_track].obj = gm_new_obj(GM_ENCODER_OBJECT); // * New encoder object
+    param->enc[rec_track].enc_type = enc_type;
+
+    switch (enc_type) {
+        case ENC_TYPE_H264:
+            h264e_attr.dim.width             = width;
+            h264e_attr.dim.height            = height;
+            h264e_attr.frame_info.framerate  = framerate;
+            h264e_attr.ratectl.mode          = mode;
+            h264e_attr.ratectl.gop           = 20;             // default GOP size for H.264 is 60 frames
+            h264e_attr.ratectl.bitrate       = bitrate;
+            h264e_attr.ratectl.bitrate_max   = bitrate;
+            h264e_attr.b_frame_num           = 0;              // * B-frames per GOP (H.264 high profile)
+            h264e_attr.enable_mv_data        = 0;              // * Disable H.264 motion data output
+            h264e_attr.ratectl.init_quant    = 25;
+            h264e_attr.ratectl.min_quant     = 20;
+            h264e_attr.ratectl.max_quant     = 51;
+            gm_set_attr(param->enc[rec_track].obj, &h264e_attr);
+            memcpy(&param->enc[rec_track].codec.h264e_attr, &h264e_attr, sizeof(gm_h264e_attr_t));
+            break;
+
+        case ENC_TYPE_MPEG4:
+            mpeg4e_attr.dim.width            = width;
+            mpeg4e_attr.dim.height           = height;
+            mpeg4e_attr.frame_info.framerate = framerate;
+            mpeg4e_attr.ratectl.mode         = mode;
+            mpeg4e_attr.ratectl.gop          = 60;
+            mpeg4e_attr.ratectl.bitrate      = bitrate;
+            mpeg4e_attr.ratectl.bitrate_max  = bitrate;
+            gm_set_attr(param->enc[rec_track].obj, &mpeg4e_attr);
+            memcpy(&param->enc[rec_track].codec.mpeg4e_attr, &mpeg4e_attr, sizeof(gm_mpeg4e_attr_t));
+            break;
+
+        case ENC_TYPE_MJPEG:
+            mjpege_attr.dim.width            = width;
+            mjpege_attr.dim.height           = height;
+            mjpege_attr.frame_info.framerate = framerate;
+            mjpege_attr.quality              = 30;
+            gm_set_attr(param->enc[rec_track].obj, &mjpege_attr);
+            memcpy(&param->enc[rec_track].codec.mjpege_attr, &mjpege_attr, sizeof(gm_mjpege_attr_t));
+            break;
+
+        default:
+            log_error("Encoder type not supported: %s", rtsp_enc_type_str[enc_type]);
+            break;
+    }
+
+    // * Bind channel recording
+    param->bindfd[rec_track] = gm_bind(enc_groupfd, param->cap.obj, param->enc[rec_track].obj);
+
+    if (cliArgs.osd) {
+                rtspd_enable_osd_font(param->cap.obj, cliArgs.osd_text[0] != '\0' ? cliArgs.osd_text : "chuangmi");
+            }
+
+    // * Set motion detection
+    if (cliArgs.motion == 1) {
+
+        // * Enable motion detection
+        motion_detection_init();
+
+        // * Set area for motion detection
+        int ret = 0;
+        ret = set_interesting_area(rec_track);
+
+        if (ret != 0) {
+            log_error("Failed running set_interesting_area!");
+        }
+    }
+
+    // * Enable Scaler Encoder if downscaling is required (only for H264)
+    if (enc_type == ENC_TYPE_H264 && (width < 1920 || height < 1080)) {
+        /* FIX #2: sub_enc_object was previously used here without ever
+         * being created via gm_new_obj(). That meant gm_set_attr()/gm_bind()
+         * below were being called with a NULL object whenever a sub-1080p
+         * resolution was requested (-w/-h), which is undefined behaviour in
+         * the vendor gmlib and a likely cause of crashes / memory
+         * corruption that only surface after some seconds of streaming.
+         * Allocate it (once) before use. */
+        if (sub_enc_object == NULL) {
+            sub_enc_object = gm_new_obj(GM_ENCODER_OBJECT);
+            if (sub_enc_object == NULL) {
+                log_error("Failed to allocate sub_enc_object (scaler)");
+            }
+        }
+
+        if (sub_enc_object != NULL) {
+            h264e_attr.ratectl.bitrate      = bitrate;
+            h264e_attr.frame_info.framerate = framerate;
+            h264e_attr.dim.width            = width;
+            h264e_attr.dim.height           = height;
+            gm_set_attr(sub_enc_object, &h264e_attr);
+            sub_bindfd                      = gm_bind(enc_groupfd, param->cap.obj, sub_enc_object);
+        }
+    }
+
+    rtspd_avail_ch++;
+}
+
+
+int gm_get_chipinfo(void)
+{
+    FILE *fp;
+    char buffer[256];
+    int i;
+    int chipid;
+    char *match;
+
+    fp = fopen("/proc/pmu/chipver","r");
+    i = fread(buffer,1,sizeof(buffer),fp);
+    fclose(fp);
+
+    if (i == 0)
+        return 0;
+
+    buffer[i] = '\0';
+    match = strstr(buffer, "81");
+
+    if (match == NULL)
+        return 0;
+
+    sscanf(match,"%X",&chipid);
+
+    return chipid;
+}
+
+
+static int gm_get_max_bandwidth(char *list)
+{
+    int bandwidth=0;
+    int i;
+    int ch;
+    int tmp;
+    char token[] = "\n \t";
+    int sensor_res[] = {800,500,400,300,200,130,100,34,30,7};
+    char *str;
+    str = strtok(list,token);
+
+    for (i=0;i<5;i++) {
+        if (str == NULL)
+            break;
+
+        sscanf(str,"%02d",&ch);
+        str += 3;
+        sscanf(str,"%03d",&tmp);
+        str = strtok(NULL,token);
+
+        if (ch == 0 || tmp == 0)
+             continue;
+
+        tmp = tmp * sensor_res[i];
+        tmp = tmp / ch;
+
+        if (i <= 3) {
+            bandwidth = 8*30;
+            break;
+        }
+
+        if (bandwidth <= (tmp /100))
+            bandwidth = tmp/100;
+    }
+
+    return bandwidth;
+}
+
+
+int gm_get_bandwidth_info(void)
+{
+    FILE *fp;
+    char buffer[2048];
+    int i;
+    char *match;
+
+    fp = fopen("/proc/videograph/vpd/spec_info","r");
+    i = fread(buffer,1,sizeof(buffer),fp);
+    fclose(fp);
+
+    if (i == 0)
+        buffer[i] = '\0';
+
+    match = strstr(buffer,"[ENC CAPTURE]");
+
+    if (match == NULL)
+        return 0;
+
+    match = strstr(match, "CH_0");
+
+    if (match == NULL)
+        return 0;
+
+    match += 4;
+    sscanf(match,"%X",&i);
+
+    if (i == 0)
+        return 0;
+
+    if (gm_get_max_bandwidth((match+1)) > 62)
+        return 1;
+    else
+        return 0;
+}
+
+
+void gm_graph_init(void)
+{
+    int cap_fps;
+    int cap_h;
+    int cap_w;
+    int cap_resolution;
+    int cap_bandwidth;
+
+    gm_init();
+    gm_get_sysinfo(&gm_system);
+
+    if (cliArgs.osd)
+        rtspd_set_osd_palette();
+
+    if (cliArgs.osd)
+        rtspd_set_osd_palette();
+
+    if (cliArgs.osd)
+        rtspd_set_osd_palette();
+
+    if (cliArgs.framerate > 0)
+        poll_wait_time = 1000000 / (cliArgs.framerate + 2);
+    else
+        poll_wait_time = 15000;
+
+    cap_fps        = cliArgs.framerate;
+    cap_h          = cliArgs.height;
+    cap_w          = cliArgs.width;
+    cap_bandwidth  = cap_fps * cap_h * cap_w;
+    cap_resolution = cap_h * cap_w;
+
+    memset(enc_param, 0, sizeof(enc_param));
+    enc_groupfd = gm_new_groupfd();
+    chipid = gm_get_chipinfo();
+    chipid = (chipid >> 16) & 0x0000ffff;
+
+    rtspd_avail_ch = 0;
+    sub_enc_object = NULL;   /* FIX #2: ensure a defined starting state */
+    gm_enc_init(0, 0, 0, cliArgs.encoderType, cliArgs.bitrateMode, cliArgs.framerate, cliArgs.bitrate, cliArgs.width, cliArgs.height);
+    gm_apply(enc_groupfd); // * Activate settings
+}
+
+
+void gm_graph_release(void)
+{
+    gm_enc_t *param;
+    int cap_ch, cap_path, rec_track;
+
+    for (cap_ch = 0; cap_ch < CAP_CH_NUM; cap_ch++) {
+        for (cap_path = 0; cap_path < CAP_PATH_NUM; cap_path++) {
+            param = &enc_param[cap_ch][cap_path];
+            for (rec_track = 0; rec_track < ENC_TRACK_NUM; rec_track++) {
+                if (param->bindfd[rec_track])
+                    gm_unbind(param->bindfd[rec_track]);
+            }
+        }
+    }
+
+    gm_apply(enc_groupfd);
+    for (cap_ch = 0; cap_ch < CAP_CH_NUM; cap_ch++) {
+        for (cap_path = 0; cap_path < CAP_PATH_NUM; cap_path++) {
+            param = &enc_param[cap_ch][cap_path];
+
+            for (rec_track = 0; rec_track < ENC_TRACK_NUM; rec_track++) {
+                if (param->enc[rec_track].obj)
+                    gm_delete_obj(param->enc[rec_track].obj);
+            }
+
+            if (param->cap.obj)
+                gm_delete_obj(param->cap.obj);
+        }
+    }
+
+    /* Free any allocated video buffers to reduce RAM usage */
+    for (cap_ch = 0; cap_ch < CAP_CH_NUM; cap_ch++) {
+        int sub;
+        for (sub = 0; sub < RTSP_NUM_PER_CAP; sub++) {
+            priv_avbs_t *pb = &enc[cap_ch].priv_bs[sub];
+            if (pb->video.bs_buf) {
+                free(pb->video.bs_buf);
+                pb->video.bs_buf = NULL;
+            }
+        }
+    }
+
+    /* FIX #2: release the scaler encoder object if it was created */
+    if (sub_enc_object) {
+        gm_delete_obj(sub_enc_object);
+        sub_enc_object = NULL;
+    }
+
+    gm_delete_groupfd(enc_groupfd);
+    gm_release();
+}
+
+
+void *encode_thread(void *ptr)
+{
+    int i, j, ch = 0, ret, cap_ch, cap_path, rec_track, rcv_nr, w, h;
+    int first_play[CAP_CH_NUM][RTSP_NUM_PER_CAP];
+    memset(first_play, 0, sizeof(first_play));
+    priv_avbs_t *pb;
+    avbs_t *avbs;
+    gm_enc_multi_bitstream_t bs[CAP_CH_NUM][RTSP_NUM_PER_CAP];
+    gm_pollfd_t poll_fds[CAP_CH_NUM][RTSP_NUM_PER_CAP];
+    gm_enc_t *param;
+    static struct timeval prev;
+    struct timeval cur, tout;
+    static int timeval_init = 0;
+    int diff;
+
+    memset(poll_fds, 0, sizeof(poll_fds));
+
+    for (cap_ch = 0; cap_ch < CAP_CH_NUM; cap_ch++) {
+        for (cap_path = 0; cap_path < CAP_PATH_NUM; cap_path++) {
+            param = &enc_param[cap_ch][cap_path];
+            for (rec_track = 0; rec_track < ENC_TRACK_NUM; rec_track++) {
+                if (param->bindfd[rec_track]) {
+                    poll_fds[cap_ch][ch].bindfd = param->bindfd[rec_track];
+                    poll_fds[cap_ch][ch].event  = GM_POLL_READ;
+
+                    avbs = &enc[cap_ch].bs[ch];
+                    get_enc_res(&param->enc[rec_track], NULL, &w, &h);
+
+                    pb = &enc[cap_ch].priv_bs[ch];
+                    pb->video.bs_buf_len = w * h * 3 / 2;
+                    pb->video.bs_buf     = malloc(pb->video.bs_buf_len);
+                    pb->video.cap_ch     = cap_ch;
+                    pb->video.cap_path   = cap_path;
+                    pb->video.rec_track  = rec_track;
+                    /* initialize audio queue number and sdp */                    
+                    if (pb->audio.sdpstr[0] == '\0')
+                        pb->audio.sdpstr[0] = '\0';
+                    ch++;
+                }
+            }
+        }
+    }
+
+    while(1) {
+        if (rtspd_sysinit == 0)
+            break;
+
+        if (rtspd_set_event) {
+            usleep(2000);
+            continue;
+        }
+
+        if (set_poll_event() < 0) {
+            usleep(2000);
+            continue;
+        }
+
+        gettimeofday(&cur, NULL);
+
+        if (timeval_init == 0) {
+            timeval_init = 1;
+            tout.tv_sec  = 0;
+            tout.tv_usec = poll_wait_time;
+        } else {
+            diff         = (cur.tv_usec < prev.tv_usec) ? (cur.tv_usec+1000000-prev.tv_usec) : (cur.tv_usec-prev.tv_usec);
+            tout.tv_usec = (diff > poll_wait_time) ? (tout.tv_usec = 0) : (poll_wait_time - diff);
+        }
+
+        usleep(tout.tv_usec);
+        gettimeofday(&prev, NULL);
+        ret = 0;
+
+        if (rtspd_sysinit == 0)
+            break;
+
+        ret = gm_poll(&poll_fds[0][0], CAP_CH_NUM * RTSP_NUM_PER_CAP, 2000);
+
+        if (ret == GM_TIMEOUT) {
+            log_error("GM Poll timeout!!");
+            continue;
+        }
+
+        rcv_nr = 0;
+        memset(bs, 0, sizeof(bs));
+
+        for (i = 0; i < CAP_CH_NUM; i++) {
+            for (j = 0; j < RTSP_NUM_PER_CAP; j++) {
+                pb = &enc[i].priv_bs[j];
+
+                if (pb->video.offs || pb->video.len){
+                    /* FIX #4: detect and recover a video buffer slot that
+                     * has been "locked" (waiting for frm_cb to clear it)
+                     * for longer than VIDEO_BUF_STALE_MS. If frm_cb never
+                     * fires back for this frame (e.g. client dropped mid
+                     * transfer), this slot would otherwise be BUSY forever
+                     * and that channel would stop receiving new frames
+                     * permanently -> exactly the "plays a few seconds then
+                     * disconnects and never recovers" symptom. */
+                    struct timeval now_tv;
+                    long busy_ms;
+
+                    gettimeofday(&now_tv, NULL);
+                    busy_ms = (now_tv.tv_sec  - pb->video.lock_tv.tv_sec)  * 1000
+                            + (now_tv.tv_usec - pb->video.lock_tv.tv_usec) / 1000;
+
+                    if (busy_ms >= VIDEO_BUF_STALE_MS) {
+                        log_error("VIDEO BUFFER STALE ch=%d sub=%d busy_ms=%ld -> force release",
+                                   i, j, busy_ms);
+
+                        pthread_mutex_lock(&pb->video.priv_vbs_mutex);
+                        pb->video.offs = (uintptr_t)NULL;
+                        pb->video.len  = 0;
+                        pthread_mutex_unlock(&pb->video.priv_vbs_mutex);
+                        /* fall through: let this channel be considered for
+                         * a new frame in this same poll iteration */
+                    } else {
+                        log_error("VIDEO BUFFER BUSY offs=%p len=%d busy_ms=%ld",
+                                   (void *)pb->video.offs, pb->video.len, busy_ms);
+                        continue;
+                    }
+                }
+                if (poll_fds[i][j].revent.event != GM_POLL_READ)
+                    continue;
+
+                if (poll_fds[i][j].revent.bs_len > pb->video.bs_buf_len) {
+                    log_error("%d_%d: bindfd(%p) bitstream buffer length is not enough! (%d_bytes vs %d_bytes)", i, j, poll_fds[i][j].bindfd, poll_fds[i][j].revent.bs_len, pb->video.bs_buf_len);
+                    continue;
+                }
+
+                rcv_nr++;
+                bs[i][j].bindfd = poll_fds[i][j].bindfd;
+
+                // * Set buffer point
+                bs[i][j].bs.bs_buf = pb->video.bs_buf;
+
+                // * Set buffer length
+                bs[i][j].bs.bs_buf_len = pb->video.bs_buf_len;
+
+                // * Turn receiving MV data off
+                bs[i][j].bs.mv_buf = 0;
+                bs[i][j].bs.mv_buf_len = 0;
+
+                if (pb->play == 0)
+                    first_play[i][j] = -1;
+            }
+        }
+
+        if (rcv_nr == 0)
+            continue;
+
+        if (rtspd_sysinit == 0)
+            break;
+
+        if ( (ret = gm_recv_multi_bitstreams(&bs[0][0], rcv_nr)) < 0 ) {
+            // <= -1: fail, 0: success
+            log_error("Failed to receive bitstream (gm_recv_multi_bitstreams).");
+            log_error("gm_recv_multi_bitstreams FAILED ret=%d rcv_nr=%d",ret,rcv_nr);
+            continue;
+        }
+
+        for (i = 0; i < CAP_CH_NUM; i++) {
+            for (j = 0; j < RTSP_NUM_PER_CAP; j++) {
+
+                if (rtspd_sysinit == 0)
+                    continue;
+
+                pb = &enc[i].priv_bs[j];
+                avbs = &enc[i].bs[j];
+
+                if ((bs[i][j].retval < 0) && bs[i][j].bindfd)
+                    //log_error("Failed to receive bitstream.");
+                    log_error("BITSTREAM retval=%d ch=%d sub=%d bindfd=%p",bs[i][j].retval,i,j,bs[i][j].bindfd);
+
+                else if (bs[i][j].retval == GM_SUCCESS) {
+                    static unsigned int last_video_ts[CAP_CH_NUM][RTSP_NUM_PER_CAP] = {{0}};
+                    unsigned int cur_ts = bs[i][j].bs.timestamp;
+                    if (last_video_ts[i][j] != 0) {
+                        unsigned int diff = cur_ts - last_video_ts[i][j];
+                        if (diff > 200) {
+                            log_error("VIDEO GAP ch=%d sub=%d diff_ms=%u len=%d key=%d", i, j, diff, bs[i][j].bs.bs_len, bs[i][j].bs.keyframe);
+                        }
+                    }
+                    last_video_ts[i][j] = cur_ts;    
+                    if (bs[i][j].bs.keyframe == 1) {
+					    //log_info("IDR FRAME len=%d ts=%u",bs[i][j].bs.bs_len,bs[i][j].bs.timestamp);
+					}
+                        VideoRecorder.waiting_for_keyframe = 0;
+					
+                    // * Write buffer to file in case recording is enabled
+                    if (VideoRecorder.recording == 1 && VideoRecorder.fh != NULL && VideoRecorder.waiting_for_keyframe == 0) {
+                        fwrite(bs[i][j].bs.bs_buf, 1, bs[i][j].bs.bs_len, VideoRecorder.fh);
+                        fflush(VideoRecorder.fh);
+                    }
+
+                    if (avbs->video.enc_type != ENC_TYPE_MJPEG) {
+                        if ((pb->play == 1) && (first_play[i][j] == 0) && (bs[i][j].bs.keyframe == 1)) {
+							//log_info("FIRST KEYFRAME AFTER PLAY");
+                            first_play[i][j] = 1;
+                        }
+						static int last_play = -1;	
+						if (last_play != pb->play) {
+						    //log_info("PLAY STATE %d -> %d",last_play,pb->play);
+						    last_play = pb->play;
+						}
+                    }
+					
+                    if (first_play[i][j] == 1) {
+                        pthread_mutex_lock(&pb->video.priv_vbs_mutex);
+                        pb->video.offs  = (uintptr_t) (bs[i][j].bs.bs_buf);
+                        pb->video.len   = bs[i][j].bs.bs_len;
+                        pb->video.tv_ms = bs[i][j].bs.timestamp;
+                        pb->video.gen++;                       /* FIX #4 */
+                        gettimeofday(&pb->video.lock_tv, NULL); /* FIX #4 */
+                        pthread_mutex_unlock(&pb->video.priv_vbs_mutex);
+
+                        // * Write buffer to the rtsp service and empty buffers
+                        if (write_rtp_frame_ext(i, j, (void *)pb->video.offs, pb->video.len, bs[i][j].bs.timestamp) == 1) {
+                            pb->video.offs = (uintptr_t)NULL;
+                            pb->video.len  = 0;
+                        }
+						
+                    print_enc_average(i, j, bs[i][j].bs.bs_len, &cur);
+                    }
+                }
+            }
+        }
+    }
+    pthread_exit(NULL);
+    encode_thread_id = (pthread_t)NULL;
+    return NULL;
+}
+
+void update_video_sdp(int cap_ch, int cap_path, int rec_track)
+{
+    char *bitstream_data = NULL;
+    unsigned int bitstream_data_len;
+    gm_enc_multi_bitstream_t bs;
+    gm_pollfd_t poll_fds;
+    int ret, cnt=0, w, h;
+    gm_enc_t *param;
+    priv_avbs_t *pb;
+    
+    memset(&poll_fds, 0, sizeof(poll_fds));
+    param = &enc_param[cap_ch][cap_path];
+
+    if (param->bindfd[rec_track]) {
+        poll_fds.bindfd = param->bindfd[rec_track];
+        poll_fds.event = GM_POLL_READ;
+        get_enc_res(&param->enc[rec_track], NULL, &w, &h);
+        if (cap_path >= RTSP_NUM_PER_CAP) {
+            log_error("BAD cap_path=%d", cap_path);
+            return;
+        }
+        pb = &enc[cap_ch].priv_bs[0];
+        bitstream_data_len = w * h * 3 / 2;
+        bitstream_data = malloc(bitstream_data_len);
+    }
+    else return;
+
+    while(1) {
+        ret = gm_poll(&poll_fds, 1, 2000);
+        if ( ret == GM_TIMEOUT ) {
+            log_error("GM Poll timeout");
+            continue;
+        }
+
+        memset(&bs, 0, sizeof(bs));
+
+        if ( poll_fds.revent.event != GM_POLL_READ )
+            continue;
+
+        if ( poll_fds.revent.bs_len > bitstream_data_len) {
+            log_error("bitstream buffer length is too small! %d, %d", poll_fds.revent.bs_len, bitstream_data_len);
+            continue;
+        }
+
+        bs.bindfd = poll_fds.bindfd;
+
+        // * Set buffer point
+        bs.bs.bs_buf = bitstream_data;
+
+        // * Set buffer length
+        bs.bs.bs_buf_len = bitstream_data_len;
+
+        // * Turn off receiving motion data
+        bs.bs.mv_buf = 0;
+        bs.bs.mv_buf_len = 0;
+        
+    ret = gm_recv_multi_bitstreams(&bs, 1);     // * -1: Fail 0: Success
+    if ( ret < 0 )
+        log_error("Failed to receive bitstream (gm_recv_multi_bitstreams).");
+    else if ( (bs.retval < 0) && bs.bindfd )
+        log_error("Failed to receive bitstream.");
+
+    else if ( ret == 0 && bs.retval == GM_SUCCESS ) {
+        if (bs.bs.keyframe == 1) {
+        unsigned char *p = (unsigned char *)bs.bs.bs_buf;
+        printf("NAL %02X %02X %02X %02X %02X %02X %02X %02X\n",p[0], p[1], p[2], p[3],p[4], p[5], p[6], p[7]);
+    }
+        if (bs.bs.keyframe == 1 ) {
+            switch (cliArgs.encoderType) {
+                case 0:
+                    stream_sdp_parameter_encoder("H264", (unsigned char *) bs.bs.bs_buf, bs.bs.bs_len, pb->video.sdpstr, SDPSTR_MAX);
+					//log_info("SDP =[%s]",pb->video.sdpstr);
+                    break;
+                case 1:
+                    stream_sdp_parameter_encoder("H264", (unsigned char *) bs.bs.bs_buf, bs.bs.bs_len, pb->video.sdpstr, SDPSTR_MAX);
+					//log_info("SDP =[%s]",pb->video.sdpstr);
+                    break;
+                case 2:
+                    stream_sdp_parameter_encoder("H264", (unsigned char *) bs.bs.bs_buf, bs.bs.bs_len, pb->video.sdpstr, SDPSTR_MAX);
+					//log_info("SDP =[%s]",pb->video.sdpstr);
+                    break;
+            }
+            memset(pb->video.sdpstr + SDPSTR_MAX - 1, 0, 1);
+            break;
+        }
+        else {
+            /* FIX #1: original code was missing braces around this if,
+             * so `break;` executed unconditionally on the very first
+             * non-keyframe received, exiting this loop BEFORE a keyframe
+             * (and thus SPS/PPS) was ever captured. That produces an
+             * empty/incomplete `pb->video.sdpstr`, which is sent to RTSP
+             * clients in the SDP -- clients can fail to init the decoder,
+             * or only survive a couple of seconds relying on in-band
+             * SPS/PPS before erroring out and disconnecting. */
+            if (++cnt > 100) {
+                log_error("Timeout reached while waiting for keyframe");
+                break;
+            }
+        }
+    }
+    }
+    if (bitstream_data)
+        free(bitstream_data);
+}
+
+static int rtspd_start(int port)
+{
+    int ret;
+    int ch_num, stream, cap_ch, cap_path, rec_track;
+    pthread_attr_t attr;
+
+    if (rtspd_sysinit == 1)
+        return -1;
+
+    if ((0 < port) && (port < 0x10000))
+        sys_port = port;
+
+    if ((ret = env_init()) < 0)
+        return ret;
+
+    for (cap_ch = 0; cap_ch < CAP_CH_NUM; cap_ch++) {
+        for (cap_path = 0; cap_path < CAP_PATH_NUM; cap_path++) {
+            for (rec_track = 0; rec_track < ENC_TRACK_NUM; rec_track++) {
+                update_video_sdp(cap_ch, cap_path, rec_track);                
+            }
+        }
+    }
+
+    if (pthread_mutex_init(&stream_queue_mutex, NULL)) {
+        log_error("rtspd_start: mutex init failed");
+        exit(-1);
+    }
+
+    rtspd_sysinit = 1;
+
+    // * Encode Thread
+    if (encode_thread_id == (pthread_t)NULL) {
+        pthread_attr_init(&attr);
+        pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+        ret = pthread_create(&encode_thread_id, &attr, &encode_thread, NULL);
+        pthread_attr_destroy(&attr);
+    }
+
+    // * Snapshot Thread
+    if (media_thread_id == (pthread_t)NULL) {
+        pthread_attr_init(&attr);
+        pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+        ret = pthread_create(&media_thread_id, &attr, &media_thread, NULL);
+        pthread_attr_destroy(&attr);
+    }
+
+    // * Motion Thread
+    if (cliArgs.motion == 1) {
+        if (motion_thread_id == (pthread_t)NULL) {
+            pthread_attr_init(&attr);
+            pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+            ret = pthread_create(&motion_thread_id, &attr, &motion_thread, NULL);
+            pthread_attr_destroy(&attr);
+        }
+    }
+
+    // * Enqueue Thread
+    if (enqueue_thread_id == (pthread_t)NULL) {
+        pthread_attr_init(&attr);
+        pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+        ret = pthread_create(&enqueue_thread_id, &attr, &enqueue_thread, NULL);
+        pthread_attr_destroy(&attr);
+    }
+
+    if (cliArgs.osd && osd_thread_id == (pthread_t)NULL) {
+        pthread_attr_init(&attr);
+        pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+        ret = pthread_create(&osd_thread_id, &attr, &rtspd_osd_thread, enc_param[0][0].cap.obj);
+        pthread_attr_destroy(&attr);
+    }
+
+    /* Audio thread: capture, encode and enqueue audio frames to stream */
+    #if 0
+    if (audio_thread_id == (pthread_t)NULL) {
+        pthread_attr_init(&attr);
+        pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+        ret = pthread_create(&audio_thread_id, &attr, &audio_thread, NULL);
+        pthread_attr_destroy(&attr);
+    }
+    #endif        
+
+    for (ch_num = 0; ch_num < CAP_CH_NUM; ch_num++) {
+        pthread_mutex_lock(&enc[ch_num].ubs_mutex);
+
+        for (stream = 0; stream < RTSP_NUM_PER_CAP; stream++)
+            env_set_bs_new_event(ch_num, stream, START_BS_EVENT);
+
+        pthread_mutex_unlock(&enc[ch_num].ubs_mutex);
+    }
+
+    return 0;
+}
+
+
+int is_bs_all_disable(void)
+{
+    av_t *e;
+    int ch_num, sub_num;
+
+    for (ch_num=0; ch_num < CAP_CH_NUM; ch_num++) {
+        e = &enc[ch_num];
+        for(sub_num=0; sub_num < RTSP_NUM_PER_CAP; sub_num++) {
+            if (e->bs[sub_num].enabled == DVR_ENC_EBST_ENABLE)
+                return 0;
+        }
+    }
+    return 1;
+}
+
+
+static void rtspd_stop(void)
+{
+    pthread_mutex_destroy(&stream_queue_mutex);
+    rtspd_sysinit = 0;
+
+    if (cliArgs.motion == 1)
+        motion_detection_end();
+
+    if (cliArgs.record == 1 && VideoRecorder.recording == 1) {
+        if (stop_recording() < 0)
+            log_error("Failed to stop recording in rtspd_stop");
+    }
+
+    if (snapshot_buf) {
+        free(snapshot_buf);
+        snapshot_buf = NULL;
+    }
+}
+
+
+char *get_local_ip(void)
+{
+    int fd;
+    struct ifreq ifr;
+
+    fd = socket(AF_INET, SOCK_DGRAM, 0);
+    ifr.ifr_addr.sa_family = AF_INET;
+    strncpy(ifr.ifr_name, "wlan0", IFNAMSIZ-1);
+    ioctl(fd, SIOCGIFADDR, &ifr);
+    close(fd);
+    //return inet_ntoa(((struct sockaddr_in *)&ifr.ifr_addr)->sin_addr);
+    struct sockaddr_in sin;
+    memcpy(&sin, &ifr.ifr_addr, sizeof(sin));
+    return inet_ntoa(sin.sin_addr);
+}
+
+
+static void print_usage(void)
+{
+    printf("Usage:\n");
+    printf(" ./rtspd [-bfwhm] [-j|-4]\n");
+    printf(
+        "\nAvailable options:\n"
+        "-b [1-8192]    - Set the bitrate         (default: 1024)\n"
+        "-f [1-20]      - Set the framerate       (default: 20)\n"
+        "-w [1-1920]    - Set the image width     (default: 1920 pixels)\n"
+        "-h [1-1080]    - Set the image height    (default: 1080 pixels)\n"
+        "-m [1-4]       - Set the bitrate mode    (default: 1, CBR)\n\n"
+
+        "-j (optional)  - Use MJPEG encoding      (default: off)\n"
+        "-4 (optional)  - Use MPEG4 encoding      (default: off)\n"
+        "-o (optional)  - Enable OSD overlay with (default: on, timestamp updated every second)\n"
+        "-t [text]      - Set OSD overlay text    (default: 'hostname')\n"
+        "-z [0-4]       - Set OSD font zoom (0=none,1=2x,2=3x,3=4x,4=1/2) (default: 0)\n"
+        "-d (optional)  - Enable motion detection (default: off)\n"
+        "-s (optional)  - Take a snapshot when motion detected (default: off)\n"
+        "-r (optional)  - Record a 10 second clip on motion    (default: off)\n"
+        "-B [0-15]      - Set OSD background palette index (default: 1/Black)\n"
+    );
+
+	exit(EXIT_FAILURE);
+}
+
+
+void signal_handler(int sig)
+{
+    log_fatal("Exiting rtspd: CTRL+C pressed, or exit requested");
+
+    rtspd_stop();
+    gm_graph_release();
+
+    exit(EXIT_SUCCESS);
+}
+
+void setup_logging(void)
+{
+    logfile = fopen(RTSPD_LOGFILE, "a");
+    if(logfile)
+        log_set_fp(logfile);
+}
+
+
+int main(int argc, char *argv[])
+{
+    int i;
+
+    // * Setup logging
+    setup_logging();
+
+    // snapshot_buf is allocated lazily in take_snapshot() to reduce RAM usage
+    snapshot_buf = NULL;
+
+    cliArgs.bitrate     = 1024;
+    cliArgs.framerate   = 20;
+    cliArgs.width       = 1920;
+    cliArgs.height      = 1080;
+    cliArgs.bitrateMode = GM_CBR;
+    cliArgs.encoderType = ENC_TYPE_H264;
+
+    cliArgs.snapshot    = 0;
+    cliArgs.record      = 0;
+    cliArgs.motion      = 0;
+    cliArgs.osd         = 0;
+    cliArgs.font_zoom   = GM_OSD_FONT_ZOOM_NONE;
+    cliArgs.osd_bg_color= 1;
+    cliArgs.osd_text[0] = '\0';
+
+    if (argc > 1) {
+        for (i = 1; i < argc; i++) {
+            if (argv[i][0] != '-' ) {
+                log_error("Invalid input: %s!", argv[i]);
+                print_usage();
+                return 1;
+            } else {
+                switch (argv[i][1]) {
+                    case 'd':
+                        cliArgs.motion      = 1;    // * Enable motion detection
+                        break;
+                    case 's':
+                        cliArgs.snapshot    = 1;    // * Enable snapshot when motion detected
+                        break;
+                    case 'r':
+                        cliArgs.record      = 1;    // * Enable record stream when motion detected
+                        break;
+                    case 'b':
+                        cliArgs.bitrate     = atoi(&argv[i][2]);
+                        break;
+                    case 'f':
+                        cliArgs.framerate   = atoi(&argv[i][2]);
+                        break;
+                    case 'w':
+                        cliArgs.width       = atoi(&argv[i][2]);
+                        break;
+                    case 'h':
+                        cliArgs.height      = atoi(&argv[i][2]);
+                        break;
+                    case 'm':
+                        cliArgs.bitrateMode = atoi(&argv[i][2]);
+                        break;
+                    case 'j':
+                        cliArgs.encoderType = ENC_TYPE_MJPEG;
+                        break;
+                    case '4':
+                        cliArgs.encoderType = ENC_TYPE_MPEG4;
+                        break;
+                    case 'o':
+                        cliArgs.osd = 1;
+                        if (argv[i][2] != '\0') {
+                            strncpy(cliArgs.osd_text, &argv[i][2], sizeof(cliArgs.osd_text) - 1);
+                            cliArgs.osd_text[sizeof(cliArgs.osd_text) - 1] = '\0';
+                        } else if ((i + 1) < argc && argv[i + 1][0] != '-') {
+                            strncpy(cliArgs.osd_text, argv[++i], sizeof(cliArgs.osd_text) - 1);
+                            cliArgs.osd_text[sizeof(cliArgs.osd_text) - 1] = '\0';
+                        }
+                        break;
+                    case 'B':
+                        cliArgs.osd = 1;
+                        if (argv[i][2] != '\0') {
+                            cliArgs.osd_bg_color = atoi(&argv[i][2]);
+                        } else if ((i + 1) < argc && argv[i + 1][0] != '-') {
+                            cliArgs.osd_bg_color = atoi(argv[++i]);
+                        }
+                        if (cliArgs.osd_bg_color < 0 || cliArgs.osd_bg_color > 15)
+                            cliArgs.osd_bg_color = 1;
+                        break;
+                    case 'z':
+                        /* expect a digit after -z or -zN */
+                        if (argv[i][2] != '\0')
+                            cliArgs.font_zoom = atoi(&argv[i][2]);
+                        else if ((i + 1) < argc && argv[i + 1][0] != '-')
+                            cliArgs.font_zoom = atoi(argv[++i]);
+                        else
+                            cliArgs.font_zoom = GM_OSD_FONT_ZOOM_NONE;
+                        if (cliArgs.font_zoom < 0 || cliArgs.font_zoom > 12)
+                            cliArgs.font_zoom = GM_OSD_FONT_ZOOM_NONE;
+                        break;
+                    case 't':
+                        if (argv[i][2] != '\0') {
+                            strncpy(cliArgs.osd_text, &argv[i][2], sizeof(cliArgs.osd_text) - 1);
+                            cliArgs.osd_text[sizeof(cliArgs.osd_text) - 1] = '\0';
+                        } else if ((i + 1) < argc && argv[i + 1][0] != '-') {
+                            strncpy(cliArgs.osd_text, argv[++i], sizeof(cliArgs.osd_text) - 1);
+                            cliArgs.osd_text[sizeof(cliArgs.osd_text) - 1] = '\0';
+                        }
+                        cliArgs.osd = 1;
+                        break;
+                    default:
+                        log_error("Unknown argument: %s", argv[i]);
+                        print_usage();
+                        return 1;
+                }
+            }
+        }
+    }
+
+    if ((cliArgs.motion != 1) && (cliArgs.snapshot == 1 || cliArgs.record == 1)) {
+        log_error("-d is required when using -s or -r");
+        return 1;
+    }
+
+    if ((cliArgs.bitrate < 1) || (cliArgs.bitrate > 8192)) {
+        log_error("Use a maximum bitrate of 8192 and a minimum of 1");
+        return 1;
+    }
+
+    if ((cliArgs.framerate < 1) || (cliArgs.framerate > 30)) {
+        log_error("A framerate below 1 or higher than 30 fps is not supported.");
+        return 1;
+    }
+
+    if ((cliArgs.height < 1) || (cliArgs.height > 1080)) {
+        log_error("A height bigger than 1080p or below 1 is not supported.");
+        return 1;
+    }
+
+    if ((cliArgs.width < 1) || (cliArgs.width > 1920)) {
+        log_error("A width wider than 1920p is not supported.");
+        return 1;
+    }
+
+    if ((cliArgs.bitrateMode < 1) || (cliArgs.bitrateMode > 4)) {
+        log_error("Bitrate mode should be in between 1 and 4");
+        return 1;
+    }
+
+    /* If no custom OSD text provided, read HOSTNAME from config and use it */
+    if (cliArgs.osd_text[0] == '\0') {
+        char hostbuf[32];
+        read_hostname(hostbuf, sizeof(hostbuf));
+        if (hostbuf[0] != '\0') {
+            strncpy(cliArgs.osd_text, hostbuf, sizeof(cliArgs.osd_text) - 1);
+            cliArgs.osd_text[sizeof(cliArgs.osd_text) - 1] = '\0';
+        }
+    }
+
+    log_info("Starting the RTSP Daemon");
+
+    rtsp_password = getenv("RTSP_PASS");
+    rtsp_username = getenv("RTSP_USER");
+
+    if (rtsp_username != NULL && strcmp(rtsp_username, "") != 0 && rtsp_password != NULL && strcmp(rtsp_password, "") != 0) {
+        rtsp_use_auth = 1;
+        log_info("Enabling stream authentication.");
+        log_info("Stream username: %s", rtsp_username);
+        log_info("Stream password: %s", rtsp_password);
+    }
+
+    // * Initializing gmlib
+    gm_graph_init();
+
+    log_info("Width        : %d", cliArgs.width);
+    log_info("Height       : %d", cliArgs.height);
+    log_info("Encoder      : %s", cliArgs.encoderType == ENC_TYPE_H264 ? "H264" : cliArgs.encoderType == ENC_TYPE_MJPEG ? "MJPEG" : "MPEG4");
+    log_info("Framerate    : %d", cliArgs.framerate);
+    log_info("Bitrate      : %d", cliArgs.bitrate);
+    log_info("Bitrate Mode : %d", cliArgs.bitrateMode);
+
+    // * Use our handler for the signals so we can do some cleanup at quit
+    signal(SIGINT,  signal_handler);
+    signal(SIGHUP,  signal_handler);
+    signal(SIGTERM, signal_handler);
+
+    // * Start the rtsp threads
+    rtspd_start(554);
+
+    while(1) {
+        usleep(10000);
+    }
+
+    return 0;
+}
