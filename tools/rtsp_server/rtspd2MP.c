@@ -2232,6 +2232,12 @@ void *encode_thread(void *ptr)
             break;
 
         ret = gm_poll(&poll_fds[0][0], CAP_CH_NUM * RTSP_NUM_PER_CAP, 2000);
+		log_error("GM_POLL ret=%d event=%d",ret,poll_fds[0][0].revent.event);
+		if (poll_fds[i][j].revent.event != GM_POLL_READ)
+		{
+    		log_error("NO READ EVENT");
+    		continue;
+		}
 
         if (ret == GM_TIMEOUT) {
             log_error("GM Poll timeout!!");
@@ -2291,6 +2297,7 @@ void *encode_thread(void *ptr)
                 if ((bs[i][j].retval < 0) && bs[i][j].bindfd)
                     log_error("Failed to receive bitstream.");
                 else if (bs[i][j].retval == GM_SUCCESS) {
+					log_error("FRAME len=%d key=%d ts=%u",bs[i][j].bs.bs_len,bs[i][j].bs.keyframe,bs[i][j].bs.timestamp);
                     static unsigned int last_video_ts[CAP_CH_NUM][RTSP_NUM_PER_CAP] = {{0}};
                     unsigned int cur_ts = bs[i][j].bs.timestamp;
                     if (last_video_ts[i][j] != 0) {
