@@ -869,10 +869,14 @@ static int open_live_streaming(int ch_num, int sub_num)
         pb->audio.qno = do_queue_alloc(a_media_type);
         pb->sr = stream_reg(livename, pb->video.qno, pb->video.sdpstr, pb->audio.qno, pb->audio.sdpstr,1,0,0,0,0,NULL,NULL);
 		log_info("stream_reg sr=%d q=%d",pb->sr,pb->video.qno);
+		if (pb->sr <= 0)
+    		log_error("BAD SR=%d", pb->sr);
         pb->play = 0;
     } else {
         pb->sr = stream_reg(livename, pb->video.qno, pb->video.sdpstr, pb->audio.qno, pb->audio.sdpstr,1,0,0,0,0,NULL,NULL);
 		log_info("stream_reg sr=%d q=%d",pb->sr,pb->video.qno);
+		if (pb->sr <= 0)
+    		log_error("BAD SR=%d", pb->sr);
         pb->play = 0;
     }
         
@@ -1316,6 +1320,10 @@ priv_avbs_t *find_file_sr(char *name, int srno)
 {
     int ch_num, sub_num, hit=0;
     priv_avbs_t *pb;
+	if (!name) {
+       log_error("name is NULL");
+       return NULL;
+    }
 	log_error("FIND name=%s srno=%d", name, srno);
 	
     for (ch_num = 0; ch_num < CAP_CH_NUM; ch_num++) {
@@ -1323,6 +1331,7 @@ priv_avbs_t *find_file_sr(char *name, int srno)
             pb = &enc[ch_num].priv_bs[sub_num];
 			log_error("CHECK pb->sr=%d pb->name=%s", pb->sr,pb->name);
             if ((pb->sr == srno) && (pb->name) && (strcmp(pb->name, name) == 0)) {
+				log_error("CMP [%s] [%s]",pb->name,name);
 				log_error("MATCH FOUND");
                 hit = 1;
                 break;
