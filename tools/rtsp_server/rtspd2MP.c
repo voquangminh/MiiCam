@@ -155,7 +155,7 @@ typedef struct st_vbs {
 typedef struct st_priv_vbs {
     char sdpstr[SDPSTR_MAX];
     int qno;
-    uintptr_t offs;
+    int offs;
     int len;
     unsigned int tv_ms;
     int cap_ch;
@@ -2253,7 +2253,7 @@ void *encode_thread(void *ptr)
 
                     if (first_play[i][j] == 1) {
                         pthread_mutex_lock(&pb->video.priv_vbs_mutex);
-                        pb->video.offs  = (uintptr_t) (bs[i][j].bs.bs_buf);
+                        pb->video.offs  = (int) (bs[i][j].bs.bs_buf);
                         pb->video.len   = bs[i][j].bs.bs_len;
                         pb->video.tv_ms = bs[i][j].bs.timestamp;
                         pthread_mutex_unlock(&pb->video.priv_vbs_mutex);
