@@ -2233,6 +2233,7 @@ void *encode_thread(void *ptr)
 
         ret = gm_poll(&poll_fds[0][0], CAP_CH_NUM * RTSP_NUM_PER_CAP, 2000);
 		log_error("GM_POLL ret=%d event=%d",ret,poll_fds[0][0].revent.event);
+		log_error("event=%d GM_POLL_READ=%d",poll_fds[i][j].revent.event,GM_POLL_READ);
 		if (poll_fds[i][j].revent.event != GM_POLL_READ)
 		{
     		log_error("NO READ EVENT");
@@ -2241,6 +2242,7 @@ void *encode_thread(void *ptr)
 
         if (ret == GM_TIMEOUT) {
             log_error("GM Poll timeout!!");
+			log_error("GM_TIMEOUT=%d", GM_TIMEOUT);
             continue;
         }
 
@@ -2285,6 +2287,8 @@ void *encode_thread(void *ptr)
         if ( (ret = gm_recv_multi_bitstreams(&bs[0][0], rcv_nr)) < 0 ) {
             // <= -1: fail, 0: success
             log_error("Failed to receive bitstream (gm_recv_multi_bitstreams).");
+			log_error("gm_recv_multi_bitstreams ret=%d rcv_nr=%d",ret,rcv_nr);
+			log_error("retval=%d bs_len=%d",bs[i][j].retval,bs[i][j].bs.bs_len);
             continue;
         }
 
