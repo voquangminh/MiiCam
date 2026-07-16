@@ -868,9 +868,11 @@ static int open_live_streaming(int ch_num, int sub_num)
         int a_media_type = GM_SS_TYPE_G711A; /* default to G711A audio */
         pb->audio.qno = do_queue_alloc(a_media_type);
         pb->sr = stream_reg(livename, pb->video.qno, pb->video.sdpstr, pb->audio.qno, pb->audio.sdpstr,1,0,0,0,0,NULL,NULL);
+		log_info("stream_reg sr=%d q=%d",pb->sr,pb->video.qno);
         pb->play = 0;
     } else {
         pb->sr = stream_reg(livename, pb->video.qno, pb->video.sdpstr, pb->audio.qno, pb->audio.sdpstr,1,0,0,0,0,NULL,NULL);
+		log_info("stream_reg sr=%d q=%d",pb->sr,pb->video.qno);
         pb->play = 0;
     }
         
@@ -1354,6 +1356,8 @@ static int cmd_cb(char *name, int sno, int cmd, void *p)
 
         case GM_STREAM_CMD_PLAY:
             if ( strncmp(name, "live/", 5) == 0 ) {
+				log_info("PLAY name=%s sno=%d", name, sno);
+				log_info("FOUND sr=%d q=%d",pb->sr,pb->video.qno);
                 if ((pb = find_file_sr(name, sno)) == NULL){
                     ERR_GOTO(-1, cmd_cb_err);
                 }
@@ -1364,7 +1368,6 @@ static int cmd_cb(char *name, int sno, int cmd, void *p)
             break;
             
         case GM_STREAM_CMD_PAUSE:
-            //log_info("%s:%d <GM_STREAM_CMD_PAUSE>", __FUNCTION__, __LINE__);
             ret = 0;
             break;
 
@@ -1853,7 +1856,7 @@ void gm_enc_init(int cap_ch, int cap_path, int rec_track, int enc_type, int mode
         cap_attr.cap_vch = cap_ch;
 
         // * GM813x capture path 0(liveview), 1(substream), 2(substream), 3(mainstream)
-        cap_attr.path = 3; // cap_path;
+        cap_attr.path = cap_path;
         cap_attr.enable_mv_data = 1;
         gm_set_attr(param->cap.obj, &cap_attr);                // * Set capture attribute
 
