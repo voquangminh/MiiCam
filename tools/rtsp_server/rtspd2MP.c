@@ -899,6 +899,7 @@ static int open_live_streaming(int ch_num, int sub_num)
 #define TIMEVAL_DIFF(start, end) (((end.tv_sec)-(start.tv_sec))*1000000+((end.tv_usec)-(start.tv_usec)))
 static int write_rtp_frame_ext(int ch_num, int sub_num, void *data, int data_len, unsigned int tv_ms)
 {
+	log_error("ENTER write_rtp_frame_ext");
     int ret = 0, media_type;
     avbs_t *b;
     priv_avbs_t *pb;
@@ -919,6 +920,7 @@ static int write_rtp_frame_ext(int ch_num, int sub_num, void *data, int data_len
     entity.timestamp = get_tick_gm(tv_ms);
     media_type = convert_gmss_media_type(b->video.enc_type);
 	pthread_mutex_lock(&stream_queue_mutex);
+	log_error("ENQUEUE q=%d size=%d",pb->video.qno,entity.size);
 	ret = stream_media_enqueue(media_type,pb->video.qno,&entity);
     if (ret == ERR_FULL) {
         log_error("QUEUE FULL");
@@ -2160,7 +2162,7 @@ void *encode_thread(void *ptr)
 
                     avbs = &enc[cap_ch].bs[ch];
                     get_enc_res(&param->enc[rec_track], NULL, &w, &h);
-
+					
                     pb = &enc[cap_ch].priv_bs[ch];
                     pb->video.bs_buf_len = w * h * 3 / 2;
                     pb->video.bs_buf     = malloc(pb->video.bs_buf_len);
@@ -2301,6 +2303,7 @@ void *encode_thread(void *ptr)
                     }
 					
                     if (first_play[i][j] == 1) {
+						log_error("SEND RTP len=%d key=%d ts=%u",bs[i][j].bs.bs_len,bs[i][j].bs.keyframe,bs[i][j].bs.timestamp);
                         pthread_mutex_lock(&pb->video.priv_vbs_mutex);
                         pb->video.offs  = (uintptr_t) (bs[i][j].bs.bs_buf);
                         pb->video.len   = bs[i][j].bs.bs_len;
@@ -2308,11 +2311,11 @@ void *encode_thread(void *ptr)
 						gettimeofday(&pb->video.lock_tv, NULL);
                         pthread_mutex_unlock(&pb->video.priv_vbs_mutex);
 
-                        // * Write buffer to the rtsp service and empty buffers
-                        if (write_rtp_frame_ext(i, j, (void *)pb->video.offs, pb->video.len, bs[i][j].bs.timestamp) == 1) {
-                            pb->video.offs = (uintptr_t)NULL;
-                            pb->video.len  = 0;
-                        }
+                    // * Write buffer to the rtsp service and empty buffers
+                    if (write_rtp_frame_ext(i, j, (void *)pb->video.offs, pb->video.len, bs[i][j].bs.timestamp) == 1) {
+                        pb->video.offs = (uintptr_t)NULL;
+                        pb->video.len  = 0;
+                    }
 						
                     print_enc_average(i, j, bs[i][j].bs.bs_len, &cur);
                     }
