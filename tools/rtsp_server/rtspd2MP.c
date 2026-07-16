@@ -1169,7 +1169,7 @@ void get_enc_res(gm_enc_info_t *enc, int *enc_type, int *width, int *height)
 }
 
 
-#define PRINT_INTERVAL_MS 5000
+#define PRINT_INTERVAL_MS 30000
 static unsigned int frame_counts[CAP_CH_NUM][RTSP_NUM_PER_CAP] = {{0}};
 static unsigned int rec_bs_len[CAP_CH_NUM][RTSP_NUM_PER_CAP]   = {{0}};
 static void print_enc_average(int ch_num, int sub_num, int bs_len, struct timeval *cur_timeval)
