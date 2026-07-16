@@ -43,7 +43,7 @@
 #define ENC_TYPE_MJPEG           2
 
 #define CAP_CH_NUM               1
-#define RTSP_NUM_PER_CAP         4
+#define RTSP_NUM_PER_CAP         1
 #define CAP_PATH_NUM             4
 #define ENC_TRACK_NUM            4
 
