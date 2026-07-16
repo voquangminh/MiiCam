@@ -1316,11 +1316,14 @@ priv_avbs_t *find_file_sr(char *name, int srno)
 {
     int ch_num, sub_num, hit=0;
     priv_avbs_t *pb;
-
+	log_error("FIND name=%s srno=%d", name, srno);
+	
     for (ch_num = 0; ch_num < CAP_CH_NUM; ch_num++) {
         for (sub_num = 0; sub_num < RTSP_NUM_PER_CAP; sub_num++) {
             pb = &enc[ch_num].priv_bs[sub_num];
+			log_error("CHECK pb->sr=%d pb->name=%s", pb->sr,pb->name);
             if ((pb->sr == srno) && (pb->name) && (strcmp(pb->name, name) == 0)) {
+				log_error("MATCH FOUND");
                 hit = 1;
                 break;
             }
@@ -1357,14 +1360,17 @@ static int cmd_cb(char *name, int sno, int cmd, void *p)
             break;
 
         case GM_STREAM_CMD_PLAY:
+			log_error("PLAY BEGIN");
             if ( strncmp(name, "live/", 5) == 0 ) {
 				log_info("PLAY name=%s sno=%d", name, sno);
 				log_info("FOUND sr=%d q=%d",pb->sr,pb->video.qno);
                 if ((pb = find_file_sr(name, sno)) == NULL){
                     ERR_GOTO(-1, cmd_cb_err);
+					log_error("FOUND PB=%p", pb);
                 }
                 if (pb->video.qno >= 0)
                     pb->play = 1;
+				log_error("PLAY END");
             }
             ret = 0;
             break;
@@ -1769,7 +1775,7 @@ void gm_update_bs_info(void)
             param = &enc_param[cap_ch][cap_path];
             for (rec_track = 0; rec_track < ENC_TRACK_NUM; rec_track++) {
                 if (param->bindfd[rec_track]) {
-                    avbs = &enc[cap_ch].bs[ch];
+                    avbs = &enc[cap_ch].bs[0];
                     avbs->video.enc_type = param->enc[rec_track].enc_type;
                     ch++;
                 }
