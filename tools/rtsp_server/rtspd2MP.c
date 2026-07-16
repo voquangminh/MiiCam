@@ -1373,10 +1373,12 @@ static int cmd_cb(char *name, int sno, int cmd, void *p)
             if ( strncmp(name, "live/", 5) == 0 ) {
 				log_info("PLAY name=%s sno=%d", name, sno);
 				log_info("FOUND sr=%d q=%d",pb->sr,pb->video.qno);
-                if ((pb = find_file_sr(name, sno)) == NULL){
+                pb = find_file_sr(name, sno);
+				if (pb == NULL){
+					log_error("find_file_sr failed");
                     ERR_GOTO(-1, cmd_cb_err);
-					log_error("FOUND PB=%p", pb);
                 }
+				log_info("FOUND sr=%d q=%d",pb->sr,pb->video.qno);
                 if (pb->video.qno >= 0)
                     pb->play = 1;
 				log_error("PLAY END");
