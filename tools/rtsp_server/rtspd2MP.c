@@ -456,8 +456,12 @@ static void rtspd_set_osd_text(void *capture_obj, const char *line1, const char 
 
     int ret;
     ret = gm_set_osd_font2(capture_obj, &osd_font2);
-    
-    rtspd_osd_font2_ready = 1;
+    if (ret < 0) {
+    	log_error("gm_set_osd_font2 failed ret=%d", ret);
+	}
+	else {
+    	rtspd_osd_font2_ready = 1;
+	}
 
     pthread_mutex_unlock(&rtspd_osd_mutex);
 }
@@ -869,13 +873,13 @@ static int open_live_streaming(int ch_num, int sub_num)
         pb->audio.qno = do_queue_alloc(a_media_type);
         pb->sr = stream_reg(livename, pb->video.qno, pb->video.sdpstr, pb->audio.qno, pb->audio.sdpstr,1,0,0,0,0,NULL,NULL);
 		log_info("stream_reg sr=%d q=%d",pb->sr,pb->video.qno);
-		if (pb->sr <= 0)
+		if (pb->sr < 0)
     		log_error("BAD SR=%d", pb->sr);
         pb->play = 0;
     } else {
         pb->sr = stream_reg(livename, pb->video.qno, pb->video.sdpstr, pb->audio.qno, pb->audio.sdpstr,1,0,0,0,0,NULL,NULL);
 		log_info("stream_reg sr=%d q=%d",pb->sr,pb->video.qno);
-		if (pb->sr <= 0)
+		if (pb->sr < 0)
     		log_error("BAD SR=%d", pb->sr);
         pb->play = 0;
     }
@@ -1330,7 +1334,7 @@ priv_avbs_t *find_file_sr(char *name, int srno)
         for (sub_num = 0; sub_num < RTSP_NUM_PER_CAP; sub_num++) {
             pb = &enc[ch_num].priv_bs[sub_num];
 			log_error("CHECK pb->sr=%d pb->name=%s", pb->sr,pb->name);
-            if ((pb->sr == srno) && (pb->name) && (strcmp(pb->name, name) == 0)) {
+            if ((pb->sr == srno) && (strcmp(pb->name, name) == 0)) {
 				log_error("CMP [%s] [%s]",pb->name,name);
 				log_error("MATCH FOUND");
                 hit = 1;
@@ -1372,7 +1376,6 @@ static int cmd_cb(char *name, int sno, int cmd, void *p)
 			log_error("PLAY BEGIN");
             if ( strncmp(name, "live/", 5) == 0 ) {
 				log_info("PLAY name=%s sno=%d", name, sno);
-				log_info("FOUND sr=%d q=%d",pb->sr,pb->video.qno);
                 pb = find_file_sr(name, sno);
 				if (pb == NULL){
 					log_error("find_file_sr failed");
