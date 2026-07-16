@@ -55,6 +55,7 @@
 #define AQ_LEN                   2             // * 1 MP2 and 1 AMR for live streaming, another 2 for file streaming.
 #define AV_NAME_MAX              127
 #define AU_BITSTREAM_LEN         12800
+#define GM_SS_TYPE_G711A         13
 
 #define RTP_HZ                   90000
 
@@ -2556,10 +2557,10 @@ int main(int argc, char *argv[])
     // snapshot_buf is allocated lazily in take_snapshot() to reduce RAM usage
     snapshot_buf = NULL;
 
-    cliArgs.bitrate     = 1024;
+    cliArgs.bitrate     = 4098;
     cliArgs.framerate   = 20;
     cliArgs.width       = 1920;
-    cliArgs.height      = 1280;
+    cliArgs.height      = 1080;
     cliArgs.bitrateMode = GM_CBR;
     cliArgs.encoderType = ENC_TYPE_H264;
 
