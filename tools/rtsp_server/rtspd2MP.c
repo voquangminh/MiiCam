@@ -2172,7 +2172,8 @@ void *encode_thread(void *ptr)
             param = &enc_param[cap_ch][cap_path];
             for (rec_track = 0; rec_track < ENC_TRACK_NUM; rec_track++) {
                 if (param->bindfd[rec_track]) {
-                    poll_fds[cap_ch][ch].bindfd = param->bindfd[rec_track];
+                    log_error("INIT ch=%d cap=%d path=%d track=%d",ch,cap_ch,cap_path,rec_track);
+					poll_fds[cap_ch][ch].bindfd = param->bindfd[rec_track];
                     poll_fds[cap_ch][ch].event  = GM_POLL_READ;
 
                     avbs = &enc[cap_ch].bs[ch];
