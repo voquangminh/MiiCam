@@ -155,7 +155,7 @@ typedef struct st_vbs {
 typedef struct st_priv_vbs {
     char sdpstr[SDPSTR_MAX];
     int qno;
-    int offs;
+    uintptr_t offs;
     int len;
     unsigned int tv_ms;
     int cap_ch;
@@ -1456,11 +1456,8 @@ static void *audio_thread(void *arg)
     audio_encode_attr.frame_samples = 320;
 
     groupfd_a = gm_new_groupfd();
-    if (gm_apply(groupfd_a) < 0) {
-        log_error("audio_thread: gm_apply failed");
-        goto thread_exit;
-    }
-    audio_grab_object = gm_new_obj(GM_AUDIO_GRAB_OBJECT);
+
+	audio_grab_object = gm_new_obj(GM_AUDIO_GRAB_OBJECT);
     audio_encode_object = gm_new_obj(GM_AUDIO_ENCODER_OBJECT);
     gm_set_attr(audio_grab_object, &audio_grab_attr);
     gm_set_attr(audio_encode_object, &audio_encode_attr);
@@ -1470,7 +1467,11 @@ static void *audio_thread(void *arg)
         goto thread_exit;
     }
     
-
+    if (gm_apply(groupfd_a) < 0) {
+        log_error("audio_thread: gm_apply failed");
+        goto thread_exit;
+    }
+    
     bitstream_data = malloc(AU_BITSTREAM_LEN);
     if (!bitstream_data)
         goto thread_exit;
@@ -2095,6 +2096,7 @@ void *encode_thread(void *ptr)
 {
     int i, j, ch = 0, ret, cap_ch, cap_path, rec_track, rcv_nr, w, h;
     int first_play[CAP_CH_NUM][RTSP_NUM_PER_CAP];
+	memset(first_play, 0, sizeof(first_play));
     priv_avbs_t *pb;
     avbs_t *avbs;
     gm_enc_multi_bitstream_t bs[CAP_CH_NUM][RTSP_NUM_PER_CAP];
@@ -2251,7 +2253,7 @@ void *encode_thread(void *ptr)
 
                     if (first_play[i][j] == 1) {
                         pthread_mutex_lock(&pb->video.priv_vbs_mutex);
-                        pb->video.offs  = (int) (bs[i][j].bs.bs_buf);
+                        pb->video.offs  = (uintptr_t) (bs[i][j].bs.bs_buf);
                         pb->video.len   = bs[i][j].bs.bs_len;
                         pb->video.tv_ms = bs[i][j].bs.timestamp;
                         pthread_mutex_unlock(&pb->video.priv_vbs_mutex);
@@ -2556,8 +2558,8 @@ int main(int argc, char *argv[])
 
     cliArgs.bitrate     = 1024;
     cliArgs.framerate   = 20;
-    cliArgs.width       = 1280;
-    cliArgs.height      = 720;
+    cliArgs.width       = 1920;
+    cliArgs.height      = 1280;
     cliArgs.bitrateMode = GM_CBR;
     cliArgs.encoderType = ENC_TYPE_H264;
 
