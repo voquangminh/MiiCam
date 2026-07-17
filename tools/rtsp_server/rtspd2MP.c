@@ -50,7 +50,7 @@
 #define SDPSTR_MAX               128
 #define SR_MAX                   64
 #define VQ_MAX                   (SR_MAX)
-#define VQ_LEN                   5
+#define VQ_LEN                   20
 #define AQ_MAX                   64            // * 1 MP2 and 1 AMR for live streaming, another 2 for file streaming.
 #define AQ_LEN                   2             // * 1 MP2 and 1 AMR for live streaming, another 2 for file streaming.
 #define AV_NAME_MAX              127
