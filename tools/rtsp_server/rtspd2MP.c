@@ -119,7 +119,6 @@ typedef struct {
     gm_3dnr_attr_t dnr_attr;
 } gm_cap_info_t;
 
-
 typedef struct {
     void *obj;
     int enc_type;
@@ -129,7 +128,6 @@ typedef struct {
         gm_mjpege_attr_t mjpege_attr;
     } codec;
 } gm_enc_info_t;
-
 
 typedef struct {
     gm_cap_info_t cap;
@@ -949,7 +947,6 @@ static int close_live_streaming(int ch_num, int sub_num)
 err_exit:
     if (ret < 0)
         log_error("%s: stream_dereg(%d) err %d", __func__, pb->sr, ret);
-
     return ret;
 }
 
@@ -1711,8 +1708,8 @@ void gm_update_bs_info(void)
 {
     int cap_ch,cap_path,rec_track;
     int ch=0;
-     avbs_t *avbs;
-     gm_enc_t *param;
+    avbs_t *avbs;
+    gm_enc_t *param;
 
     for (cap_ch = 0; cap_ch < CAP_CH_NUM; cap_ch++) {
         for (cap_path = 0; cap_path < CAP_PATH_NUM; cap_path++) {
@@ -2017,12 +2014,6 @@ void gm_graph_init(void)
     if (cliArgs.osd)
         rtspd_set_osd_palette();
 
-    if (cliArgs.osd)
-        rtspd_set_osd_palette();
-
-    if (cliArgs.osd)
-        rtspd_set_osd_palette();
-
     if (cliArgs.framerate > 0)
         poll_wait_time = 1000000 / (cliArgs.framerate + 2);
     else
@@ -2043,7 +2034,6 @@ void gm_graph_init(void)
     gm_enc_init(0, 0, 0, cliArgs.encoderType, cliArgs.bitrateMode, cliArgs.framerate, cliArgs.bitrate, cliArgs.width, cliArgs.height);
     gm_apply(enc_groupfd); // * Activate settings
 }
-
 
 void gm_graph_release(void)
 {
@@ -2342,12 +2332,13 @@ void update_video_sdp(int cap_ch, int cap_path, int rec_track)
                 switch (cliArgs.encoderType) {
                     case 0:
                         stream_sdp_parameter_encoder("H264", (unsigned char *) bs.bs.bs_buf, bs.bs.bs_len, pb->video.sdpstr, SDPSTR_MAX);
-                        break;
+                        log_info("Generated SDP=[%s]",pb->video.sdpstr);
+						break;
                     case 1:
-                        stream_sdp_parameter_encoder("H264", (unsigned char *) bs.bs.bs_buf, bs.bs.bs_len, pb->video.sdpstr, SDPSTR_MAX);
+                        stream_sdp_parameter_encoder("MPEG4", (unsigned char *) bs.bs.bs_buf, bs.bs.bs_len, pb->video.sdpstr, SDPSTR_MAX);
                         break;
                     case 2:
-                        stream_sdp_parameter_encoder("H264", (unsigned char *) bs.bs.bs_buf, bs.bs.bs_len, pb->video.sdpstr, SDPSTR_MAX);
+                        stream_sdp_parameter_encoder("MJPEG", (unsigned char *) bs.bs.bs_buf, bs.bs.bs_len, pb->video.sdpstr, SDPSTR_MAX);
                         break;
                     }
                 break;
@@ -2420,14 +2411,15 @@ static int rtspd_start(int port)
         pthread_attr_destroy(&attr);
     }
 
+	// * OSD Thread
     if (cliArgs.osd && osd_thread_id == (pthread_t)NULL) {
         pthread_attr_init(&attr);
         pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
         ret = pthread_create(&osd_thread_id, &attr, &rtspd_osd_thread, enc_param[0][0].cap.obj);
         pthread_attr_destroy(&attr);
     }
-
-    /* Audio thread: capture, encode and enqueue audio frames to stream */
+	
+    // * Audio thread: capture, encode and enqueue audio frames to stream */
     if (audio_thread_id == (pthread_t)NULL) {
         pthread_attr_init(&attr);
         pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
@@ -2437,10 +2429,8 @@ static int rtspd_start(int port)
 
     for (ch_num = 0; ch_num < CAP_CH_NUM; ch_num++) {
         pthread_mutex_lock(&enc[ch_num].ubs_mutex);
-
         for (stream = 0; stream < RTSP_NUM_PER_CAP; stream++)
             env_set_bs_new_event(ch_num, stream, START_BS_EVENT);
-
         pthread_mutex_unlock(&enc[ch_num].ubs_mutex);
     }
 
@@ -2507,10 +2497,10 @@ static void print_usage(void)
     printf(" ./rtspd [-bfwhm] [-j|-4]\n");
     printf(
         "\nAvailable options:\n"
-        "-b [1-8192]    - Set the bitrate         (default: 1024)\n"
+        "-b [1-8192]    - Set the bitrate         (default: 2048)\n"
         "-f [1-20]      - Set the framerate       (default: 20)\n"
         "-w [1-1920]    - Set the image width     (default: 1920 pixels)\n"
-        "-h [1-1280]     - Set the image height    (default: 1290 pixels)\n"
+        "-h [1-1280]    - Set the image height    (default: 1290 pixels)\n"
         "-m [1-4]       - Set the bitrate mode    (default: 1, CBR)\n\n"
 
         "-j (optional)  - Use MJPEG encoding      (default: off)\n"
@@ -2557,7 +2547,7 @@ int main(int argc, char *argv[])
     // snapshot_buf is allocated lazily in take_snapshot() to reduce RAM usage
     snapshot_buf = NULL;
 
-    cliArgs.bitrate     = 4098;
+    cliArgs.bitrate     = 2048;
     cliArgs.framerate   = 20;
     cliArgs.width       = 1920;
     cliArgs.height      = 1080;
@@ -2638,7 +2628,7 @@ int main(int argc, char *argv[])
                             cliArgs.font_zoom = atoi(argv[++i]);
                         else
                             cliArgs.font_zoom = GM_OSD_FONT_ZOOM_NONE;
-                        if (cliArgs.font_zoom < 0 || cliArgs.font_zoom > 12)
+                        if (cliArgs.font_zoom < 0 || cliArgs.font_zoom > 4)
                             cliArgs.font_zoom = GM_OSD_FONT_ZOOM_NONE;
                         break;
                     case 't':
@@ -2681,7 +2671,7 @@ int main(int argc, char *argv[])
     }
 
     if ((cliArgs.width < 1) || (cliArgs.width > 1920)) {
-        log_error("A width wider than 1920p is not supported.");
+        log_error("A width wider than 1920p or below 1 is not supported.");
         return 1;
     }
 
