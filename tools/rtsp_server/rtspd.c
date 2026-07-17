@@ -2339,12 +2339,13 @@ void update_video_sdp(int cap_ch, int cap_path, int rec_track)
                 switch (cliArgs.encoderType) {
                     case 0:
                         stream_sdp_parameter_encoder("H264", (unsigned char *) bs.bs.bs_buf, bs.bs.bs_len, pb->video.sdpstr, SDPSTR_MAX);
-                        break;
+                        log_info("Generated SDP=[%s]",pb->video.sdpstr);
+						break;
                     case 1:
-                        stream_sdp_parameter_encoder("H264", (unsigned char *) bs.bs.bs_buf, bs.bs.bs_len, pb->video.sdpstr, SDPSTR_MAX);
+                        stream_sdp_parameter_encoder("MP4", (unsigned char *) bs.bs.bs_buf, bs.bs.bs_len, pb->video.sdpstr, SDPSTR_MAX);
                         break;
                     case 2:
-                        stream_sdp_parameter_encoder("H264", (unsigned char *) bs.bs.bs_buf, bs.bs.bs_len, pb->video.sdpstr, SDPSTR_MAX);
+                        stream_sdp_parameter_encoder("MJPEG", (unsigned char *) bs.bs.bs_buf, bs.bs.bs_len, pb->video.sdpstr, SDPSTR_MAX);
                         break;
                     }
                 break;
@@ -2417,6 +2418,7 @@ static int rtspd_start(int port)
         pthread_attr_destroy(&attr);
     }
 
+	// * OSD Thread
     if (cliArgs.osd && osd_thread_id == (pthread_t)NULL) {
         pthread_attr_init(&attr);
         pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
@@ -2424,7 +2426,7 @@ static int rtspd_start(int port)
         pthread_attr_destroy(&attr);
     }
 
-    /* Audio thread: capture, encode and enqueue audio frames to stream */
+    // * Audio thread: capture, encode and enqueue audio frames to stream */
     if (audio_thread_id == (pthread_t)NULL) {
         pthread_attr_init(&attr);
         pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
@@ -2434,16 +2436,12 @@ static int rtspd_start(int port)
 
     for (ch_num = 0; ch_num < CAP_CH_NUM; ch_num++) {
         pthread_mutex_lock(&enc[ch_num].ubs_mutex);
-
         for (stream = 0; stream < RTSP_NUM_PER_CAP; stream++)
             env_set_bs_new_event(ch_num, stream, START_BS_EVENT);
-
         pthread_mutex_unlock(&enc[ch_num].ubs_mutex);
     }
-
     return 0;
 }
-
 
 int is_bs_all_disable(void)
 {
@@ -2459,7 +2457,6 @@ int is_bs_all_disable(void)
     }
     return 1;
 }
-
 
 static void rtspd_stop(void)
 {
@@ -2480,7 +2477,6 @@ static void rtspd_stop(void)
     }
 }
 
-
 char *get_local_ip(void)
 {
     int fd;
@@ -2496,7 +2492,6 @@ char *get_local_ip(void)
     memcpy(&sin, &ifr.ifr_addr, sizeof(sin));
     return inet_ntoa(sin.sin_addr);
 }
-
 
 static void print_usage(void)
 {
