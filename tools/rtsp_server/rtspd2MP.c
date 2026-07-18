@@ -891,7 +891,7 @@ static int write_rtp_frame_ext(int ch_num, int sub_num, void *data, int data_len
     ret = stream_media_enqueue(media_type, pb->video.qno, &entity);
 	
 	// debug
-	int ok = 0;
+	static int ok = 0;
 	if ((++ok % 1000) == 0){
 		log_info("enqueue ts=%u len=%d",entity.timestamp,entity.size);
 	}
@@ -1277,7 +1277,7 @@ static int frm_cb(int type, int qno, gm_ss_entity *entity)
             pb = &enc[ch_num].priv_bs[sub_num];
             if (pb->video.offs == (int)(entity->data) && pb->video.len == entity->size && pb->video.qno==qno) {
 				// debug
-				int freecnt = 0;
+				static int freecnt = 0;
 				if ((++freecnt % 100) == 0){
 					log_info("FREE ch=%d sub=%d qno=%d len=%d",ch_num,sub_num,qno,entity->size);
 				}
@@ -2184,9 +2184,9 @@ void *encode_thread(void *ptr)
 
                 if (pb->video.offs || pb->video.len){
 					// debug
-					int skipcnt = 0;
+					static int skipcnt = 0;
                     if ((++skipcnt % 100) == 0){
-						log_error("SKIP ch=%d sub=%d offs=%u len=%d",i,j,(unsigned)pb->video.offs,pb->video.len);
+						log_error("SKIP ch=%d sub=%d offs=%u len=%d",i,j,(void*)pb->video.offs,pb->video.len);
 					}
 				}
 					continue;
