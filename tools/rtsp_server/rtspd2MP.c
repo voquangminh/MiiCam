@@ -840,7 +840,7 @@ static int open_live_streaming(int ch_num, int sub_num)
     sprintf(livename, "live/ch%02d_%d", ch_num, sub_num);
 
     if (b->audio.enabled == DVR_ENC_EBST_ENABLE) {
-        int a_media_type = GM_SS_TYPE_G711A; /* default to G711A audio */
+        int a_media_type = GM_SS_TYPE_AAC; 				/* default to AAC audio */
         pb->audio.qno = do_queue_alloc(a_media_type);
         pb->sr = stream_reg(livename, pb->video.qno, pb->video.sdpstr, pb->audio.qno, pb->audio.sdpstr,1,0,0,0,0,NULL,NULL);
     } else {
@@ -1447,12 +1447,12 @@ static void *audio_thread(void *arg, char *argv[])
     audio_grab_attr.channel_type = GM_MONO;
 
 	audio_render_attr.vch = out_ch;						/* default output vch 0(adda302) */
-	audio_render_attr.encode_type = GM_G711_ALAW;
-    audio_render_attr.block_size = 320;
+	audio_render_attr.encode_type = GM_AAC;
+    audio_render_attr.block_size = 1024;
 	
-    audio_encode_attr.encode_type = GM_G711_ALAW;
+    audio_encode_attr.encode_type = GM_AAC;
     audio_encode_attr.bitrate = 32000;
-    audio_encode_attr.frame_samples = 320;
+    audio_encode_attr.frame_samples = 1024;
 
 	in_ch = atoi(argv[1]);
     out_ch = atoi(argv[2]);
@@ -1503,7 +1503,7 @@ static void *audio_thread(void *arg, char *argv[])
 
         if (multi_bs[0].retval == GM_SUCCESS){
             if (!audio_sdp_ready && multi_bs[0].bs.bs_len > 0) {
-                stream_sdp_parameter_encoder("G711A", (unsigned char *) multi_bs[0].bs.bs_buf, multi_bs[0].bs.bs_len, audio_sdpstr, SDPSTR_MAX);
+                stream_sdp_parameter_encoder("AAC", (unsigned char *) multi_bs[0].bs.bs_buf, multi_bs[0].bs.bs_len, audio_sdpstr, SDPSTR_MAX);
                 if (!audio_sdp_ready)
                 {
                     int ch_num;
@@ -1544,7 +1544,7 @@ static void *audio_thread(void *arg, char *argv[])
                     priv_avbs_t *pb = &enc[ch_num].priv_bs[sub_num];
                     if (enc[ch_num].bs[sub_num].audio.enabled == DVR_ENC_EBST_ENABLE && pb->audio.qno >= 0 && pb->sr >= 0 && pb->audio.sdpstr[0] != '\0') {
                         pthread_mutex_lock(&stream_queue_mutex);
-                        ret = stream_media_enqueue(GM_SS_TYPE_G711A, pb->audio.qno, &entity);
+                        ret = stream_media_enqueue(GM_SS_TYPE_AAC, pb->audio.qno, &entity);
                         pthread_mutex_unlock(&stream_queue_mutex);
                         }
                     }
