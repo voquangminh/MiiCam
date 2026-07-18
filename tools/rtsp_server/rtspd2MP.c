@@ -851,6 +851,7 @@ static int open_live_streaming(int ch_num, int sub_num)
         strncpy(pb->audio.sdpstr,audio_sdpstr,SDPSTR_MAX - 1);
         pb->audio.sdpstr[SDPSTR_MAX - 1] = '\0';
         ret = stream_updatesdp(pb->sr,pb->video.sdpstr,pb->audio.sdpstr);
+		log_info("stream_updatesdp ret=%d", ret);
     }
 
     if (pb->sr < 0){
@@ -1568,7 +1569,7 @@ static void *audio_thread(void *arg)
         if (multi_bs[0].retval == GM_SUCCESS){
             if (!audio_sdp_ready && multi_bs[0].bs.bs_len > 0) {
                 stream_sdp_parameter_encoder("AAC", (unsigned char *) multi_bs[0].bs.bs_buf, multi_bs[0].bs.bs_len, audio_sdpstr, SDPSTR_MAX);
-                printf("AAC SDP = %s\n", audio_sdpstr);
+                log_info("AAC SDP=[%s]", audio_sdpstr);
 				if (!audio_sdp_ready)
                 {
                     int ch_num;
@@ -1610,6 +1611,7 @@ static void *audio_thread(void *arg)
                     if (enc[ch_num].bs[sub_num].audio.enabled == DVR_ENC_EBST_ENABLE && pb->audio.qno >= 0 && pb->sr >= 0 && pb->audio.sdpstr[0] != '\0') {
                         pthread_mutex_lock(&stream_queue_mutex);
                         ret = stream_media_enqueue(GM_SS_TYPE_AAC, pb->audio.qno, &entity);
+						log_info("AAC enqueue qno=%d len=%d ts=%u",pb->audio.qno,entity.size,entity.timestamp);
                         pthread_mutex_unlock(&stream_queue_mutex);
                         }
                     }
