@@ -55,7 +55,7 @@
 #define AQ_LEN                   2             // * 1 MP2 and 1 AMR for live streaming, another 2 for file streaming.
 #define AV_NAME_MAX              127
 #define AU_BITSTREAM_LEN         12800
-#define GM_SS_TYPE_G711A         13
+#define PATTERN_NAME      		 "audio_8khz_16bit"
 
 #define RTP_HZ                   90000
 
@@ -1426,7 +1426,7 @@ static void *media_thread(void *arg)
     return 0;
 }
 
-static void *audio_thread(void *arg)
+static void *audio_thread(void *arg, char *argv[])
 {
     int ret, in_ch, out_ch;
     void *groupfd_a = NULL;
@@ -1447,8 +1447,6 @@ static void *audio_thread(void *arg)
     audio_grab_attr.channel_type = GM_MONO;
 
 	audio_render_attr.vch = out_ch;						/* default output vch 0(adda302) */
-	audio_render_attr.sample_rate = 16000;
-	audio_render_attr.sample_size = 16;
 	audio_render_attr.encode_type = GM_G711_ALAW;
     audio_render_attr.block_size = 320;
 	
@@ -1456,8 +1454,8 @@ static void *audio_thread(void *arg)
     audio_encode_attr.bitrate = 32000;
     audio_encode_attr.frame_samples = 320;
 
-	//in_ch = atoi(argv[1]);
-    //out_ch = atoi(argv[2]);
+	in_ch = atoi(argv[1]);
+    out_ch = atoi(argv[2]);
 	
     groupfd_a = gm_new_groupfd();
 
