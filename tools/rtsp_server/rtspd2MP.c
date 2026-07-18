@@ -1545,11 +1545,6 @@ static void *audio_thread(void *arg, char *argv[])
         log_error("audio_thread: gm_apply failed");
         goto thread_exit;
     }
-
-	if (pthread_create(&thread_id, NULL, playback_thread, (void *)0)) {
-        perror("Create au_thread[sample_send_audio_bitstream] failed");
-        exit(1);
-    }
     
     bitstream_data = malloc(AU_BITSTREAM_LEN);
     if (!bitstream_data)
