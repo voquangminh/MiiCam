@@ -891,7 +891,7 @@ static int write_rtp_frame_ext(int ch_num, int sub_num, void *data, int data_len
     ret = stream_media_enqueue(media_type, pb->video.qno, &entity);
 	
 	// debug
-	static int ok = 0;
+	int ok = 0;
 	if ((++ok % 1000) == 0){
 		log_info("enqueue ts=%u len=%d",entity.timestamp,entity.size);
 	}
@@ -1277,7 +1277,7 @@ static int frm_cb(int type, int qno, gm_ss_entity *entity)
             pb = &enc[ch_num].priv_bs[sub_num];
             if (pb->video.offs == (int)(entity->data) && pb->video.len == entity->size && pb->video.qno==qno) {
 				// debug
-				static int freecnt = 0;
+				int freecnt = 0;
 				if ((++freecnt % 100) == 0){
 					log_info("FREE ch=%d sub=%d qno=%d len=%d",ch_num,sub_num,qno,entity->size);
 				}
@@ -2067,12 +2067,10 @@ void gm_graph_release(void)
     for (cap_ch = 0; cap_ch < CAP_CH_NUM; cap_ch++) {
         for (cap_path = 0; cap_path < CAP_PATH_NUM; cap_path++) {
             param = &enc_param[cap_ch][cap_path];
-
             for (rec_track = 0; rec_track < ENC_TRACK_NUM; rec_track++) {
                 if (param->enc[rec_track].obj)
                     gm_delete_obj(param->enc[rec_track].obj);
             }
-
             if (param->cap.obj)
                 gm_delete_obj(param->cap.obj);
         }
@@ -2186,7 +2184,7 @@ void *encode_thread(void *ptr)
 
                 if (pb->video.offs || pb->video.len)
 					// debug
-					static int skipcnt = 0;
+					int skipcnt = 0;
                     if ((++skipcnt % 100) == 0){
 						log_error("SKIP ch=%d sub=%d offs=%u len=%d",i,j,(unsigned)pb->video.offs,pb->video.len);
 					}
