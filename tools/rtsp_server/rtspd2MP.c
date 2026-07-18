@@ -1426,6 +1426,71 @@ static void *media_thread(void *arg)
     return 0;
 }
 
+static void *playback_thread(void *arg)
+{
+    int ret, length;
+    char filename[50];
+    FILE *bs_fd, *len_fd;
+    char *bitstream_data;
+    gm_dec_multi_bitstream_t multi_bs[1];
+    
+    sprintf(filename, "%s.aac", PATTERN_NAME);
+    bs_fd = fopen(filename, "rb");
+    if (bs_fd == NULL) {
+        printf("[ERROR] Open %s failed!!\n", filename);
+        exit(1);
+    }
+
+    printf("Play file: [%s]\n", filename);
+    sprintf(filename, "%s.len", PATTERN_NAME);
+    len_fd = fopen(filename, "rb");
+    if (len_fd == NULL) {
+        printf("[ERROR] Open %s failed!!\n", filename);
+        exit(1);
+    } 
+
+    bitstream_data = (char *)malloc(BITSTREAM_LEN);
+    if (!bitstream_data) {
+        printf("Error allocation\n");
+        exit(1);
+    }
+
+    while (1) {
+        if (pb_exit == 1)
+            break;
+
+        if (fscanf(len_fd, "%d\n", &length) == EOF) {
+            fseek(bs_fd, 0, SEEK_SET);
+            fseek(len_fd, 0, SEEK_SET);
+            fscanf(len_fd, "%d\n", &length);
+        }
+        if (length == 0)
+            continue;
+
+        if (length > BITSTREAM_LEN) {
+            printf("Invalid length, len(%d)\n", length);
+            exit(1);
+        }
+
+        fread(bitstream_data, 1, length, bs_fd);
+
+        memset(multi_bs, 0, sizeof(multi_bs));  //clear all mutli bs         
+        multi_bs[0].bindfd = bindfd;
+        multi_bs[0].bs_buf = bitstream_data;
+        multi_bs[0].bs_buf_len = length;
+
+        if ((ret = gm_send_multi_bitstreams(multi_bs, 1, 500)) < 0) {
+            printf("<send bitstream fail(%d)!>\n", ret);
+            exit(1);
+        }
+    }
+
+    fclose(bs_fd);
+    fclose(len_fd);
+    free(bitstream_data);
+    return 0;
+}
+
 static void *audio_thread(void *arg, char *argv[])
 {
     int ret, in_ch, out_ch;
@@ -1477,6 +1542,11 @@ static void *audio_thread(void *arg, char *argv[])
     if (gm_apply(groupfd_a) < 0) {
         log_error("audio_thread: gm_apply failed");
         goto thread_exit;
+    }
+
+	if (pthread_create(&thread_id, NULL, playback_thread, (void *)0)) {
+        perror("Create au_thread[sample_send_audio_bitstream] failed");
+        exit(1);
     }
     
     bitstream_data = malloc(AU_BITSTREAM_LEN);
@@ -1550,8 +1620,8 @@ static void *audio_thread(void *arg, char *argv[])
                     }
                 }
             }
-        }    
-
+        }
+	
 thread_exit:
     if (bitstream_data)
         free(bitstream_data);
