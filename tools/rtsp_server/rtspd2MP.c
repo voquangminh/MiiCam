@@ -2739,9 +2739,6 @@ int main(int argc, char *argv[])
     signal(SIGHUP,  signal_handler);
     signal(SIGTERM, signal_handler);
 
-    // * Start the rtsp threads
-    rtspd_start(554);
-
     for (cap_ch = 0; cap_ch < CAP_CH_NUM; cap_ch++) {
         for (cap_path = 0; cap_path < CAP_PATH_NUM; cap_path++) {
             for (rec_track = 0; rec_track < ENC_TRACK_NUM; rec_track++) {
@@ -2750,6 +2747,9 @@ int main(int argc, char *argv[])
         }
     }
 
+	// * Start the rtsp threads
+    rtspd_start(554);
+	
     while(1) {
         usleep(10000);
     }
