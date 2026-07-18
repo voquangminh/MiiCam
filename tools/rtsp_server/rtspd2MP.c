@@ -889,14 +889,6 @@ static int write_rtp_frame_ext(int ch_num, int sub_num, void *data, int data_len
     media_type = convert_gmss_media_type(b->video.enc_type);
     pthread_mutex_lock(&stream_queue_mutex);
     ret = stream_media_enqueue(media_type, pb->video.qno, &entity);
-	
-	// debug
-	static unsigned int ok = 0;
-	ok++;
-	if ((++ok % 1000) == 0){
-		log_info("ENQUEUE qno=%d ts=%u len=%d",pb->video.qno,entity.timestamp,entity.size);
-	}
-	// end
     pthread_mutex_unlock(&stream_queue_mutex);
 
     if ( ret < 0 ) {
@@ -1280,13 +1272,8 @@ static int frm_cb(int type, int qno, gm_ss_entity *entity)
         for (sub_num = 0; sub_num < RTSP_NUM_PER_CAP; sub_num++) {
             pb = &enc[ch_num].priv_bs[sub_num];
             if (pb->video.offs == (int)(entity->data) && pb->video.len == entity->size && pb->video.qno==qno) {
-				// debug
-				static unsigned int freecnt = 0;
-				freecnt++;
-				if ((++freecnt % 100) == 0){
-					log_info("FREE ch=%d sub=%d qno=%d len=%d",ch_num,sub_num,qno,entity->size);
-				}
-				// eod
+				log_info("FREE ch=%d sub=%d qno=%d len=%d",ch_num,sub_num,qno,entity->size);
+			}
                 pthread_mutex_lock(&pb->video.priv_vbs_mutex);
                 pb->video.offs = 0;
                 pb->video.len = 0;
@@ -2187,14 +2174,8 @@ void *encode_thread(void *ptr)
             for (j = 0; j < RTSP_NUM_PER_CAP; j++) {
                 pb = &enc[i].priv_bs[j];
 
-                if (pb->video.offs || pb->video.len){
-					// debug
-					static unsigned int skipcnt = 0;
-					skipcnt++;
-                    if ((++skipcnt % 100) == 0){
-						log_error("SKIP ch=%d sub=%d qno=%d offs=%p len=%d play=%d",i,j,pb->video.qno,(void*)pb->video.offs,pb->video.len,pb->play);
-					}
-				}
+                if (pb->video.offs || pb->video.len)
+					log_error("SKIP ch=%d sub=%d qno=%d offs=%p len=%d play=%d",i,j,pb->video.qno,pb->video.offs,pb->video.len,pb->play);
 					continue;
 
                 if (poll_fds[i][j].revent.event != GM_POLL_READ)
