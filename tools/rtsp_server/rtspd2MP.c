@@ -1278,10 +1278,8 @@ static int frm_cb(int type, int qno, gm_ss_entity *entity)
                 pb->video.offs = 0;
                 pb->video.len = 0;
                 pthread_mutex_unlock(&pb->video.priv_vbs_mutex);
-            }
-        }
-    }
-
+    	}
+	}
     return 0;
 }
 
