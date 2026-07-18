@@ -1428,7 +1428,7 @@ static void *media_thread(void *arg)
 
 static void *audio_thread(void *arg)
 {
-    int ret;
+    int ret, in_ch, out_ch;
     void *groupfd_a = NULL;
     void *audio_grab_object = NULL;
 	void *audio_render_object = NULL;
@@ -1449,12 +1449,14 @@ static void *audio_thread(void *arg)
 	audio_render_attr.vch = out_ch;						/* default output vch 0(adda302) */
 	audio_render_attr.encode_type = GM_G711_ALAW;
     audio_render_attr.block_size = 320;
-    audio_render_attr.channel_type = GM_MONO;
 	
     audio_encode_attr.encode_type = GM_G711_ALAW;
     audio_encode_attr.bitrate = 32000;
     audio_encode_attr.frame_samples = 320;
 
+	//in_ch = atoi(argv[1]);
+    //out_ch = atoi(argv[2]);
+	
     groupfd_a = gm_new_groupfd();
 
 	audio_grab_object = gm_new_obj(GM_AUDIO_GRAB_OBJECT);
