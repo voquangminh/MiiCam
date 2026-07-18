@@ -895,9 +895,6 @@ static int write_rtp_frame_ext(int ch_num, int sub_num, void *data, int data_len
         gettimeofday(&curr_tval, NULL );
 
         if ( ret == ERR_FULL) {
-			// debug
-			log_error("QUEUE FULL qno=%d len=%d ts=%u",pb->video.qno,entity.size,entity.timestamp);
-            // eod
 			pb->congest = 1;
 
             if ( TIMEVAL_DIFF(err_print_tval, curr_tval) > 5000000 )
@@ -1067,7 +1064,6 @@ void bs_new_event(void)
         pthread_mutex_unlock(&enc[ch_num].ubs_mutex);
     }
 }
-
 
 int env_set_bs_new_event(int ch_num, int sub_num, int event)
 {
@@ -1271,9 +1267,7 @@ static int frm_cb(int type, int qno, gm_ss_entity *entity)
     for (ch_num = 0; ch_num < CAP_CH_NUM; ch_num++) {
         for (sub_num = 0; sub_num < RTSP_NUM_PER_CAP; sub_num++) {
             pb = &enc[ch_num].priv_bs[sub_num];
-            if (pb->video.offs == (int)(entity->data) && pb->video.len == entity->size && pb->video.qno==qno) {
-				log_info("FREE ch=%d sub=%d qno=%d len=%d",ch_num,sub_num,qno,entity->size);
-			}
+            if (pb->video.offs == (int)(entity->data) && pb->video.len == entity->size && pb->video.qno==qno)
                 pthread_mutex_lock(&pb->video.priv_vbs_mutex);
                 pb->video.offs = 0;
                 pb->video.len = 0;
@@ -1282,7 +1276,6 @@ static int frm_cb(int type, int qno, gm_ss_entity *entity)
 	}
     return 0;
 }
-
 
 priv_avbs_t *find_file_sr(char *name, int srno)
 {
@@ -1867,8 +1860,8 @@ void gm_enc_init(int cap_ch, int cap_path, int rec_track, int enc_type, int mode
     param->bindfd[rec_track] = gm_bind(enc_groupfd, param->cap.obj, param->enc[rec_track].obj);
 
     if (cliArgs.osd) {
-                rtspd_enable_osd_font(param->cap.obj, cliArgs.osd_text[0] != '\0' ? cliArgs.osd_text : "chuangmi");
-            }
+    	rtspd_enable_osd_font(param->cap.obj, cliArgs.osd_text[0] != '\0' ? cliArgs.osd_text : "chuangmi");
+    }
 
     // * Set motion detection
     if (cliArgs.motion == 1) {
@@ -2173,16 +2166,13 @@ void *encode_thread(void *ptr)
                 pb = &enc[i].priv_bs[j];
 
                 if (pb->video.offs || pb->video.len)
-					log_error("SKIP ch=%d sub=%d qno=%d offs=%p len=%d play=%d",i,j,pb->video.qno,pb->video.offs,pb->video.len,pb->play);
 					continue;
 
                 if (poll_fds[i][j].revent.event != GM_POLL_READ)
                     continue;
 
-                if (poll_fds[i][j].revent.bs_len > pb->video.bs_buf_len) {
-                    log_error("%d_%d: bindfd(%p) bitstream buffer length is not enough! (%d_bytes vs %d_bytes)", i, j, poll_fds[i][j].bindfd, poll_fds[i][j].revent.bs_len, pb->video.bs_buf_len);
-                    continue;
-                }
+                if (poll_fds[i][j].revent.bs_len > pb->video.bs_buf_len)
+                	continue;
 
                 rcv_nr++;
                 bs[i][j].bindfd = poll_fds[i][j].bindfd;
@@ -2304,10 +2294,8 @@ void update_video_sdp(int cap_ch, int cap_path, int rec_track)
         if ( poll_fds.revent.event != GM_POLL_READ )
             continue;
 
-        if ( poll_fds.revent.bs_len > bitstream_data_len) {
-            log_error("bitstream buffer length is too small! %d, %d", poll_fds.revent.bs_len, bitstream_data_len);
+        if ( poll_fds.revent.bs_len > bitstream_data_len) 
             continue;
-        }
 
         bs.bindfd = poll_fds.bindfd;
 
@@ -2718,6 +2706,9 @@ int main(int argc, char *argv[])
     signal(SIGHUP,  signal_handler);
     signal(SIGTERM, signal_handler);
 
+	// * Start the rtsp threads
+    rtspd_start(554);
+
     for (cap_ch = 0; cap_ch < CAP_CH_NUM; cap_ch++) {
         for (cap_path = 0; cap_path < CAP_PATH_NUM; cap_path++) {
             for (rec_track = 0; rec_track < ENC_TRACK_NUM; rec_track++) {
@@ -2726,9 +2717,6 @@ int main(int argc, char *argv[])
         }
     }
 
-	// * Start the rtsp threads
-    rtspd_start(554);
-	
     while(1) {
         usleep(10000);
     }
