@@ -1447,6 +1447,8 @@ static void *audio_thread(void *arg)
     audio_grab_attr.channel_type = GM_MONO;
 
 	audio_render_attr.vch = out_ch;						/* default output vch 0(adda302) */
+	audio_render_attr.sample_rate = 16000;
+	audio_render_attr.sample_size = 16;
 	audio_render_attr.encode_type = GM_G711_ALAW;
     audio_render_attr.block_size = 320;
 	
