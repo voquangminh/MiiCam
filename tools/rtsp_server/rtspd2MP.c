@@ -894,7 +894,7 @@ static int write_rtp_frame_ext(int ch_num, int sub_num, void *data, int data_len
 	static unsigned int ok = 0;
 	ok++;
 	if ((++ok % 1000) == 0){
-		log_info("ENQUEUE qno=%d ts=%u len=%d",pb->video.qno,,entity.timestamp,entity.size);
+		log_info("ENQUEUE qno=%d ts=%u len=%d",pb->video.qno,entity.timestamp,entity.size);
 	}
 	// end
     pthread_mutex_unlock(&stream_queue_mutex);
