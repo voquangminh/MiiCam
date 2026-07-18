@@ -1433,6 +1433,8 @@ static void *playback_thread(void *arg)
     FILE *bs_fd, *len_fd;
     char *bitstream_data;
     gm_dec_multi_bitstream_t multi_bs[1];
+	pthread_t thread_id;
+	int pb_exit = 0;
     
     sprintf(filename, "%s.aac", PATTERN_NAME);
     bs_fd = fopen(filename, "rb");
@@ -1449,7 +1451,7 @@ static void *playback_thread(void *arg)
         exit(1);
     } 
 
-    bitstream_data = (char *)malloc(BITSTREAM_LEN);
+    bitstream_data = (char *)malloc(AU_BITSTREAM_LEN);
     if (!bitstream_data) {
         printf("Error allocation\n");
         exit(1);
@@ -1467,7 +1469,7 @@ static void *playback_thread(void *arg)
         if (length == 0)
             continue;
 
-        if (length > BITSTREAM_LEN) {
+        if (length > AU_BITSTREAM_LEN) {
             printf("Invalid length, len(%d)\n", length);
             exit(1);
         }
