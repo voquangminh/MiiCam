@@ -2479,7 +2479,6 @@ static void rtspd_stop(void)
     }
 }
 
-
 char *get_local_ip(void)
 {
     int fd;
