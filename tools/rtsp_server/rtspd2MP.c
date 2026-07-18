@@ -2182,12 +2182,13 @@ void *encode_thread(void *ptr)
             for (j = 0; j < RTSP_NUM_PER_CAP; j++) {
                 pb = &enc[i].priv_bs[j];
 
-                if (pb->video.offs || pb->video.len)
+                if (pb->video.offs || pb->video.len){
 					// debug
 					int skipcnt = 0;
                     if ((++skipcnt % 100) == 0){
 						log_error("SKIP ch=%d sub=%d offs=%u len=%d",i,j,(unsigned)pb->video.offs,pb->video.len);
 					}
+				}
 					continue;
 
                 if (poll_fds[i][j].revent.event != GM_POLL_READ)
