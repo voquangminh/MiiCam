@@ -1570,6 +1570,7 @@ static void *audio_thread(void *arg)
             if (!audio_sdp_ready && multi_bs[0].bs.bs_len > 0) {
                 stream_sdp_parameter_encoder("AAC", (unsigned char *) multi_bs[0].bs.bs_buf, multi_bs[0].bs.bs_len, audio_sdpstr, SDPSTR_MAX);
                 log_info("AAC SDP=[%s]", audio_sdpstr);
+				log_info("ASDP len=%d", strlen(audio_sdpstr));
 				if (!audio_sdp_ready)
                 {
                     int ch_num;
@@ -1611,7 +1612,6 @@ static void *audio_thread(void *arg)
                     if (enc[ch_num].bs[sub_num].audio.enabled == DVR_ENC_EBST_ENABLE && pb->audio.qno >= 0 && pb->sr >= 0 && pb->audio.sdpstr[0] != '\0') {
                         pthread_mutex_lock(&stream_queue_mutex);
                         ret = stream_media_enqueue(GM_SS_TYPE_AAC, pb->audio.qno, &entity);
-						log_info("AAC enqueue qno=%d len=%d ts=%u",pb->audio.qno,entity.size,entity.timestamp);
                         pthread_mutex_unlock(&stream_queue_mutex);
                         }
                     }
