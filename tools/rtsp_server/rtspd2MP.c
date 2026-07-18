@@ -833,7 +833,6 @@ static int open_live_streaming(int ch_num, int sub_num)
     CHECK_CHANNUM_AND_SUBNUM(ch_num, sub_num);
     b = &enc[ch_num].bs[sub_num];
     pb = &enc[ch_num].priv_bs[sub_num];
-    log_info("OPEN STREAM sub=%d pb=%p vsdp='%s'",sub_num,pb,pb->video.sdpstr);
     media_type = convert_gmss_media_type(b->video.enc_type);
     pb->video.qno = do_queue_alloc(media_type);
 
@@ -842,7 +841,8 @@ static int open_live_streaming(int ch_num, int sub_num)
     if (b->audio.enabled == DVR_ENC_EBST_ENABLE) {
         int a_media_type = GM_SS_TYPE_AAC; 				/* default to AAC audio */
         pb->audio.qno = do_queue_alloc(a_media_type);
-        pb->sr = stream_reg(livename, pb->video.qno, pb->video.sdpstr, pb->audio.qno, pb->audio.sdpstr,1,0,0,0,0,NULL,NULL);
+        pb->sr = stream_reg(livename, pb->video.qno, pb->video.sdpstr, pb->audio.qno, pb->audio.sdpstr,0,0,1,0,0,0,0);
+		log_info("OPEN STREAM sub=%d pb=%p vsdp='%s'",sub_num,pb,pb->video.sdpstr);
     } else {
         pb->sr = stream_reg(livename, pb->video.qno, pb->video.sdpstr, pb->audio.qno, pb->audio.sdpstr,1,0,0,0,0,NULL,NULL);    
     }
@@ -1517,7 +1517,7 @@ static void *audio_thread(void *arg, char *argv[])
 	audio_render_attr.encode_type = GM_AAC;
     audio_render_attr.block_size = 1024;
 	
-    audio_encode_attr.encode_type = GM_AAC;
+    audio_encode_attr.encode_type = GM_AAC;				
     audio_encode_attr.bitrate = 32000;
     audio_encode_attr.frame_samples = 1024;
 
@@ -1535,7 +1535,7 @@ static void *audio_thread(void *arg, char *argv[])
 	audio_encode_object = gm_new_obj(GM_AUDIO_ENCODER_OBJECT);
     gm_set_attr(audio_encode_object, &audio_encode_attr);
 	
-    bindfd_a = gm_bind(groupfd_a, audio_grab_object, audio_render_object);
+    bindfd_a = gm_bind(groupfd_a, audio_grab_object, audio_encode_object);
     if (!bindfd_a) {
         log_error("gm_bind failed");
         goto thread_exit;
@@ -1904,7 +1904,7 @@ void gm_enc_init(int cap_ch, int cap_path, int rec_track, int enc_type, int mode
             h264e_attr.dim.height            = height;
             h264e_attr.frame_info.framerate  = framerate;
             h264e_attr.ratectl.mode          = mode;
-            h264e_attr.ratectl.gop           = 60;
+            h264e_attr.ratectl.gop           = 20;			   // default 60
             h264e_attr.ratectl.bitrate       = bitrate;
             h264e_attr.ratectl.bitrate_max   = bitrate;
             h264e_attr.b_frame_num           = 0;              // * B-frames per GOP (H.264 high profile)
@@ -2328,7 +2328,7 @@ void *encode_thread(void *ptr)
 
                         // * Write buffer to the rtsp service and empty buffers
                         if (write_rtp_frame_ext(i, j, (void *)pb->video.offs, pb->video.len, bs[i][j].bs.timestamp) == 1) {
-                            pb->video.offs = (int)NULL;
+                            pb->video.offs = (uintptr_t)NULL;
                             pb->video.len  = 0;
                         }
                     }
