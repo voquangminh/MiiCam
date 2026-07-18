@@ -891,9 +891,10 @@ static int write_rtp_frame_ext(int ch_num, int sub_num, void *data, int data_len
     ret = stream_media_enqueue(media_type, pb->video.qno, &entity);
 	
 	// debug
-	static int ok = 0;
+	static unsigned int ok = 0;
+	ok++;
 	if ((++ok % 1000) == 0){
-		log_info("enqueue ts=%u len=%d",entity.timestamp,entity.size);
+		log_info("ENQUEUE qno=%d ts=%u len=%d",pb->video.qno,,entity.timestamp,entity.size);
 	}
 	// end
     pthread_mutex_unlock(&stream_queue_mutex);
@@ -902,7 +903,10 @@ static int write_rtp_frame_ext(int ch_num, int sub_num, void *data, int data_len
         gettimeofday(&curr_tval, NULL );
 
         if ( ret == ERR_FULL) {
-            pb->congest = 1;
+			// debug
+			log_error("QUEUE FULL qno=%d len=%d ts=%u",pb->video.qno,entity.size,entity.timestamp);
+            // eod
+			pb->congest = 1;
 
             if ( TIMEVAL_DIFF(err_print_tval, curr_tval) > 5000000 )
                 log_error("ext enqueue queue ch_num=%d, sub_num=%d full", ch_num, sub_num);
@@ -1277,7 +1281,8 @@ static int frm_cb(int type, int qno, gm_ss_entity *entity)
             pb = &enc[ch_num].priv_bs[sub_num];
             if (pb->video.offs == (int)(entity->data) && pb->video.len == entity->size && pb->video.qno==qno) {
 				// debug
-				static int freecnt = 0;
+				static unsigned int freecnt = 0;
+				freecnt++;
 				if ((++freecnt % 100) == 0){
 					log_info("FREE ch=%d sub=%d qno=%d len=%d",ch_num,sub_num,qno,entity->size);
 				}
@@ -2184,9 +2189,10 @@ void *encode_thread(void *ptr)
 
                 if (pb->video.offs || pb->video.len){
 					// debug
-					static int skipcnt = 0;
+					static unsigned int skipcnt = 0;
+					skipcnt++;
                     if ((++skipcnt % 100) == 0){
-						log_error("SKIP ch=%d sub=%d offs=%u len=%d",i,j,(void*)pb->video.offs,pb->video.len);
+						log_error("SKIP ch=%d sub=%d qno=%d offs=%p len=%d play=%d",i,j,pb->video.qno,(void*)pb->video.offs,pb->video.len,pb->play);
 					}
 				}
 					continue;
