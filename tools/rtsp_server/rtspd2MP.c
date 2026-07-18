@@ -1431,19 +1431,26 @@ static void *audio_thread(void *arg)
     int ret;
     void *groupfd_a = NULL;
     void *audio_grab_object = NULL;
+	void *audio_render_object = NULL;
     void *audio_encode_object = NULL;
     void *bindfd_a = NULL;
     DECLARE_ATTR(audio_grab_attr, gm_audio_grab_attr_t);
+	DECLARE_ATTR(audio_render_attr, gm_audio_render_attr_t);
     DECLARE_ATTR(audio_encode_attr, gm_audio_enc_attr_t);
     gm_pollfd_t poll_fd;
     gm_enc_multi_bitstream_t multi_bs[1];
     char *bitstream_data = NULL;
 
-    audio_grab_attr.vch = 0; /* default input vch */
+    audio_grab_attr.vch = in_ch; 						/* default input vch 0 */
     audio_grab_attr.sample_rate = 8000;
     audio_grab_attr.sample_size = 16;
     audio_grab_attr.channel_type = GM_MONO;
 
+	audio_render_attr.vch = out_ch;						/* default output vch 0(adda302) */
+	audio_render_attr.encode_type = GM_G711_ALAW;
+    audio_render_attr.block_size = 320;
+    audio_render_attr.channel_type = GM_MONO;
+	
     audio_encode_attr.encode_type = GM_G711_ALAW;
     audio_encode_attr.bitrate = 32000;
     audio_encode_attr.frame_samples = 320;
@@ -1451,10 +1458,15 @@ static void *audio_thread(void *arg)
     groupfd_a = gm_new_groupfd();
 
 	audio_grab_object = gm_new_obj(GM_AUDIO_GRAB_OBJECT);
-    audio_encode_object = gm_new_obj(GM_AUDIO_ENCODER_OBJECT);
-    gm_set_attr(audio_grab_object, &audio_grab_attr);
+	gm_set_attr(audio_grab_object, &audio_grab_attr);
+	
+    audio_render_object = gm_new_obj(GM_AUDIO_RENDER_OBJECT);
+	gm_set_attr(audio_render_object, &audio_render_attr);
+
+	audio_encode_object = gm_new_obj(GM_AUDIO_ENCODER_OBJECT);
     gm_set_attr(audio_encode_object, &audio_encode_attr);
-    bindfd_a = gm_bind(groupfd_a, audio_grab_object, audio_encode_object);
+	
+    bindfd_a = gm_bind(groupfd_a, audio_grab_object, audio_render_object);
     if (!bindfd_a) {
         log_error("gm_bind failed");
         goto thread_exit;
@@ -1543,14 +1555,19 @@ thread_exit:
         free(bitstream_data);
     if (bindfd_a)
         gm_unbind(bindfd_a);
+	if (groupfd_a)
+		gm_apply(groupfd);
     if (audio_grab_object)
         gm_delete_obj(audio_grab_object);
+	if (audio_render_object)
+		gm_delete_obj(audio_render_object);
     if (audio_encode_object)
         gm_delete_obj(audio_encode_object);
-    if (groupfd_a) {
+    if (groupfd_a)
         gm_delete_groupfd(groupfd_a);
-    }
-    return NULL;
+    
+	gm_release();
+	return 0;
 }
 
 static void *motion_thread(void *arg)
