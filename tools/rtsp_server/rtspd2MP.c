@@ -841,7 +841,7 @@ static int open_live_streaming(int ch_num, int sub_num)
     if (b->audio.enabled == DVR_ENC_EBST_ENABLE) {
         int a_media_type = GM_SS_TYPE_AAC; 				/* default to AAC audio */
         pb->audio.qno = do_queue_alloc(a_media_type);
-        pb->sr = stream_reg(livename, pb->video.qno, pb->video.sdpstr, pb->audio.qno, pb->audio.sdpstr,0,0,1,0,0,0,0);
+        pb->sr = stream_reg(livename, pb->video.qno, pb->video.sdpstr, pb->audio.qno, pb->audio.sdpstr,1,0,0,0,0,NULL,NULL);
 		log_info("OPEN STREAM sub=%d pb=%p vsdp='%s'",sub_num,pb,pb->video.sdpstr);
     } else {
         pb->sr = stream_reg(livename, pb->video.qno, pb->video.sdpstr, pb->audio.qno, pb->audio.sdpstr,1,0,0,0,0,NULL,NULL);    
