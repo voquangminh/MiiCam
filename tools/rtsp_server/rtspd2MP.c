@@ -1891,6 +1891,13 @@ void gm_enc_init(int cap_ch, int cap_path, int rec_track, int enc_type, int mode
         cap_attr.enable_mv_data = 1;
         gm_set_attr(param->cap.obj, &cap_attr);                // * Set capture attribute
 
+        // * Enable 3dnr if resolution > capture dim / 2
+        if ((width >= (gm_system.cap[cap_ch].dim.width / 2)) &&
+            (height >= (gm_system.cap[cap_ch].dim.height / 2))) {
+            dnr_attr.enabled = 1;
+            gm_set_attr(param->cap.obj, &dnr_attr);
+        }
+		
         memcpy(&param->cap.cap_attr, &cap_attr, sizeof(gm_cap_attr_t));
         memcpy(&param->cap.dnr_attr, &dnr_attr, sizeof(gm_3dnr_attr_t));
     }
