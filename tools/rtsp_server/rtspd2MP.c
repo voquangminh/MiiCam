@@ -2415,13 +2415,10 @@ void update_video_sdp(int cap_ch, int cap_path, int rec_track)
                     case 0:
                         stream_sdp_parameter_encoder("H264", (unsigned char *) bs.bs.bs_buf, bs.bs.bs_len, pb->video.sdpstr, SDPSTR_MAX);
                         log_info("Generated SDP=[%s]",pb->video.sdpstr);
-						break;
                     case 1:
                         stream_sdp_parameter_encoder("H264", (unsigned char *) bs.bs.bs_buf, bs.bs.bs_len, pb->video.sdpstr, SDPSTR_MAX);
-                        break;
                     case 2:
                         stream_sdp_parameter_encoder("H264", (unsigned char *) bs.bs.bs_buf, bs.bs.bs_len, pb->video.sdpstr, SDPSTR_MAX);
-                        break;
                     }
                 break;
             }
