@@ -2173,7 +2173,7 @@ void *encode_thread(void *ptr)
 {
     int i, j, ch = 0, ret, cap_ch, cap_path, rec_track, rcv_nr, w, h;
     int first_play[CAP_CH_NUM][RTSP_NUM_PER_CAP];
-	memset(first_play, 0, sizeof(first_play));
+	   // memset(first_play, 0, sizeof(first_play));
     priv_avbs_t *pb;
     avbs_t *avbs;
     gm_enc_multi_bitstream_t bs[CAP_CH_NUM][RTSP_NUM_PER_CAP];
