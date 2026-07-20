@@ -1624,9 +1624,11 @@ static void *audio_thread(void *arg)
     			aac += 7;
     			aac_len -= 7;
 			}
-
+			
+			gm_ss_entity entity;
 			entity.data = (char *)aac;
 			entity.size = aac_len;
+			entity.timestamp = multi_bs[0].bs.timestamp * 8;
 
 			int frame_len;
 			frame_len = ((aac[3] & 0x03) << 11) | (aac[4] << 3) | ((aac[5] & 0xE0) >> 5);
