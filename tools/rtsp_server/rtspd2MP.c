@@ -847,8 +847,15 @@ static int open_live_streaming(int ch_num, int sub_num)
     if (b->audio.enabled == DVR_ENC_EBST_ENABLE) {
         int a_media_type = GM_SS_TYPE_AAC; 				/* default to AAC audio */
         pb->audio.qno = do_queue_alloc(a_media_type);
-        pb->sr = stream_reg(livename, pb->video.qno, pb->video.sdpstr, pb->audio.qno, pb->audio.sdpstr,1,0,0,0,0,NULL,NULL);
-		log_info("OPEN STREAM sub=%d pb=%p vsdp='%s'",sub_num,pb,pb->video.sdpstr);
+		// debug
+		if (pb->video.sdpstr[0] == '\0') {
+			log_error("Refusing stream_reg: video SDP is empty ch=%d sub=%d",ch_num,sub_num);
+			stream_queue_release(pb->video.qno);pb->video.qno = -1;
+    		return -1;
+		} 
+		// end of debug
+	    pb->sr = stream_reg(livename, pb->video.qno, pb->video.sdpstr, pb->audio.qno, pb->audio.sdpstr,1,0,0,0,0,0,0);
+/*debug*/log_info("stream_reg name='%s' vq=%d aq=%d vsdp='%s' asdp='%s',livename,pb->video.qno,pb->audio.qno,pb->video.sdpstr,pb->audio.sdpstr);
     } else {
         pb->sr = stream_reg(livename, pb->video.qno, pb->video.sdpstr, pb->audio.qno, pb->audio.sdpstr,0,0,1,0,0,0,0);    
     }
@@ -2498,6 +2505,7 @@ void update_video_sdp(int cap_ch, int cap_path, int rec_track)
 static int rtspd_start(int port)
 {
     int ret, ch_num, stream;
+	int cap_ch, cap_path, rec_track;
     pthread_attr_t attr;
 
     if (rtspd_sysinit == 1)
@@ -2509,6 +2517,29 @@ static int rtspd_start(int port)
     if ((ret = env_init()) < 0)
         return ret;
 
+	// debug
+	for (cap_ch = 0; cap_ch < CAP_CH_NUM; cap_ch++) {
+        for (cap_path = 0; cap_path < CAP_PATH_NUM; cap_path++) {
+			for (rec_track = 0; rec_track < ENC_TRACK_NUM; rec_track++) {
+                if (enc_param[cap_ch][cap_path].bindfd[rec_track] != NULL) {
+                    update_video_sdp(cap_ch,cap_path,rec_track);
+                }
+            }
+        }
+    }
+	
+	for (ch_num = 0; ch_num < CAP_CH_NUM; ch_num++) {
+        for (stream = 0;stream < RTSP_NUM_PER_CAP;stream++) {
+            priv_avbs_t *pb = &enc[ch_num].priv_bs[stream];
+            if (pb->video.sdpstr[0] == '\0') {
+                log_error("Video SDP unavailable ch=%d sub=%d",ch_num,stream);
+                return -1;
+            }
+            log_info("Video SDP ready ch=%d sub=%d sdp='%s'",ch_num,stream,pb->video.sdpstr);
+        }
+    }
+	// end of debug
+	
     if (pthread_mutex_init(&stream_queue_mutex, NULL)) {
         log_error("rtspd_start: mutex init failed");
         exit(-1);
@@ -2566,13 +2597,16 @@ static int rtspd_start(int port)
         pthread_attr_destroy(&attr);
     }
 
-    for (ch_num = 0; ch_num < CAP_CH_NUM; ch_num++) {
+	// debug
+	for (ch_num = 0; ch_num < CAP_CH_NUM; ch_num++) {
         pthread_mutex_lock(&enc[ch_num].ubs_mutex);
-        for (stream = 0; stream < RTSP_NUM_PER_CAP; stream++)
-            env_set_bs_new_event(ch_num, stream, START_BS_EVENT);
+        for (stream = 0;stream < RTSP_NUM_PER_CAP;stream++) {
+            env_set_bs_new_event(ch_num,stream,START_BS_EVENT);
+        }		
         pthread_mutex_unlock(&enc[ch_num].ubs_mutex);
     }
-
+	// end of debug
+	
     return 0;
 }
 
@@ -2850,6 +2884,7 @@ int main(int argc, char *argv[])
     log_info("Bitrate      : %d", cliArgs.bitrate);
     log_info("Bitrate Mode : %d", cliArgs.bitrateMode);
 
+	/* move to rtsp_start
     for (cap_ch = 0; cap_ch < CAP_CH_NUM; cap_ch++) {
         for (cap_path = 0; cap_path < CAP_PATH_NUM; cap_path++) {
             for (rec_track = 0; rec_track < ENC_TRACK_NUM; rec_track++) {
@@ -2857,7 +2892,8 @@ int main(int argc, char *argv[])
             }
         }
     }
-    
+    */
+	
     // * Use our handler for the signals so we can do some cleanup at quit
     signal(SIGINT,  signal_handler);
     signal(SIGHUP,  signal_handler);
