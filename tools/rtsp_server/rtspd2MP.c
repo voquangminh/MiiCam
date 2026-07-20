@@ -791,13 +791,19 @@ static int do_queue_alloc(int type)
     return rc;
 }
 
-
+// video_rtp_tick
 static unsigned int get_tick_gm(unsigned int tv_ms)
 {
     sys_tick = tv_ms*(RTP_HZ / 1000);
     return sys_tick;
 }
 
+// audio_rtp_tick
+static unsigned int get_autick_gm(unsigned int tv_ms)
+{
+    sys_tick = tv_ms*(RTP_HZ / 1000);
+    return sys_tick;
+}
 
 static int convert_gmss_media_type(int type)
 {
@@ -887,6 +893,7 @@ static int write_rtp_frame_ext(int ch_num, int sub_num, void *data, int data_len
     entity.data = (char *) data;
     entity.size = data_len;
     entity.timestamp = get_tick_gm(tv_ms);
+	entity.timestamp = get_autick_gm(tv_ms);	
     media_type = convert_gmss_media_type(b->video.enc_type);
     pthread_mutex_lock(&stream_queue_mutex);
     ret = stream_media_enqueue(media_type, pb->video.qno, &entity);
@@ -1268,11 +1275,12 @@ static int frm_cb(int type, int qno, gm_ss_entity *entity)
     for (ch_num = 0; ch_num < CAP_CH_NUM; ch_num++) {
         for (sub_num = 0; sub_num < RTSP_NUM_PER_CAP; sub_num++) {
             pb = &enc[ch_num].priv_bs[sub_num];
-            if (pb->video.offs == (int)(entity->data) && pb->video.len == entity->size && pb->video.qno==qno)
+            if (pb->video.offs == (uintptr_t)(entity->data) && pb->video.len == entity->size && pb->video.qno==qno){
                 pthread_mutex_lock(&pb->video.priv_vbs_mutex);
                 pb->video.offs = 0;
                 pb->video.len = 0;
                 pthread_mutex_unlock(&pb->video.priv_vbs_mutex);
+			}
     	}
 	}
     return 0;
@@ -1603,7 +1611,7 @@ static void *audio_thread(void *arg)
             gm_ss_entity entity;
             entity.data = multi_bs[0].bs.bs_buf;
             entity.size = multi_bs[0].bs.bs_len;
-            entity.timestamp = get_tick_gm(multi_bs[0].bs.timestamp);
+            entity.timestamp = get_autick_gm(multi_bs[0].bs.timestamp);
             
             int ch_num, sub_num;
             for (ch_num = 0; ch_num < CAP_CH_NUM; ch_num++) {
@@ -1625,7 +1633,7 @@ thread_exit:
     if (bindfd_a)
         gm_unbind(bindfd_a);
 	if (groupfd_a)
-		gm_apply(groupfd);
+		gm_apply(groupfd_a);
     if (audio_grab_object)
         gm_delete_obj(audio_grab_object);
 	if (audio_render_object)
@@ -2351,6 +2359,55 @@ void *encode_thread(void *ptr)
     return NULL;
 }
 
+// debug Thêm hàm scan NAL Annex-B:
+static int find_start_code(const unsigned char *p, int len, int *sc_len)
+{
+    int i;
+
+    for (i = 0; i + 3 < len; i++) {
+        if (p[i] == 0x00 && p[i + 1] == 0x00) {
+            if (p[i + 2] == 0x01) {
+                *sc_len = 3;
+                return i;
+            }
+
+            if (i + 4 < len &&
+                p[i + 2] == 0x00 &&
+                p[i + 3] == 0x01) {
+                *sc_len = 4;
+                return i;
+            }
+        }
+    }
+
+    return -1;
+}
+
+static void log_h264_nal_types(const unsigned char *data, int len)
+{
+    int offset = 0;
+
+    while (offset < len) {
+        int sc_len;
+        int pos = find_start_code(data + offset, len - offset, &sc_len);
+
+        if (pos < 0)
+            break;
+
+        offset += pos + sc_len;
+
+        if (offset >= len)
+            break;
+
+        log_info(
+            "H264 NAL offset=%d type=%d header=0x%02X",
+            offset,
+            data[offset] & 0x1F,
+            data[offset]
+        );
+    }
+}
+// end of debug
 
 void update_video_sdp(int cap_ch, int cap_path, int rec_track)
 {
@@ -2411,6 +2468,9 @@ void update_video_sdp(int cap_ch, int cap_path, int rec_track)
 
         else if ( ret == 0 && bs.retval == GM_SUCCESS ) {
             if (bs.bs.keyframe == 1 ) {
+				/* debug */ log_h264_nal_types((unsigned char *)bs.bs.bs_buf,bs.bs.bs_le*);
+				/* debug */ stream_sdp_parameter_*ncoder("H264",(u*signed char *)bs.bs.bs_buf,bs.bs.bs_len,pb->video.s*pstr,SDPSTR_MAX);
+				/* debug */ log_info("Generated H264 paramet*r sets=[%s]",pb->vid*o.sdpstr);
                 switch (cliArgs.encoderType) {
                     case 0:
                         stream_sdp_parameter_encoder("H264", (unsigned char *) bs.bs.bs_buf, bs.bs.bs_len, pb->video.sdpstr, SDPSTR_MAX);
