@@ -1619,6 +1619,7 @@ static void *audio_thread(void *arg)
 
 			aac = (unsigned char *)multi_bs[0].bs.bs_buf;
 			aac_len = multi_bs[0].bs.bs_len;
+			log_info("AAC recv bs_len=%u",multi_bs[0].bs.bs_len);
 
 			if (aac_len > 7 && aac[0] == 0xFF && (aac[1] & 0xF0) == 0xF0){
     			aac += 7;
@@ -1628,7 +1629,9 @@ static void *audio_thread(void *arg)
 			gm_ss_entity entity;
 			entity.data = (char *)aac;
 			entity.size = aac_len;
-			entity.timestamp = multi_bs[0].bs.timestamp * 8;
+			log_info("AAC enqueue len=%d",entity.size);
+			entity.timestamp = audio_ts;
+			audio_ts += 1024;
 
 			int frame_len;
 			frame_len = ((aac[3] & 0x03) << 11) | (aac[4] << 3) | ((aac[5] & 0xE0) >> 5);
