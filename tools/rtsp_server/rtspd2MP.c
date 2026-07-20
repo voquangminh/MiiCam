@@ -1624,10 +1624,10 @@ static void *audio_thread(void *arg)
 			int dumped = 0;
 			if (!dumped) {
     			int i;
-			    printf("AAC:");
+			    log_info("AAC:");
 			    for (i = 0; i < 16; i++)
-        			printf(" %02X",(unsigned char)multi_bs[0].bs.bs_buf[i]);
-			    	printf("\n");
+        			log_info(" %02X",(unsigned char)multi_bs[0].bs.bs_buf[i]);
+			    	log_info("\n");
 			    dumped = 1;
 			}
             
