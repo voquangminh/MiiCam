@@ -2468,9 +2468,9 @@ void update_video_sdp(int cap_ch, int cap_path, int rec_track)
 
         else if ( ret == 0 && bs.retval == GM_SUCCESS ) {
             if (bs.bs.keyframe == 1 ) {
-				/* debug */ log_h264_nal_types((unsigned char *)bs.bs.bs_buf,bs.bs.bs_le*);
-				/* debug */ stream_sdp_parameter_*ncoder("H264",(u*signed char *)bs.bs.bs_buf,bs.bs.bs_len,pb->video.s*pstr,SDPSTR_MAX);
-				/* debug */ log_info("Generated H264 paramet*r sets=[%s]",pb->vid*o.sdpstr);
+				/* debug */ log_h264_nal_types((unsigned char *)bs.bs.bs_buf,bs.bs.bs_len);
+				/* debug */ stream_sdp_parameter_*ncoder("H264",(unsigned char *)bs.bs.bs_buf,bs.bs.bs_len,pb->video.sdpstr,SDPSTR_MAX);
+				/* debug */ log_info("Generated H264 parameter sets=[%s]",pb->video.sdpstr);
                 switch (cliArgs.encoderType) {
                     case 0:
                         stream_sdp_parameter_encoder("H264", (unsigned char *) bs.bs.bs_buf, bs.bs.bs_len, pb->video.sdpstr, SDPSTR_MAX);
