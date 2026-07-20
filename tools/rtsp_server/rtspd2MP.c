@@ -1536,6 +1536,7 @@ static void *audio_thread(void *arg)
     audio_encode_attr.encode_type = GM_AAC;					/* default output vch 0(adda302) */
     audio_encode_attr.bitrate = 32000;
     audio_encode_attr.frame_samples = 1024;
+	audio_encode_attr.block_count = 1;
 
     groupfd_a = gm_new_groupfd();
 
@@ -1612,39 +1613,14 @@ static void *audio_thread(void *arg)
                 fwrite(multi_bs[0].bs.bs_buf, 1, multi_bs[0].bs.bs_len, VideoRecorder.fh_aac);
                 fflush(VideoRecorder.fh_aac);
             }
-
-			// debug 
-			unsigned char *aac;
-			int aac_len, audio_ts;
-
-			aac = (unsigned char *)multi_bs[0].bs.bs_buf;
-			aac_len = multi_bs[0].bs.bs_len;
-			log_info("AAC recv bs_len=%u",multi_bs[0].bs.bs_len);
-
-			if (aac_len > 7 && aac[0] == 0xFF && (aac[1] & 0xF0) == 0xF0){
-    			aac += 7;
-    			aac_len -= 7;
-			}
 			
-			gm_ss_entity entity;
-			entity.data = (char *)aac;
-			entity.size = aac_len;
-			log_info("AAC enqueue len=%d",entity.size);
-			entity.timestamp = audio_ts;
-			audio_ts += 1024;
-
-			int frame_len;
-			frame_len = ((aac[3] & 0x03) << 11) | (aac[4] << 3) | ((aac[5] & 0xE0) >> 5);
-			log_info("ADTS frame_len=%d bs_len=%d",frame_len,multi_bs[0].bs.bs_len);
-			// end of debug
-			
-/*            if (multi_bs[0].bs.bs_len <= 7)
-                continue;
+            //if (multi_bs[0].bs.bs_len <= 7)
+            //    continue;
             gm_ss_entity entity;
             entity.data = multi_bs[0].bs.bs_buf;
             entity.size = multi_bs[0].bs.bs_len;
             entity.timestamp = get_autick_gm(multi_bs[0].bs.timestamp);
-*/	
+	
 			// dump AAC ADTS or AAC RAW
 			int dumped = 0;
 			if (!dumped) {
