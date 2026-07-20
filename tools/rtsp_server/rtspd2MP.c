@@ -1619,6 +1619,17 @@ static void *audio_thread(void *arg)
             entity.data = multi_bs[0].bs.bs_buf;
             entity.size = multi_bs[0].bs.bs_len;
             entity.timestamp = get_autick_gm(multi_bs[0].bs.timestamp);
+
+			// dump AAC ADTS or AAC RAW
+			int dumped = 0;
+			if (!dumped) {
+    			int i;
+			    printf("AAC:");
+			    for (i = 0; i < 16; i++)
+        			printf(" %02X",(unsigned char)multi_bs[0].bs.bs_buf[i]);
+			    	printf("\n");
+			    dumped = 1;
+			}
             
             int ch_num, sub_num;
             for (ch_num = 0; ch_num < CAP_CH_NUM; ch_num++) {
@@ -1654,23 +1665,6 @@ thread_exit:
 	return 0;
 }
 
-// dump AAC ADTS or AAC RAW
-static int dumped = 0;
-
-if (!dumped) {
-    int i;
-
-    printf("AAC:");
-
-    for (i = 0; i < 16; i++)
-        printf(" %02X",
-            (unsigned char)
-            multi_bs[0].bs.bs_buf[i]);
-
-    printf("\n");
-
-    dumped = 1;
-}
 
 static void *motion_thread(void *arg)
 {
