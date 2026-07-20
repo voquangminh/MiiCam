@@ -1509,7 +1509,7 @@ static void *audio_thread(void *arg)
     gm_enc_multi_bitstream_t multi_bs[1];
     char *bitstream_data = NULL;
 
-    audio_grab_attr.vch = in_ch; 						/* default input vch 0 */
+    audio_grab_attr.vch = 0; 								/* default input vch 0 */
     audio_grab_attr.sample_rate = 8000;
     audio_grab_attr.sample_size = 16;
     audio_grab_attr.channel_type = GM_MONO;
