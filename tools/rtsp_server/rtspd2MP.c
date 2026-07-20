@@ -1654,6 +1654,24 @@ thread_exit:
 	return 0;
 }
 
+// dump AAC ADTS or AAC RAW
+static int dumped = 0;
+
+if (!dumped) {
+    int i;
+
+    printf("AAC:");
+
+    for (i = 0; i < 16; i++)
+        printf(" %02X",
+            (unsigned char)
+            multi_bs[0].bs.bs_buf[i]);
+
+    printf("\n");
+
+    dumped = 1;
+}
+
 static void *motion_thread(void *arg)
 {
     int ch;
