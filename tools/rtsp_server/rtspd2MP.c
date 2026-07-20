@@ -1612,14 +1612,34 @@ static void *audio_thread(void *arg)
                 fwrite(multi_bs[0].bs.bs_buf, 1, multi_bs[0].bs.bs_len, VideoRecorder.fh_aac);
                 fflush(VideoRecorder.fh_aac);
             }
-            
-            if (multi_bs[0].bs.bs_len <= 7)
+
+			// debug 
+			unsigned char *aac;
+			int aac_len;
+
+			aac = (unsigned char *)multi_bs[0].bs.bs_buf;
+			aac_len = multi_bs[0].bs.bs_len;
+
+			if (aac_len > 7 && aac[0] == 0xFF && (aac[1] & 0xF0) == 0xF0){
+    			aac += 7;
+    			aac_len -= 7;
+			}
+
+			entity.data = (char *)aac;
+			entity.size = aac_len;
+
+			int frame_len;
+			frame_len = ((aac[3] & 0x03) << 11) | (aac[4] << 3) | ((aac[5] & 0xE0) >> 5);
+			log_info("ADTS frame_len=%d bs_len=%d",frame_len,multi_bs[0].bs.bs_len);
+			// end of debug
+			
+/*            if (multi_bs[0].bs.bs_len <= 7)
                 continue;
             gm_ss_entity entity;
             entity.data = multi_bs[0].bs.bs_buf;
             entity.size = multi_bs[0].bs.bs_len;
             entity.timestamp = get_autick_gm(multi_bs[0].bs.timestamp);
-
+*/	
 			// dump AAC ADTS or AAC RAW
 			int dumped = 0;
 			if (!dumped) {
