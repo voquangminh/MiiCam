@@ -1615,7 +1615,7 @@ static void *audio_thread(void *arg)
 
 			// debug 
 			unsigned char *aac;
-			int aac_len;
+			int aac_len, audio_ts;
 
 			aac = (unsigned char *)multi_bs[0].bs.bs_buf;
 			aac_len = multi_bs[0].bs.bs_len;
