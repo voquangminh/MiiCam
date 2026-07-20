@@ -1434,7 +1434,7 @@ static void *playback_thread(void *arg)
     FILE *bs_fd, *len_fd;
     char *bitstream_data;
     gm_dec_multi_bitstream_t multi_bs[1];
-	pthread_t thread_id;
+	//pthread_t thread_id;
 	int pb_exit = 0;
     
     sprintf(filename, "%s.aac", PATTERN_NAME);
@@ -1496,7 +1496,7 @@ static void *playback_thread(void *arg)
 
 static void *audio_thread(void *arg)
 {
-    int ret, in_ch, out_ch;
+    int ret;
     void *groupfd_a = NULL;
     void *audio_grab_object = NULL;
 	void *audio_render_object = NULL;
@@ -2804,7 +2804,7 @@ int main(int argc, char *argv[])
     signal(SIGTERM, signal_handler);
 
 	// * Start the rtsp threads
-    rtspd_start(554)
+    rtspd_start(554);
 
     while(1) {
         usleep(10000);
