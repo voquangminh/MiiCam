@@ -1646,10 +1646,8 @@ static void *audio_thread(void *arg)
 			int dumped = 0;
 			if (!dumped) {
     			int i;
-			    log_info("AAC:");
 			    for (i = 0; i < 16; i++)
-        			log_info(" %02X",(unsigned char)multi_bs[0].bs.bs_buf[i]);
-			    	log_info("\n");
+        			log_info("AAC: %02X",(unsigned char)multi_bs[0].bs.bs_buf[i]);
 			    dumped = 1;
 			}
             
