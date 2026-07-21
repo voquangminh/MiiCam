@@ -38,7 +38,7 @@
 #define DVR_ENC_EBST_ENABLE      0x55887799
 #define DVR_ENC_EBST_DISABLE     0
 
-#define ENC_TYPE_H264           0
+#define ENC_TYPE_H264            0
 #define ENC_TYPE_MPEG4           1
 #define ENC_TYPE_MJPEG           2
 
@@ -1538,6 +1538,9 @@ static void *audio_thread(void *arg)
     audio_encode_attr.frame_samples = 1024;
 	audio_encode_attr.block_count = 1;
 
+	// debug
+	log_info("AAC cfg bitrate=%d frame_samples=%d block_count=%d",audio_encode_attr.bitrate,audio_encode_attr.frame_samples,audio_encode_attr.block_count);
+	
     groupfd_a = gm_new_groupfd();
 
 	audio_grab_object = gm_new_obj(GM_AUDIO_GRAB_OBJECT);
