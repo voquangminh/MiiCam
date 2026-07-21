@@ -1542,11 +1542,11 @@ static void *audio_thread(void *arg)
 	audio_grab_object = gm_new_obj(GM_AUDIO_GRAB_OBJECT);
 	gm_set_attr(audio_grab_object, &audio_grab_attr);
 
-	audio_encode_object_a = gm_new_obj(GM_AUDIO_ENCODER_OBJECT);
+	audio_encode_object = gm_new_obj(GM_AUDIO_ENCODER_OBJECT);
     gm_set_attr(audio_encode_object, &audio_encode_attr);
 	
-    bindfd_a = gm_bind(groupfd_a, audio_grab_object_a, audio_encode_object);
-    if (!bindfd_a) {
+    audio_bindfd = gm_bind(audio_groupfd, audio_grab_object, audio_encode_object);
+    if (!audio_bindfd) {
         log_error("gm_bind failed");
         goto thread_exit;
     }
