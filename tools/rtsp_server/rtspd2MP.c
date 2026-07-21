@@ -1517,8 +1517,8 @@ static void *audio_test_thread(void *arg)
     char *buf = NULL;
     int len;
     gm_ss_entity entity;
-    aac_fd = fopen("/tmp/sd/tools/rtsp_server/pattern/audio_8khz_16bit.aac","rb");
-    len_fd = fopen("/tmp/sd/tools/rtsp_server/pattern/audio_8khz_16bit.len","r");
+    aac_fd = fopen("/tmp/sd/tools/bin/audio_8khz_16bit.aac","rb");
+    len_fd = fopen("/tmp/sd/tools/bin/audio_8khz_16bit.len","r");
     if (!aac_fd || !len_fd) {
         log_error("cannot open audio pattern files");
         return NULL;
