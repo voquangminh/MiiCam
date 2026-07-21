@@ -203,7 +203,6 @@ pthread_t motion_thread_id    		= 0;
 pthread_t media_thread_id     		= 0;
 pthread_t osd_thread_id       		= 0;
 pthread_t audio_thread_id     		= 0;
-pthread_t audio_encode_thread_id	= 0;
 
 unsigned int sys_tick         = 0;
 struct timeval sys_sec        = {-1, -1};
@@ -1664,93 +1663,6 @@ thread_exit:
 	return 0;
 }
 
-static void *audio_encode_thread(void *arg)
-{
-    int i, ret;
-	int enc_exit = 0;
-	void *bindfd_a = NULL;
-    char filename[50];
-    char *bitstream_data;
-    FILE *bs_fd[MAX_BITSTREAM_NUM], *len_fd[MAX_BITSTREAM_NUM];
-    gm_pollfd_t poll_fds[MAX_BITSTREAM_NUM];
-    gm_enc_multi_bitstream_t multi_bs[1];
-
-    for (i = 0; i < MAX_BITSTREAM_NUM; i++) {
-        sprintf(filename, "CH%d_audio.aac", i);
-        bs_fd[i] = fopen(filename, "wb");
-        if (bs_fd[i] == NULL) {
-            printf("open file error(%s)! \n", filename);
-            exit(1);
-        }
-        printf("Record file: [%s]\n", filename);
-        sprintf(filename, "CH%d_audio.len", i);
-        len_fd[i] = fopen(filename, "wb");
-        if (len_fd[i] == NULL) {
-            printf("open file error(%s)! \n", filename);
-            exit(1);
-        }
-
-        bitstream_data = (char *)malloc(AU_BITSTREAM_LEN);
-        if (bitstream_data == 0)
-            return 0;
-        memset(bitstream_data, 0, AU_BITSTREAM_LEN);
-    }
-
-    memset(poll_fds, 0, sizeof(poll_fds));
-    for (i = 0; i < MAX_BITSTREAM_NUM; i++) {
-        poll_fds[i].bindfd = bindfd_a;
-        poll_fds[i].event = GM_POLL_READ;
-    }
-
-    while (enc_exit == 0) {
-        ret = gm_poll(poll_fds, MAX_BITSTREAM_NUM, 1000);
-        if (ret == GM_TIMEOUT) {
-            printf("Poll timeout!!\n");
-            continue;
-        }
-
-        memset(multi_bs, 0, sizeof(multi_bs));
-        for (i = 0; i < MAX_BITSTREAM_NUM; i++) {
-            if (poll_fds[i].revent.event != GM_POLL_READ) {
-                continue;
-            }
-            if (poll_fds[i].revent.bs_len > AU_BITSTREAM_LEN) {
-                printf("buffer length is not enough! %d, %d\n",
-                        poll_fds[i].revent.bs_len, AU_BITSTREAM_LEN);
-                continue;
-            }
-            multi_bs[0].bindfd = bindfd_a;
-            multi_bs[0].bs.bs_buf = bitstream_data;
-            multi_bs[0].bs.bs_buf_len = AU_BITSTREAM_LEN;
-            multi_bs[0].bs.mv_buf = NULL;
-            multi_bs[0].bs.mv_buf_len = 0;
-        }
-
-        if ((ret = gm_recv_multi_bitstreams(multi_bs, MAX_BITSTREAM_NUM)) < 0)
-            printf("Error return value %d\n", ret);
-        else {
-            for (i = 0; i < MAX_BITSTREAM_NUM; i++) { 
-                if (!multi_bs[i].bindfd)
-                    continue;
-                if (multi_bs[i].retval < 0) {  
-                    printf("get bitstreame error! ret = %d\n", ret);
-                } else if (multi_bs[i].retval == GM_SUCCESS) {
-                    fwrite(multi_bs[i].bs.bs_buf, 1, multi_bs[i].bs.bs_len, bs_fd[i]);
-                    fprintf(len_fd[i], "%d\n", multi_bs[i].bs.bs_len);
-                    fflush(bs_fd[i]);
-                    fflush(len_fd[i]);
-                }
-            }
-        }
-    }
-
-    for (i = 0; i < MAX_BITSTREAM_NUM; i++) {
-        fclose(bs_fd[i]);
-        fclose(len_fd[i]);
-    }
-
-    return 0;
-}
 
 static void *motion_thread(void *arg)
 {
@@ -2642,14 +2554,6 @@ static int rtspd_start(int port)
         pthread_attr_init(&attr);
         pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
         ret = pthread_create(&audio_thread_id, &attr, &audio_thread, NULL);
-        pthread_attr_destroy(&attr);
-    }
-
-	// * Audio encode thread: encode and enqueue audio frames to stream */
-    if (audio_encode_thread_id == (pthread_t)NULL) {
-        pthread_attr_init(&attr);
-        pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
-        ret = pthread_create(&audio_encode_thread_id, &attr, &audio_encode_thread, NULL);
         pthread_attr_destroy(&attr);
     }
 
