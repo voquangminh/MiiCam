@@ -1668,6 +1668,7 @@ static void *audio_encode_thread(void *arg)
 {
     int i, ret;
 	int enc_exit = 0;
+	void *bindfd_a = NULL;
     char filename[50];
     char *bitstream_data[MAX_BITSTREAM_NUM];
     FILE *bs_fd[MAX_BITSTREAM_NUM], *len_fd[MAX_BITSTREAM_NUM];
