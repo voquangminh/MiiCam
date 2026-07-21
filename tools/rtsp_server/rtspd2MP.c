@@ -1691,9 +1691,9 @@ static void *audio_encode_thread(void *arg)
         }
 
         bitstream_data = (char *)malloc(AU_BITSTREAM_LEN);
-        if (bitstream_data[i] == 0)
+        if (bitstream_data == 0)
             return 0;
-        memset(bitstream_data[i], 0, AU_BITSTREAM_LEN);
+        memset(bitstream_data, 0, AU_BITSTREAM_LEN);
     }
 
     memset(poll_fds, 0, sizeof(poll_fds));
