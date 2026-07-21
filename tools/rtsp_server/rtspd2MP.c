@@ -55,6 +55,7 @@
 #define AQ_LEN                   2             // * 1 MP2 and 1 AMR for live streaming, another 2 for file streaming.
 #define AV_NAME_MAX              127
 #define AU_BITSTREAM_LEN         12800
+#define MAX_BITSTREAM_NUM   	 1
 #define PATTERN_NAME      		 "audio_8khz_16bit"
 
 #define RTP_HZ                   90000
