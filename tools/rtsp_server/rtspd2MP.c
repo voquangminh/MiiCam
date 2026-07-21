@@ -1589,7 +1589,11 @@ static void *audio_thread(void *arg)
 
 	// debug
 	log_info("AAC cfg bitrate=%d frame_samples=%d block_count=%d",audio_encode_attr.bitrate,audio_encode_attr.frame_samples,audio_encode_attr.block_count);
-	
+
+	FILE *fp = fopen("/tmp/test.aac","ab");
+	fwrite(multi_bs[0].bs.bs_buf,1,multi_bs[0].bs.bs_len,fp);
+	fclose(fp);
+	// end of debug
     groupfd_a = gm_new_groupfd();
 
 	audio_grab_object = gm_new_obj(GM_AUDIO_GRAB_OBJECT);
