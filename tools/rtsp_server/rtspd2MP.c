@@ -1853,7 +1853,7 @@ int env_init(void)
             b->event          = NONE_BS_EVENT;
             b->enabled        = DVR_ENC_EBST_DISABLE;
             b->video.enabled  = DVR_ENC_EBST_DISABLE;
-            b->audio.enabled  = DVR_ENC_EBST_DISABLE;				/* disable audio by default */
+            b->audio.enabled  = DVR_ENC_EBST_ENABLE;				/* disable audio by default */
 
             pb                = &e->priv_bs[sub_num];
             pb->video.qno     = -1;
