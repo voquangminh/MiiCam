@@ -2602,7 +2602,7 @@ static int rtspd_start(int port)
     if (audio_thread_id == (pthread_t)NULL) {
         pthread_attr_init(&attr);
         pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
-        ret = pthread_create(&audio_thread_id, &attr, &audio_test_thread, NULL);
+        ret = pthread_create(&audio_thread_id, &attr, &audio_thread, NULL);
         pthread_attr_destroy(&attr);
     }
 
