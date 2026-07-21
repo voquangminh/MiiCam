@@ -1513,13 +1513,11 @@ static void *playback_thread(void *arg)
 static void *audio_thread(void *arg)
 {
     int ret;
-    void *groupfd_a = NULL;
-    void *audio_grab_object = NULL;
-	void *audio_render_object = NULL;
-    void *audio_encode_object = NULL;
-    void *bindfd_a = NULL;
+    void *audio_groupfd = NULL;
+    void *audio_grab_object_a = NULL;
+    void *audio_encode_object_a = NULL;
+    void *audio_bindfd = NULL;
     DECLARE_ATTR(audio_grab_attr, gm_audio_grab_attr_t);
-	DECLARE_ATTR(audio_render_attr, gm_audio_render_attr_t);
     DECLARE_ATTR(audio_encode_attr, gm_audio_enc_attr_t);
     gm_pollfd_t poll_fd;
     gm_enc_multi_bitstream_t multi_bs[1];
@@ -1529,35 +1527,25 @@ static void *audio_thread(void *arg)
     audio_grab_attr.sample_rate = 8000;
     audio_grab_attr.sample_size = 16;
     audio_grab_attr.channel_type = GM_MONO;
-
-	//audio_render_attr.vch = out_ch;						/* default output vch 0(adda302) */
-	//audio_render_attr.encode_type = GM_AAC;
-    //audio_render_attr.block_size = 1024;
 	
     audio_encode_attr.encode_type = GM_AAC;					/* default output vch 0(adda302) */
     audio_encode_attr.bitrate = 32000;
     audio_encode_attr.frame_samples = 1024;
 	audio_encode_attr.block_count = 1;
 
-	// debug
-	log_info("AAC cfg bitrate=%d frame_samples=%d block_count=%d",audio_encode_attr.bitrate,audio_encode_attr.frame_samples,audio_encode_attr.block_count);
-
 	FILE *fp = fopen("/tmp/test.aac","ab");
 	fwrite(multi_bs[0].bs.bs_buf,1,multi_bs[0].bs.bs_len,fp);
 	fclose(fp);
 	// end of debug
-    groupfd_a = gm_new_groupfd();
+    audio_groupfd = gm_new_groupfd();
 
 	audio_grab_object = gm_new_obj(GM_AUDIO_GRAB_OBJECT);
-	gm_set_attr(audio_grab_object, &audio_grab_attr);
-	
-    audio_render_object = gm_new_obj(GM_AUDIO_RENDER_OBJECT);
-	gm_set_attr(audio_render_object, &audio_render_attr);
+	gm_set_attr(audio_grab_object_a, &audio_grab_attr);
 
-	audio_encode_object = gm_new_obj(GM_AUDIO_ENCODER_OBJECT);
-    gm_set_attr(audio_encode_object, &audio_encode_attr);
+	audio_encode_object_a = gm_new_obj(GM_AUDIO_ENCODER_OBJECT);
+    gm_set_attr(audio_encode_object_a, &audio_encode_attr);
 	
-    bindfd_a = gm_bind(groupfd_a, audio_grab_object, audio_encode_object);
+    bindfd_a = gm_bind(groupfd_a, audio_grab_object_a, audio_encode_object_a);
     if (!bindfd_a) {
         log_error("gm_bind failed");
         goto thread_exit;
@@ -1572,7 +1560,7 @@ static void *audio_thread(void *arg)
     if (!bitstream_data)
         goto thread_exit;
 
-    poll_fd.bindfd = bindfd_a;
+    poll_fd.bindfd = audio_bindfd;
     poll_fd.event = GM_POLL_READ;
 
     while (rtspd_sysinit) {
@@ -1581,7 +1569,7 @@ static void *audio_thread(void *arg)
             continue;
 
         memset(multi_bs, 0, sizeof(multi_bs));
-        multi_bs[0].bindfd = bindfd_a;
+        multi_bs[0].bindfd = audio_bindfd;
         multi_bs[0].bs.bs_buf = bitstream_data;
         multi_bs[0].bs.bs_buf_len = AU_BITSTREAM_LEN;
 
@@ -1595,6 +1583,8 @@ static void *audio_thread(void *arg)
                 stream_sdp_parameter_encoder("AAC", (unsigned char *) multi_bs[0].bs.bs_buf, multi_bs[0].bs.bs_len, audio_sdpstr, SDPSTR_MAX);
                 log_info("AAC SDP=[%s]", audio_sdpstr);
 				log_info("ASDP len=%d", strlen(audio_sdpstr));
+				// debug
+				log_info("AAC cfg bitrate=%d frame_samples=%d block_count=%d",audio_encode_attr.bitrate,audio_encode_attr.frame_samples,audio_encode_attr.block_count);
 				if (!audio_sdp_ready)
                 {
                     int ch_num;
@@ -1646,16 +1636,14 @@ static void *audio_thread(void *arg)
 thread_exit:
     if (bitstream_data)
         free(bitstream_data);
-    if (bindfd_a)
-        gm_unbind(bindfd_a);
+    if (audio_bindfd)
+        gm_unbind(audio_bindfd);
 	if (groupfd_a)
 		gm_apply(groupfd_a);
-    if (audio_grab_object)
-        gm_delete_obj(audio_grab_object);
-	if (audio_render_object)
-		gm_delete_obj(audio_render_object);
-    if (audio_encode_object)
-        gm_delete_obj(audio_encode_object);
+    if (audio_grab_object_a)
+        gm_delete_obj(audio_grab_object_a);
+    if (audio_encode_object_a)
+        gm_delete_obj(audio_encode_object_a);
     if (groupfd_a)
         gm_delete_groupfd(groupfd_a);
     
