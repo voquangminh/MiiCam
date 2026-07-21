@@ -210,10 +210,10 @@ struct timeval sys_sec        = {-1, -1};
 int sys_port                  = 554;
 char *ipptr                   = NULL;
 
-void *audio_groupfd           = 0;
-void *audio_grab_object_a     = 1;
-void *audio_encode_object_a   = 1;
-void *audio_bindfd            = 1;
+void *audio_groupfd;
+void *audio_grab_object_a;
+void *audio_encode_object_a;
+void *audio_bindfd;
 char audio_sdpstr[SDPSTR_MAX] = {0};
 int audio_sdp_ready           = 0;
 
@@ -1667,11 +1667,12 @@ thread_exit:
 static void *audio_encode_thread(void *arg)
 {
     int i, ret;
+	int enc_exit = 0;
     char filename[50];
     char *bitstream_data[MAX_BITSTREAM_NUM];
     FILE *bs_fd[MAX_BITSTREAM_NUM], *len_fd[MAX_BITSTREAM_NUM];
     gm_pollfd_t poll_fds[MAX_BITSTREAM_NUM];
-    gm_enc_multi_bitstream_t multi_bs[MAX_BITSTREAM_NUM];
+    gm_enc_multi_bitstream_t multi_bs[1];
 
     for (i = 0; i < MAX_BITSTREAM_NUM; i++) {
         sprintf(filename, "CH%d_audio.aac", i);
@@ -1696,7 +1697,7 @@ static void *audio_encode_thread(void *arg)
 
     memset(poll_fds, 0, sizeof(poll_fds));
     for (i = 0; i < MAX_BITSTREAM_NUM; i++) {
-        poll_fds[i].bindfd = bindfd[i];
+        poll_fds[i].bindfd = bindfd_a[i];
         poll_fds[i].event = GM_POLL_READ;
     }
 
@@ -1717,11 +1718,11 @@ static void *audio_encode_thread(void *arg)
                         poll_fds[i].revent.bs_len, AU_BITSTREAM_LEN);
                 continue;
             }
-            multi_bs[i].bindfd = bindfd[i];
-            multi_bs[i].bs.bs_buf = bitstream_data[i];
-            multi_bs[i].bs.bs_buf_len = AU_BITSTREAM_LEN;
-            multi_bs[i].bs.mv_buf = NULL;
-            multi_bs[i].bs.mv_buf_len = 0;
+            multi_bs[0].bindfd = bindfd_a[i];
+            multi_bs[0].bs.bs_buf = bitstream_data[i];
+            multi_bs[0].bs.bs_buf_len = AU_BITSTREAM_LEN;
+            multi_bs[0].bs.mv_buf = NULL;
+            multi_bs[0].bs.mv_buf_len = 0;
         }
 
         if ((ret = gm_recv_multi_bitstreams(multi_bs, MAX_BITSTREAM_NUM)) < 0)
@@ -2522,7 +2523,6 @@ void update_video_sdp(int cap_ch, int cap_path, int rec_track)
 
         else if ( ret == 0 && bs.retval == GM_SUCCESS ) {
             if (bs.bs.keyframe == 1 ) {
-				/* debug */ log_h264_nal_types((unsigned char *)bs.bs.bs_buf,bs.bs.bs_len);
 				/* debug */ stream_sdp_parameter_encoder("H264",(unsigned char *)bs.bs.bs_buf,bs.bs.bs_len,pb->video.sdpstr,SDPSTR_MAX);
 				/* debug */ log_info("Generated H264 parameter sets=[%s]",pb->video.sdpstr);
                 switch (cliArgs.encoderType) {
