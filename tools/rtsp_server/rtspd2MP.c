@@ -1690,7 +1690,7 @@ static void *audio_encode_thread(void *arg)
             exit(1);
         }
 
-        bitstream_data[i] = (char *)malloc(AU_BITSTREAM_LEN);
+        bitstream_data = (char *)malloc(AU_BITSTREAM_LEN);
         if (bitstream_data[i] == 0)
             return 0;
         memset(bitstream_data[i], 0, AU_BITSTREAM_LEN);
@@ -1698,7 +1698,7 @@ static void *audio_encode_thread(void *arg)
 
     memset(poll_fds, 0, sizeof(poll_fds));
     for (i = 0; i < MAX_BITSTREAM_NUM; i++) {
-        poll_fds[i].bindfd = bindfd_a[i];
+        poll_fds[i].bindfd = bindfd_a;
         poll_fds[i].event = GM_POLL_READ;
     }
 
@@ -1719,8 +1719,8 @@ static void *audio_encode_thread(void *arg)
                         poll_fds[i].revent.bs_len, AU_BITSTREAM_LEN);
                 continue;
             }
-            multi_bs[0].bindfd = bindfd_a[i];
-            multi_bs[0].bs.bs_buf = bitstream_data[i];
+            multi_bs[0].bindfd = bindfd_a;
+            multi_bs[0].bs.bs_buf = bitstream_data;
             multi_bs[0].bs.bs_buf_len = AU_BITSTREAM_LEN;
             multi_bs[0].bs.mv_buf = NULL;
             multi_bs[0].bs.mv_buf_len = 0;
