@@ -1514,90 +1514,47 @@ static void *audio_test_thread(void *arg)
 {
     FILE *aac_fd;
     FILE *len_fd;
-
     char *buf = NULL;
-
     int len;
-
     gm_ss_entity entity;
-
-    aac_fd = fopen(
-        "/tmp/sd/tools/rtsp_server/pattern/audio_8khz_16bit.aac",
-        "rb");
-
-    len_fd = fopen(
-        "/tmp/sd/tools/rtsp_server/pattern/audio_8khz_16bit.len",
-        "r");
-
+    aac_fd = fopen("/tmp/sd/tools/rtsp_server/pattern/audio_8khz_16bit.aac","rb");
+    len_fd = fopen("/tmp/sd/tools/rtsp_server/pattern/audio_8khz_16bit.len","r");
     if (!aac_fd || !len_fd) {
         log_error("cannot open audio pattern files");
         return NULL;
     }
-
     buf = malloc(4096);
-
     if (!buf)
         return NULL;
-
-    static unsigned int audio_ts = 0;
-
+    unsigned int audio_ts = 0;
     while (rtspd_sysinit) {
-
         if (fscanf(len_fd, "%d", &len) != 1)
             break;
-
         if (len <= 0 || len > 4096)
             break;
-
         if (fread(buf, 1, len, aac_fd) != len)
             break;
-
         entity.data = buf;
         entity.size = len;
         entity.timestamp = audio_ts;
-
         audio_ts += 1024;
-
         int ch_num;
         int sub_num;
-
-        for (ch_num = 0;
-             ch_num < CAP_CH_NUM;
-             ch_num++) {
-
-            for (sub_num = 0;
-                 sub_num < RTSP_NUM_PER_CAP;
-                 sub_num++) {
-
-                priv_avbs_t *pb =
-                    &enc[ch_num].priv_bs[sub_num];
-
-                if (pb->audio.qno >= 0 &&
-                    pb->sr >= 0 &&
-                    pb->audio.sdpstr[0]) {
-
-                    pthread_mutex_lock(
-                        &stream_queue_mutex);
-
-                    stream_media_enqueue(
-                        GM_SS_TYPE_AAC,
-                        pb->audio.qno,
-                        &entity);
-
-                    pthread_mutex_unlock(
-                        &stream_queue_mutex);
-                }
+        for (ch_num = 0; ch_num < CAP_CH_NUM;ch_num++) {
+            for (sub_num = 0; sub_num < RTSP_NUM_PER_CAP; sub_num++) {
+                priv_avbs_t *pb = &enc[ch_num].priv_bs[sub_num];
+                if (pb->audio.qno >= 0 && pb->sr >= 0 && pb->audio.sdpstr[0]) {
+                    pthread_mutex_lock(&stream_queue_mutex);
+                    stream_media_enqueue(GM_SS_TYPE_AAC,pb->audio.qno,&entity);
+                    pthread_mutex_unlock(&stream_queue_mutex);
+				}
             }
         }
-
         usleep(128000);
     }
-
     fclose(aac_fd);
     fclose(len_fd);
-
     free(buf);
-
     return NULL;
 }
 
