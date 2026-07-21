@@ -1551,7 +1551,7 @@ static void *audio_thread(void *arg)
         goto thread_exit;
     }
     
-    if (gm_apply(groupfd_a) < 0) {
+    if (gm_apply(audio_groupfd) < 0) {
         log_error("audio_thread: gm_apply failed");
         goto thread_exit;
     }
