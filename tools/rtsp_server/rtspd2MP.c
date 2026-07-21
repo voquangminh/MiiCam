@@ -1623,15 +1623,6 @@ static void *audio_thread(void *arg)
             entity.data = multi_bs[0].bs.bs_buf;
             entity.size = multi_bs[0].bs.bs_len;
             entity.timestamp = get_autick_gm(multi_bs[0].bs.timestamp);
-	
-			// dump AAC ADTS or AAC RAW
-			int dumped = 0;
-			if (!dumped) {
-    			int i;
-			    for (i = 0; i < 16; i++)
-        			log_info("AAC: %02X",(unsigned char)multi_bs[0].bs.bs_buf[i]);
-			    dumped = 1;
-			}
             
             int ch_num, sub_num;
             for (ch_num = 0; ch_num < CAP_CH_NUM; ch_num++) {
@@ -1862,7 +1853,7 @@ int env_init(void)
             b->event          = NONE_BS_EVENT;
             b->enabled        = DVR_ENC_EBST_DISABLE;
             b->video.enabled  = DVR_ENC_EBST_DISABLE;
-            b->audio.enabled  = DVR_ENC_EBST_ENABLE; /* enable audio by default */
+            b->audio.enabled  = DVR_ENC_EBST_DISABLE;				/* disable audio by default */
 
             pb                = &e->priv_bs[sub_num];
             pb->video.qno     = -1;
