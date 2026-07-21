@@ -197,22 +197,23 @@ typedef struct st_av {
     priv_avbs_t priv_bs[RTSP_NUM_PER_CAP];
 } av_t;
 
-pthread_t enqueue_thread_id   = 0;
-pthread_t encode_thread_id    = 0;
-pthread_t motion_thread_id    = 0;
-pthread_t media_thread_id     = 0;
-pthread_t osd_thread_id       = 0;
-pthread_t audio_thread_id     = 0;
+pthread_t enqueue_thread_id   		= 0;
+pthread_t encode_thread_id    		= 0;
+pthread_t motion_thread_id    		= 0;
+pthread_t media_thread_id     		= 0;
+pthread_t osd_thread_id       		= 0;
+pthread_t audio_thread_id     		= 0;
+pthread_t audio_encode_thread_id	= 0;
 
 unsigned int sys_tick         = 0;
 struct timeval sys_sec        = {-1, -1};
 int sys_port                  = 554;
 char *ipptr                   = NULL;
 
-void *audio_groupfd           = NULL;
-void *audio_grab_object_a     = NULL;
-void *audio_encode_object_a   = NULL;
-void *audio_bindfd            = NULL;
+void *audio_groupfd           = 0;
+void *audio_grab_object_a     = 1;
+void *audio_encode_object_a   = 1;
+void *audio_bindfd            = 1;
 char audio_sdpstr[SDPSTR_MAX] = {0};
 int audio_sdp_ready           = 0;
 
@@ -1663,6 +1664,91 @@ thread_exit:
 	return 0;
 }
 
+static void *audio_encode_thread(void *arg)
+{
+    int i, ret;
+    char filename[50];
+    char *bitstream_data[MAX_BITSTREAM_NUM];
+    FILE *bs_fd[MAX_BITSTREAM_NUM], *len_fd[MAX_BITSTREAM_NUM];
+    gm_pollfd_t poll_fds[MAX_BITSTREAM_NUM];
+    gm_enc_multi_bitstream_t multi_bs[MAX_BITSTREAM_NUM];
+
+    for (i = 0; i < MAX_BITSTREAM_NUM; i++) {
+        sprintf(filename, "CH%d_audio.aac", i);
+        bs_fd[i] = fopen(filename, "wb");
+        if (bs_fd[i] == NULL) {
+            printf("open file error(%s)! \n", filename);
+            exit(1);
+        }
+        printf("Record file: [%s]\n", filename);
+        sprintf(filename, "CH%d_audio.len", i);
+        len_fd[i] = fopen(filename, "wb");
+        if (len_fd[i] == NULL) {
+            printf("open file error(%s)! \n", filename);
+            exit(1);
+        }
+
+        bitstream_data[i] = (char *)malloc(AU_BITSTREAM_LEN);
+        if (bitstream_data[i] == 0)
+            return 0;
+        memset(bitstream_data[i], 0, AU_BITSTREAM_LEN);
+    }
+
+    memset(poll_fds, 0, sizeof(poll_fds));
+    for (i = 0; i < MAX_BITSTREAM_NUM; i++) {
+        poll_fds[i].bindfd = bindfd[i];
+        poll_fds[i].event = GM_POLL_READ;
+    }
+
+    while (enc_exit == 0) {
+        ret = gm_poll(poll_fds, MAX_BITSTREAM_NUM, 1000);
+        if (ret == GM_TIMEOUT) {
+            printf("Poll timeout!!\n");
+            continue;
+        }
+
+        memset(multi_bs, 0, sizeof(multi_bs));
+        for (i = 0; i < MAX_BITSTREAM_NUM; i++) {
+            if (poll_fds[i].revent.event != GM_POLL_READ) {
+                continue;
+            }
+            if (poll_fds[i].revent.bs_len > AU_BITSTREAM_LEN) {
+                printf("buffer length is not enough! %d, %d\n",
+                        poll_fds[i].revent.bs_len, AU_BITSTREAM_LEN);
+                continue;
+            }
+            multi_bs[i].bindfd = bindfd[i];
+            multi_bs[i].bs.bs_buf = bitstream_data[i];
+            multi_bs[i].bs.bs_buf_len = AU_BITSTREAM_LEN;
+            multi_bs[i].bs.mv_buf = NULL;
+            multi_bs[i].bs.mv_buf_len = 0;
+        }
+
+        if ((ret = gm_recv_multi_bitstreams(multi_bs, MAX_BITSTREAM_NUM)) < 0)
+            printf("Error return value %d\n", ret);
+        else {
+            for (i = 0; i < MAX_BITSTREAM_NUM; i++) { 
+                if (!multi_bs[i].bindfd)
+                    continue;
+                if (multi_bs[i].retval < 0) {  
+                    printf("get bitstreame error! ret = %d\n", ret);
+                } else if (multi_bs[i].retval == GM_SUCCESS) {
+                    fwrite(multi_bs[i].bs.bs_buf, 1, multi_bs[i].bs.bs_len, bs_fd[i]);
+                    fprintf(len_fd[i], "%d\n", multi_bs[i].bs.bs_len);
+                    fflush(bs_fd[i]);
+                    fflush(len_fd[i]);
+                }
+            }
+        }
+    }
+
+    for (i = 0; i < MAX_BITSTREAM_NUM; i++) {
+        fclose(bs_fd[i]);
+        fclose(len_fd[i]);
+    }
+
+    return 0;
+}
 
 static void *motion_thread(void *arg)
 {
@@ -2376,55 +2462,6 @@ void *encode_thread(void *ptr)
     return NULL;
 }
 
-// debug Thêm hàm scan NAL Annex-B:
-static int find_start_code(const unsigned char *p, int len, int *sc_len)
-{
-    int i;
-
-    for (i = 0; i + 3 < len; i++) {
-        if (p[i] == 0x00 && p[i + 1] == 0x00) {
-            if (p[i + 2] == 0x01) {
-                *sc_len = 3;
-                return i;
-            }
-
-            if (i + 4 < len &&
-                p[i + 2] == 0x00 &&
-                p[i + 3] == 0x01) {
-                *sc_len = 4;
-                return i;
-            }
-        }
-    }
-
-    return -1;
-}
-
-static void log_h264_nal_types(const unsigned char *data, int len)
-{
-    int offset = 0;
-
-    while (offset < len) {
-        int sc_len;
-        int pos = find_start_code(data + offset, len - offset, &sc_len);
-
-        if (pos < 0)
-            break;
-
-        offset += pos + sc_len;
-
-        if (offset >= len)
-            break;
-
-        log_info(
-            "H264 NAL offset=%d type=%d header=0x%02X",
-            offset,
-            data[offset] & 0x1F,
-            data[offset]
-        );
-    }
-}
-// end of debug
 
 void update_video_sdp(int cap_ch, int cap_path, int rec_track)
 {
@@ -2607,6 +2644,14 @@ static int rtspd_start(int port)
         pthread_attr_destroy(&attr);
     }
 
+	// * Audio encode thread: encode and enqueue audio frames to stream */
+    if (audio_encode_thread_id == (pthread_t)NULL) {
+        pthread_attr_init(&attr);
+        pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+        ret = pthread_create(&audio_encode_thread_id, &attr, &audio_encode_thread, NULL);
+        pthread_attr_destroy(&attr);
+    }
+
 	// debug
 	for (ch_num = 0; ch_num < CAP_CH_NUM; ch_num++) {
         pthread_mutex_lock(&enc[ch_num].ubs_mutex);
@@ -2721,7 +2766,6 @@ void setup_logging(void)
 int main(int argc, char *argv[])
 {
     int i;
-    int cap_ch, cap_path, rec_track;
 
     // * Setup logging
     setup_logging();
