@@ -210,8 +210,8 @@ int sys_port                  = 554;
 char *ipptr                   = NULL;
 
 void *audio_groupfd;
-void *audio_grab_object_a;
-void *audio_encode_object_a;
+void *audio_grab_object;
+void *audio_encode_object;
 void *audio_bindfd;
 char audio_sdpstr[SDPSTR_MAX] = {0};
 int audio_sdp_ready           = 0;
@@ -1514,8 +1514,8 @@ static void *audio_thread(void *arg)
 {
     int ret;
     void *audio_groupfd = NULL;
-    void *audio_grab_object_a = NULL;
-    void *audio_encode_object_a = NULL;
+    void *audio_grab_object = NULL;
+    void *audio_encode_object = NULL;
     void *audio_bindfd = NULL;
     DECLARE_ATTR(audio_grab_attr, gm_audio_grab_attr_t);
     DECLARE_ATTR(audio_encode_attr, gm_audio_enc_attr_t);
@@ -1540,12 +1540,12 @@ static void *audio_thread(void *arg)
     audio_groupfd = gm_new_groupfd();
 
 	audio_grab_object = gm_new_obj(GM_AUDIO_GRAB_OBJECT);
-	gm_set_attr(audio_grab_object_a, &audio_grab_attr);
+	gm_set_attr(audio_grab_object, &audio_grab_attr);
 
 	audio_encode_object_a = gm_new_obj(GM_AUDIO_ENCODER_OBJECT);
-    gm_set_attr(audio_encode_object_a, &audio_encode_attr);
+    gm_set_attr(audio_encode_object, &audio_encode_attr);
 	
-    bindfd_a = gm_bind(groupfd_a, audio_grab_object_a, audio_encode_object_a);
+    bindfd_a = gm_bind(groupfd_a, audio_grab_object_a, audio_encode_object);
     if (!bindfd_a) {
         log_error("gm_bind failed");
         goto thread_exit;
@@ -1640,10 +1640,10 @@ thread_exit:
         gm_unbind(audio_bindfd);
 	if (groupfd_a)
 		gm_apply(groupfd_a);
-    if (audio_grab_object_a)
-        gm_delete_obj(audio_grab_object_a);
-    if (audio_encode_object_a)
-        gm_delete_obj(audio_encode_object_a);
+    if (audio_grab_object)
+        gm_delete_obj(audio_grab_object);
+    if (audio_encode_object)
+        gm_delete_obj(audio_encode_object);
     if (groupfd_a)
         gm_delete_groupfd(groupfd_a);
     
