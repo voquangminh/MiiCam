@@ -477,8 +477,8 @@ static char *rtsp_enc_type_str[] = {
     "MJPEG"
 };
 
-char *rtsp_password = NULL;
-char *rtsp_username = NULL;
+char *rtsp_password = 0;
+char *rtsp_username = 0;
 static int rtsp_use_auth = 0;
 
 
@@ -1578,6 +1578,7 @@ static void *audio_thread(void *arg)
             FILE *fp = fopen("/tmp/test.aac","ab");
 	if (fp) {
     fwrite(multi_bs[0].bs.bs_buf,1,multi_bs[0].bs.bs_len,fp);
+    }
 	// end of debug
             if (!audio_sdp_ready && multi_bs[0].bs.bs_len > 0) {
                 stream_sdp_parameter_encoder("AAC", (unsigned char *) multi_bs[0].bs.bs_buf, multi_bs[0].bs.bs_len, audio_sdpstr, SDPSTR_MAX);
