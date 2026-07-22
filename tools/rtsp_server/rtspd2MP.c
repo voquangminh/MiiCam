@@ -213,7 +213,7 @@ void *audio_groupfd;
 void *audio_grab_object;
 void *audio_encode_object;
 void *audio_bindfd;
-char audio_sdpstr[SDPSTR_MAX] = {0};
+char audio_sdpstr[SDPSTR_MAX];
 int audio_sdp_ready           = 0;
 
 static int rtspd_sysinit      = 0;
@@ -223,7 +223,6 @@ static int rtspd_avail_ch     = 0;
 char *snapshot_buf            = 0;
 static int snapshot_create    = 0;
 static int video_create       = 0;
-
 static int motion_detected    = 0;
 
 pthread_mutex_t stream_queue_mutex;
