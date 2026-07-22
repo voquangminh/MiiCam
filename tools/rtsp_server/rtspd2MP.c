@@ -42,8 +42,9 @@
 #include "gmlib.h"
 /* Module thuat toan Motion Detect chinh hang - dung dung quy uoc cua
  * chinh vendor (#include truc tiep file .c, xem
- * gm_lib/samples/encode_with_capture_motion_detection.c) */
-#include "algorithm/capture_motion_detection.c"
+ * gm_lib/samples/encode_with_capture_motion_detection2.c) */
+#include "algorithm/capture_motion_detection2.c"
+#include "gm_lib/samples/encode_with_capture_motion_detection2.c
 
 /* =======================================================================
  * CAU HINH THEO YEU CAU DE BAI
@@ -109,8 +110,8 @@ static time_t       g_motion_last_time = 0;
 /* --- Motion detect state (theo mau capture_motion_detection2) --- */
 #define MD_CH               0
 #define MD_MB_SIZE          32
-struct mdt_alg_t    = { sub_region: NULL };
-struct mdt_result_t = { sub_region: NULL };
+struct mdt_alg_t g_mdt_alg   = { sub_region: NULL };
+struct mdt_result_t g_mdt_result = { sub_region: NULL };
 
 /* =======================================================================
  * TIEN ICH
@@ -373,32 +374,32 @@ static int motion_setup(void)
 {
     int mb_w_num, mb_h_num;
 
-    mdt_alg_t.sub_region = (struct mdt_reg_t *) malloc(sizeof(struct mdt_reg_t));
-    if (!mdt_alg_t.sub_region) return -1;
-    memset(mdt_alg_t.sub_region, 0, sizeof(struct mdt_reg_t));
+    g_mdt_alg.sub_region = (struct mdt_reg_t *) malloc(sizeof(struct mdt_reg_t));
+    if (!g_mdt_alg.sub_region) return -1;
+    memset(g_mdt_alg.sub_region, 0, sizeof(struct mdt_reg_t));
 
-    mdt_alg_t.u_width      = CFG_WIDTH;
-    mdt_alg_t.u_height     = CFG_HEIGHT;
-    mdt_alg_t.u_mb_width   = MD_MB_SIZE;
-    mdt_alg_t.u_mb_height  = MD_MB_SIZE;
-    mdt_alg_t.training_time = 15;
-    mdt_alg_t.frame_count   = 0;
-    mdt_alg_t.sensitive_th  = 80;   /* do nhay, 0~100 */
+    g_mdt_alg.u_width      = CFG_WIDTH;
+    g_mdt_alg.u_height     = CFG_HEIGHT;
+    g_mdt_alg.u_mb_width   = MD_MB_SIZE;
+    g_mdt_alg.u_mb_height  = MD_MB_SIZE;
+    g_mdt_alg.training_time = 15;
+    g_mdt_alg.frame_count   = 0;
+    g_mdt_alg.sensitive_th  = 80;   /* do nhay, 0~100 */
 
-    mb_w_num = (mdt_alg_t.u_width  + (MD_MB_SIZE - 1)) / MD_MB_SIZE;
-    mb_h_num = (mdt_alg_t.u_height + (MD_MB_SIZE - 1)) / MD_MB_SIZE;
-    mdt_alg_t.mb_w_num = mb_w_num;
-    mdt_alg_t.mb_h_num = mb_h_num;
+    mb_w_num = (g_mdt_alg.u_width  + (MD_MB_SIZE - 1)) / MD_MB_SIZE;
+    mb_h_num = (g_mdt_alg.u_height + (MD_MB_SIZE - 1)) / MD_MB_SIZE;
+    g_mdt_alg.mb_w_num = mb_w_num;
+    g_mdt_alg.mb_h_num = mb_h_num;
 
     /* 1 vung quan tam duy nhat = toan bo khung hinh */
-    mdt_alg_t.sub_region[0].is_enabled    = 1;
-    mdt_alg_t.sub_region[0].start_block_x = 0;
-    mdt_alg_t.sub_region[0].start_block_y = 0;
-    mdt_alg_t.sub_region[0].end_block_x   = mb_w_num - 1;
-    mdt_alg_t.sub_region[0].end_block_y   = mb_h_num - 1;
-    mdt_alg_t.sub_region[0].alarm_th      = 80;
-    mdt_alg_t.sub_region[0].alarm         = NO_MOTION;
-    mdt_alg_t.sub_region_num = 1;
+    g_mdt_alg.sub_region[0].is_enabled    = 1;
+    g_mdt_alg.sub_region[0].start_block_x = 0;
+    g_mdt_alg.sub_region[0].start_block_y = 0;
+    g_mdt_alg.sub_region[0].end_block_x   = mb_w_num - 1;
+    g_mdt_alg.sub_region[0].end_block_y   = mb_h_num - 1;
+    g_mdt_alg.sub_region[0].alarm_th      = 80;
+    g_mdt_alg.sub_region[0].alarm         = NO_MOTION;
+    g_mdt_alg.sub_region_num = 1;
 
     /* Tham so tinh chinh thuat toan - gia tri khuyen nghi cua vendor
      * (xem gm_lib/samples/encode_with_capture_motion_detection2.c) */
@@ -412,15 +413,15 @@ static int motion_setup(void)
     set_cap_motion(MD_CH, 8, 9);        /* tg */
     set_cap_motion(MD_CH, 10, 0x7fe0);  /* one min alpha */
 
-    if (motion_detection_update(venc_bindfd, &mdt_alg_t) != 0) {
+    if (motion_detection_update(venc_bindfd, &g_mdt_alg) != 0) {
         fprintf(stderr, "[MD] motion_detection_update loi\n");
         return -1;
     }
 
-    mdt_result_t.sub_region = (struct mdt_reg_result_t *)
+    g_mdt_result.sub_region = (struct mdt_reg_result_t *)
                                malloc(sizeof(struct mdt_reg_result_t));
-    if (!mdt_result_t.sub_region) return -1;
-    mdt_result_t.sub_region_num = 1;
+    if (!g_mdt_result.sub_region) return -1;
+    g_mdt_result.sub_region_num = 1;
 
     return 0;
 }
@@ -447,14 +448,14 @@ static void *motion_thread(void *arg)
             usleep(50000);
             continue;
         }
-        ret = motion_detection_handling(&cap_md, &mdt_result_t, 1);
+        ret = motion_detection_handling(&cap_md, &g_mdt_result, 1);
         if (ret < 0) {
             fprintf(stderr, "[MD] motion_detection_handling loi\n");
             continue;
         }
 
-        if (mdt_result_t.ch_result == MOTION_IS_READY) {
-            cur_motion = (mdt_result_t.sub_region[0].reg_result == MOTION_DETECTED) ? 1 : 0;
+        if (g_mdt_result.ch_result == MOTION_IS_READY) {
+            cur_motion = (g_mdt_result.sub_region[0].reg_result == MOTION_DETECTED) ? 1 : 0;
             if (cur_motion && !prev_motion)
                 on_motion_start();
             else if (!cur_motion && prev_motion)
@@ -753,7 +754,7 @@ int main(int argc, char *argv[])
     osd_init();
 
     /* Motion Detect: can bindfd cua venc da co truoc (motion_detection_update
-     * gan mdt_alg_t voi venc_bindfd) */
+     * gan g_mdt_alg voi venc_bindfd) */
     motion_detection_init();
     if (motion_setup() != 0)
         fprintf(stderr, "[WARN] Motion Detect khong khoi tao duoc, tinh nang se tat\n");
@@ -828,8 +829,8 @@ cleanup:
     pthread_mutex_unlock(&g_rec_lock);
 
     motion_detection_end();
-    if (mdt_alg_t.sub_region) free(mdt_alg_t.sub_region);
-    if (mdt_result_t.sub_region) free(mdt_result_t.sub_region);
+    if (g_mdt_alg.sub_region) free(g_mdt_alg.sub_region);
+    if (g_mdt_result.sub_region) free(g_mdt_result.sub_region);
     if (g_snapshot_buf) free(g_snapshot_buf);
 
     graph_release();
