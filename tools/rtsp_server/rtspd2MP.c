@@ -477,8 +477,8 @@ static char *rtsp_enc_type_str[] = {
     "MJPEG"
 };
 
-char *rtsp_password = 0;
-char *rtsp_username = 0;
+char *rtsp_password = NULL;
+char *rtsp_username = NULL;
 static int rtsp_use_auth = 0;
 
 
