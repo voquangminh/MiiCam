@@ -1576,8 +1576,12 @@ static void *audio_thread(void *arg)
 
         if (multi_bs[0].retval == GM_SUCCESS){
             FILE *fp = fopen("/tmp/test.aac","ab");
-	fwrite(multi_bs[0].bs.bs_buf,1,multi_bs[0].bs.bs_len,fp);
-	fclose(fp);
+	if (fp) {
+        fwrite(
+            multi_bs[0].bs.bs_buf,
+            1,
+            multi_bs[0].bs.bs_len,
+            fp);
 	// end of debug
             if (!audio_sdp_ready && multi_bs[0].bs.bs_len > 0) {
                 stream_sdp_parameter_encoder("AAC", (unsigned char *) multi_bs[0].bs.bs_buf, multi_bs[0].bs.bs_len, audio_sdpstr, SDPSTR_MAX);
