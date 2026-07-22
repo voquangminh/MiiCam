@@ -1542,11 +1542,6 @@ static void *audio_thread(void *arg)
     audio_encode_attr.frame_samples = 1024;
 	audio_encode_attr.block_count = 1;
     gm_set_attr(audio_encode_object, &audio_encode_attr);
-
-	FILE *fp = fopen("/tmp/test.aac","ab");
-	fwrite(multi_bs[0].bs.bs_buf,1,multi_bs[0].bs.bs_len,fp);
-	fclose(fp);
-	// end of debug
     audio_groupfd = gm_new_groupfd();
 	
     audio_bindfd = gm_bind(audio_groupfd, audio_grab_object, audio_encode_object);
@@ -1580,6 +1575,10 @@ static void *audio_thread(void *arg)
         }
 
         if (multi_bs[0].retval == GM_SUCCESS){
+            FILE *fp = fopen("/tmp/test.aac","ab");
+	fwrite(multi_bs[0].bs.bs_buf,1,multi_bs[0].bs.bs_len,fp);
+	fclose(fp);
+	// end of debug
             if (!audio_sdp_ready && multi_bs[0].bs.bs_len > 0) {
                 stream_sdp_parameter_encoder("AAC", (unsigned char *) multi_bs[0].bs.bs_buf, multi_bs[0].bs.bs_len, audio_sdpstr, SDPSTR_MAX);
                 log_info("AAC SDP=[%s]", audio_sdpstr);
@@ -1639,8 +1638,6 @@ thread_exit:
         free(bitstream_data);
     if (audio_bindfd)
         gm_unbind(audio_bindfd);
-	if (audio_groupfd)
-		gm_apply(audio_groupfd);
     if (audio_grab_object)
         gm_delete_obj(audio_grab_object);
     if (audio_encode_object)
