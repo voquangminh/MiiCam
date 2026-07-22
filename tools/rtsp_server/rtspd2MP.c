@@ -1510,40 +1510,45 @@ static void *playback_thread(void *arg)
     return 0;
 }
 
+/* ===========AUDIO ENCODE THREAD=========== */
 static void *audio_thread(void *arg)
 {
     int ret;
-    void *audio_groupfd = NULL;
-    void *audio_grab_object = NULL;
-    void *audio_encode_object = NULL;
-    void *audio_bindfd = NULL;
+    //void *audio_groupfd = NULL;
+    //void *audio_grab_object = NULL;
+    //void *audio_encode_object = NULL;
+    //void *audio_bindfd = NULL;
     DECLARE_ATTR(audio_grab_attr, gm_audio_grab_attr_t);
     DECLARE_ATTR(audio_encode_attr, gm_audio_enc_attr_t);
-    gm_pollfd_t poll_fd;
+    gm_pollfd_t poll_fd[1];
     gm_enc_multi_bitstream_t multi_bs[1];
-    char *bitstream_data = NULL;
+    char *bitstream_data;
+
+	bitstream_data = (char *) malloc(AU_BITSTREAM_LEN);
+    if (!bitstream_data)
+        return NULL;
+		//goto thread_exit;
+
+	audio_grab_object = gm_new_obj(GM_AUDIO_GRAB_OBJECT);
+	audio_encode_object = gm_new_obj(GM_AUDIO_ENCODER_OBJECT);
 
     audio_grab_attr.vch = 0; 								/* default input vch 0 */
     audio_grab_attr.sample_rate = 8000;
     audio_grab_attr.sample_size = 16;
     audio_grab_attr.channel_type = GM_MONO;
-	
+	gm_set_attr(audio_grab_object, &audio_grab_attr);
+
     audio_encode_attr.encode_type = GM_AAC;					/* default output vch 0(adda302) */
     audio_encode_attr.bitrate = 32000;
     audio_encode_attr.frame_samples = 1024;
 	audio_encode_attr.block_count = 1;
+    gm_set_attr(audio_encode_object, &audio_encode_attr);
 
 	FILE *fp = fopen("/tmp/test.aac","ab");
 	fwrite(multi_bs[0].bs.bs_buf,1,multi_bs[0].bs.bs_len,fp);
 	fclose(fp);
 	// end of debug
     audio_groupfd = gm_new_groupfd();
-
-	audio_grab_object = gm_new_obj(GM_AUDIO_GRAB_OBJECT);
-	gm_set_attr(audio_grab_object, &audio_grab_attr);
-
-	audio_encode_object = gm_new_obj(GM_AUDIO_ENCODER_OBJECT);
-    gm_set_attr(audio_encode_object, &audio_encode_attr);
 	
     audio_bindfd = gm_bind(audio_groupfd, audio_grab_object, audio_encode_object);
     if (!audio_bindfd) {
@@ -1555,16 +1560,13 @@ static void *audio_thread(void *arg)
         log_error("audio_thread: gm_apply failed");
         goto thread_exit;
     }
-    
-    bitstream_data = malloc(AU_BITSTREAM_LEN);
-    if (!bitstream_data)
-        goto thread_exit;
 
-    poll_fd.bindfd = audio_bindfd;
-    poll_fd.event = GM_POLL_READ;
+	memset(poll_fd, 0, sizeof(poll_fd));
+    poll_fd[0].bindfd = audio_bindfd;
+    poll_fd[0].event = GM_POLL_READ;
 
     while (rtspd_sysinit) {
-        ret = gm_poll(&poll_fd, 1, 1000);
+        ret = gm_poll(&poll_fd, 1, 500);
         if (ret == GM_TIMEOUT)
             continue;
 
@@ -1618,12 +1620,13 @@ static void *audio_thread(void *arg)
             entity.data = multi_bs[0].bs.bs_buf;
             entity.size = multi_bs[0].bs.bs_len;
             entity.timestamp = get_autick_gm(multi_bs[0].bs.timestamp);
+			stream_media_enqueue(GM_SS_TYPE_AAC, pb->audio.qno, &entity);
             
             int ch_num, sub_num;
             for (ch_num = 0; ch_num < CAP_CH_NUM; ch_num++) {
                 for (sub_num = 0; sub_num < RTSP_NUM_PER_CAP; sub_num++) {
                     priv_avbs_t *pb = &enc[ch_num].priv_bs[sub_num];
-                    if (enc[ch_num].bs[sub_num].audio.enabled == DVR_ENC_EBST_ENABLE && pb->audio.qno >= 0 && pb->sr >= 0 && pb->audio.sdpstr[0] != '\0') {
+                   if (enc[ch_num].bs[sub_num].audio.enabled == DVR_ENC_EBST_ENABLE && pb->audio.qno >= 0 && pb->sr >= 0 && pb->audio.sdpstr[0] != '\0') {
                         pthread_mutex_lock(&stream_queue_mutex);
                         ret = stream_media_enqueue(GM_SS_TYPE_AAC, pb->audio.qno, &entity);
                         pthread_mutex_unlock(&stream_queue_mutex);
@@ -1924,7 +1927,7 @@ void gm_enc_init(int cap_ch, int cap_path, int rec_track, int enc_type, int mode
             h264e_attr.dim.height            = height;
             h264e_attr.frame_info.framerate  = framerate;
             h264e_attr.ratectl.mode          = mode;
-            h264e_attr.ratectl.gop           = 60;			   // default 60
+            h264e_attr.ratectl.gop           = 40;			   // I-frame per fps = second
             h264e_attr.ratectl.bitrate       = bitrate;
             h264e_attr.ratectl.bitrate_max   = bitrate;
             h264e_attr.b_frame_num           = 0;              // * B-frames per GOP (H.264 high profile)
