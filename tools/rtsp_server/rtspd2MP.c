@@ -899,7 +899,7 @@ static int write_rtp_frame_ext(int ch_num, int sub_num, void *data, int data_len
     entity.data = (char *) data;
     entity.size = data_len;
     entity.timestamp = get_tick_gm(tv_ms);
-		
+	
     media_type = convert_gmss_media_type(b->video.enc_type);
     pthread_mutex_lock(&stream_queue_mutex);
     ret = stream_media_enqueue(media_type, pb->video.qno, &entity);
@@ -1578,7 +1578,8 @@ static void *audio_thread(void *arg)
 	if (fp) {
     fwrite(multi_bs[0].bs.bs_buf,1,multi_bs[0].bs.bs_len,fp);
     }
-    if(fp) fclose(fp);
+    if (fp) 
+        fclose(fp);
 	// end of debug
             if (!audio_sdp_ready && multi_bs[0].bs.bs_len > 0) {
                 stream_sdp_parameter_encoder("AAC", (unsigned char *) multi_bs[0].bs.bs_buf, multi_bs[0].bs.bs_len, audio_sdpstr, SDPSTR_MAX);
