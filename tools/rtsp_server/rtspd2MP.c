@@ -109,8 +109,8 @@ static time_t       g_motion_last_time = 0;
 /* --- Motion detect state (theo mau capture_motion_detection2) --- */
 #define MD_CH               0
 #define MD_MB_SIZE          32
-struct mdt_alg_t    mdt_alg    = {{ sub_region: NULL }};
-struct mdt_result_t mdt_result = {{ sub_region: NULL }};
+struct mdt_alg_t mdt_alg       = {{sub_region: NULL}};
+struct mdt_result_t mdt_result = {{sub_region: NULL}};
 
 /* =======================================================================
  * TIEN ICH
