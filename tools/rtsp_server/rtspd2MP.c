@@ -857,7 +857,7 @@ static int open_live_streaming(int ch_num, int sub_num)
 	    pb->sr = stream_reg(livename, pb->video.qno, pb->video.sdpstr, pb->audio.qno, pb->audio.sdpstr,1,0,0,0,0,0,0);
 /*debug*/log_info("stream_reg name='%s' vq=%d aq=%d vsdp='%s' asdp='%s'",livename,pb->video.qno,pb->audio.qno,pb->video.sdpstr,pb->audio.sdpstr);
     } else {
-        pb->sr = stream_reg(livename, pb->video.qno, pb->video.sdpstr, pb->audio.qno, pb->audio.sdpstr,0,0,1,0,0,0,0);    
+        pb->sr = stream_reg(livename, pb->video.qno, pb->video.sdpstr, pb->audio.qno, pb->audio.sdpstr,1,0,0,0,0,0,0);    
     }
     
     if (audio_sdpstr[0] != '\0') {
