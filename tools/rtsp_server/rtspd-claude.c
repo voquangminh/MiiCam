@@ -48,8 +48,8 @@
 #define CFG_AUDIO_SAMPLERATE  8000
 #define CFG_AUDIO_FRAME_SAMPLES  320   /* G711 mono: 320*n, n=1 -> 40ms/frame */
 
-#define CFG_SNAPSHOT_DIR      "/mnt/sdcard/snapshot"
-#define CFG_RECORD_DIR        "/mnt/sdcard/record"
+#define CFG_SNAPSHOT_DIR      "/mnt/sd/snapshot"
+#define CFG_RECORD_DIR        "/mnt/sd/record"
 #define CFG_MOTION_CLIP_SEC   10   /* "-r: Record a 10 second clip on motion" */
 
 #define RTSP_PORT             554
