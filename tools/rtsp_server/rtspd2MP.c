@@ -42,8 +42,8 @@
 #include "gmlib.h"
 /* Module thuat toan Motion Detect chinh hang - dung dung quy uoc cua
  * chinh vendor (#include truc tiep file .c, xem
- * gm_lib/samples/encode_with_capture_motion_detection.c) */
-#include "algorithm/capture_motion_detection.c"
+ * gm_lib/samples/encode_with_capture_motion_detection2.c) */
+#include "algorithm/capture_motion_detection2.c"
 
 /* =======================================================================
  * CAU HINH THEO YEU CAU DE BAI
