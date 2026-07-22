@@ -801,7 +801,7 @@ static unsigned int get_tick_gm(unsigned int tv_ms)
 // audio_rtp_tick
 static unsigned int get_autick_gm(unsigned int tv_ms)
 {
-    return tv_ms * 8;
+    return tv_ms*8;
 }
 
 static int convert_gmss_media_type(int type)
@@ -1579,7 +1579,12 @@ static void *audio_thread(void *arg)
     fwrite(multi_bs[0].bs.bs_buf,1,multi_bs[0].bs.bs_len,fp);
     }
     if (fp) 
-        fclose(fp);
+        fclose(fp)
+    unsigned int prev = 0;
+    log_info("AAC ts=%u delta=%u len=%u",multi_bs[0].bs.timestamp,
+multi_bs[0].bs.timestamp - prev,
+multi_bs[0].bs.bs_len);
+prev = multi_bs[0].bs.timestamp;
 	// end of debug
             if (!audio_sdp_ready && multi_bs[0].bs.bs_len > 0) {
                 stream_sdp_parameter_encoder("AAC", (unsigned char *) multi_bs[0].bs.bs_buf, multi_bs[0].bs.bs_len, audio_sdpstr, SDPSTR_MAX);
