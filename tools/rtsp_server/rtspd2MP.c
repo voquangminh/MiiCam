@@ -1565,7 +1565,7 @@ static void *audio_thread(void *arg)
     poll_fd[0].event = GM_POLL_READ;
 
     while (rtspd_sysinit) {
-        ret = gm_poll(&poll_fd, 1, 500);
+        ret = gm_poll(&poll_fd[0], 1, 1000);
         if (ret == GM_TIMEOUT)
             continue;
 
@@ -1619,7 +1619,6 @@ static void *audio_thread(void *arg)
             entity.data = multi_bs[0].bs.bs_buf;
             entity.size = multi_bs[0].bs.bs_len;
             entity.timestamp = get_autick_gm(multi_bs[0].bs.timestamp);
-			stream_media_enqueue(GM_SS_TYPE_AAC, pb->audio.qno, &entity);
             
             int ch_num, sub_num;
             for (ch_num = 0; ch_num < CAP_CH_NUM; ch_num++) {
