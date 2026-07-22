@@ -109,8 +109,8 @@ static time_t       g_motion_last_time = 0;
 /* --- Motion detect state (theo mau capture_motion_detection2) --- */
 #define MD_CH               0
 #define MD_MB_SIZE          32
-struct mdt_alg_t    g_mdt_alg    = { sub_region: NULL };
-struct mdt_result_t g_mdt_result = { sub_region: NULL };
+struct mdt_alg_t    g_mdt_alg    = {{ sub_region: NULL }};
+struct mdt_result_t g_mdt_result = {{ sub_region: NULL }};
 
 /* =======================================================================
  * TIEN ICH
@@ -361,14 +361,14 @@ static void on_motion_stop(void)
 /* =======================================================================
  * MOTION DETECT (theo mau encode_with_capture_motion_detection2.c)
  * ===================================================================== */
-static int set_cap_motion(int cap_vch, unsigned int id, unsigned int value)
+/*static int set_cap_motion(int cap_vch, unsigned int id, unsigned int value)
 {
     gm_cap_motion_t cm;
     cm.id = id;
     cm.value = value;
     return gm_set_cap_motion(cap_vch, &cm);
 }
-
+*/
 static int motion_setup(void)
 {
     int mb_w_num, mb_h_num;
