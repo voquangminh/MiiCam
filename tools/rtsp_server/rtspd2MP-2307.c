@@ -2192,6 +2192,7 @@ void gm_graph_release(void)
     }
 
     gm_delete_groupfd(enc_groupfd);
+	if (audio_groupfd) gm_delete_groupfd(audio_groupfd);
     gm_release();
 }
 
