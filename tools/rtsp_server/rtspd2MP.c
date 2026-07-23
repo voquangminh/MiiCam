@@ -1652,8 +1652,8 @@ thread_exit:
         free(bitstream_data);
     if (audio_bindfd)
         gm_unbind(audio_bindfd);
-	if (audio_applyfd)
-		gm_apply(audio_applyfd);
+	if (audio_groupfd)
+		gm_apply(audio_groupfd);
     if (audio_grab_object)
         gm_delete_obj(audio_grab_object);
     if (audio_encode_object)
