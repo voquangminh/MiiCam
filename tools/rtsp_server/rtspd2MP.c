@@ -801,7 +801,8 @@ static unsigned int get_tick_gm(unsigned int tv_ms)
 // audio_rtp_tick
 static unsigned int get_autick_gm(unsigned int tv_ms)
 {
-    return tv_ms*8;
+    sys_tick = tv_ms*(RTP_HZ / 1000);
+    return sys_tick;
 }
 
 static int convert_gmss_media_type(int type)
@@ -1333,7 +1334,8 @@ static int cmd_cb(char *name, int sno, int cmd, void *p)
 
         case GM_STREAM_CMD_OPEN:
             log_error("%s:%d <GM_STREAM_CMD_OPEN>", __FUNCTION__, __LINE__);
-            ERR_GOTO(-10, cmd_cb_err);
+            //ERR_GOTO(-10, cmd_cb_err);
+            ret = 0;
             break;
 
         case GM_STREAM_CMD_SETUP:
@@ -1359,9 +1361,10 @@ static int cmd_cb(char *name, int sno, int cmd, void *p)
 
         case GM_STREAM_CMD_TEARDOWN:
             if ( strncmp(name, "live/", 5) == 0 ) {
-                if ((pb = find_file_sr(name, sno)) == NULL)
+                if ((pb = find_file_sr(name, sno)) == NULL){
                     ERR_GOTO(-1, cmd_cb_err);
-                    pb->play = 0;
+                }
+                pb->play = 0;
             }
             ret = 0;
             break;
@@ -1575,12 +1578,10 @@ static void *audio_thread(void *arg)
 
         if (multi_bs[0].retval == GM_SUCCESS){
             if (!audio_sdp_ready && multi_bs[0].bs.bs_len > 0) {
-                stream_sdp_parameter_encoder("AAC", (unsigned char *) multi_bs[0].bs.bs_buf, multi_bs[0].bs.bs_len, audio_sdpstr, SDPSTR_MAX);
+                stream_sdp_parameter_encoder("G711A", (unsigned char *) multi_bs[0].bs.bs_buf, multi_bs[0].bs.bs_len, audio_sdpstr, SDPSTR_MAX);
 				if (!audio_sdp_ready)
                 {
-                    int ch_num;
-                    int sub_num;
-
+                    int ch_num, sub_num;
                     for (ch_num = 0; ch_num < CAP_CH_NUM; ch_num++) {
                         for (sub_num = 0; sub_num < RTSP_NUM_PER_CAP; sub_num++) {
                             priv_avbs_t *pb = &enc[ch_num].priv_bs[sub_num];
@@ -1603,8 +1604,6 @@ static void *audio_thread(void *arg)
                 fflush(VideoRecorder.fh_aac);
             }
 			
-            //if (multi_bs[0].bs.bs_len <= 7)
-            //    continue;
             gm_ss_entity entity;
             entity.data = multi_bs[0].bs.bs_buf;
             entity.size = multi_bs[0].bs.bs_len;
@@ -1916,7 +1915,7 @@ void gm_enc_init(int cap_ch, int cap_path, int rec_track, int enc_type, int mode
             h264e_attr.dim.height            = height;
             h264e_attr.frame_info.framerate  = framerate;
             h264e_attr.ratectl.mode          = mode;
-            h264e_attr.ratectl.gop           = 40;			   // I-frame per fps = second
+            h264e_attr.ratectl.gop           = 20;			   // I-frame per fps = second
             h264e_attr.ratectl.bitrate       = bitrate;
             h264e_attr.ratectl.bitrate_max   = bitrate;
             h264e_attr.b_frame_num           = 0;              // * B-frames per GOP (H.264 high profile)
@@ -2170,7 +2169,7 @@ void gm_graph_release(void)
     }
 
     gm_delete_groupfd(enc_groupfd);
-	if (audio_groupfd) gm_delete_groupfd(audio_groupfd);
+	gm_delete_groupfd(audio_groupfd);
     gm_release();
 }
 
@@ -2590,7 +2589,7 @@ char *get_local_ip(void)
 
     fd = socket(AF_INET, SOCK_DGRAM, 0);
     ifr.ifr_addr.sa_family = AF_INET;
-    strncpy(ifr.ifr_name, "wlan0", IFNAMSIZ-1);
+    strncpy(ifr.ifr_name, "mlan0", IFNAMSIZ-1);
     ioctl(fd, SIOCGIFADDR, &ifr);
     close(fd);
     //return inet_ntoa(((struct sockaddr_in *)&ifr.ifr_addr)->sin_addr);
@@ -2652,10 +2651,7 @@ int main(int argc, char *argv[])
     // * Setup logging
     setup_logging();
 
-    // snapshot_buf is allocated lazily in take_snapshot() to reduce RAM usage
-    snapshot_buf = NULL;
-
-    cliArgs.bitrate     = 2048;
+    cliArgs.bitrate     = 4096;     // for smooth moving object
     cliArgs.framerate   = 20;
     cliArgs.width       = 1920;
     cliArgs.height      = 1080;
@@ -2666,7 +2662,7 @@ int main(int argc, char *argv[])
     cliArgs.record      = 0;
     cliArgs.motion      = 0;
     cliArgs.osd         = 1;
-    cliArgs.font_zoom   = GM_OSD_FONT_ZOOM_NONE;
+    cliArgs.font_zoom   = 2;     // default is GM_OSD_FONT_ZOOM_NONE;
     cliArgs.osd_bg_color= 1;
     cliArgs.osd_text[0] = '\0';
 
@@ -2819,6 +2815,7 @@ int main(int argc, char *argv[])
     log_info("Framerate    : %d", cliArgs.framerate);
     log_info("Bitrate      : %d", cliArgs.bitrate);
     log_info("Bitrate Mode : %d", cliArgs.bitrateMode);
+    log_info("Local IP     : %s", get_local_ip());
 
 	/* move to rtsp_start
     for (cap_ch = 0; cap_ch < CAP_CH_NUM; cap_ch++) {
