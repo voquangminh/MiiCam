@@ -270,24 +270,6 @@ struct CommandLineArguments {
     char osd_text[32];
 } cliArgs;
 
-// * Timestamp Global across all entities, in 90 KHz.
-// Solution create new timestamp for video and audio
-static uint64_t rtsp_start_us = 0;
-
-uint32_t get_rtsp_tick(void)
-{
-    struct timeval tv;
-    uint64_t now_us;
-    gettimeofday(&tv, NULL);
-    now_us =
-        (uint64_t)tv.tv_sec * 1000000ULL +
-        tv.tv_usec;
-    if (rtsp_start_us == 0)
-        rtsp_start_us = now_us;
-    return (uint32_t)
-        (((now_us - rtsp_start_us) * 90ULL) / 1000ULL);
-}
-
 /* Read HOSTNAME from config file. Try common locations. */
 static void read_hostname(char *out, size_t outlen)
 {
@@ -297,8 +279,8 @@ static void read_hostname(char *out, size_t outlen)
     out[0] = '\0';
 
     f = fopen("/tmp/sd/midgard.ini", "r");
-    if (!f)
-        return;
+    if (!f) 
+		return;
 
     while (fgets(line, sizeof(line), f)) {
 
