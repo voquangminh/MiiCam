@@ -1295,6 +1295,8 @@ static int frm_cb(int type, int qno, gm_ss_entity *entity)
 {
     priv_avbs_t *pb;
     int ch_num, sub_num;
+	// debug
+	log_info("frm_cb type=%d qno=%d size=%d",type,qno,entity->size);
 
     for (ch_num = 0; ch_num < CAP_CH_NUM; ch_num++) {
         for (sub_num = 0; sub_num < RTSP_NUM_PER_CAP; sub_num++) {
