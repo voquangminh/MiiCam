@@ -1533,6 +1533,7 @@ static void *playback_thread(void *arg)
 }
 
 /* ===========AUDIO ENCODE THREAD=========== */
+static unsigned int prev = 0;
 static void *audio_thread(void *arg)
 {
     int ret;
@@ -1604,7 +1605,7 @@ static void *audio_thread(void *arg)
     }
     if (fp) 
         fclose(fp);
-    unsigned int prev = 0;
+    
     log_info("AAC ts=%u delta=%u len=%u",multi_bs[0].bs.timestamp,multi_bs[0].bs.timestamp - prev,multi_bs[0].bs.bs_len);
 	prev = multi_bs[0].bs.timestamp;
 	// end of debug
@@ -1651,9 +1652,12 @@ static void *audio_thread(void *arg)
             int ch_num, sub_num;
             for (ch_num = 0; ch_num < CAP_CH_NUM; ch_num++) {
                 for (sub_num = 0; sub_num < RTSP_NUM_PER_CAP; sub_num++) {
-                    priv_avbs_t *pb = &enc[ch_num].priv_bs[sub_num];
-                   if (enc[ch_num].bs[sub_num].audio.enabled == DVR_ENC_EBST_ENABLE && pb->audio.qno >= 0 && pb->sr >= 0 && pb->audio.sdpstr[0] != '\0') {
-					   	if (pb->audio.offs || pb->audio.len)
+					priv_avbs_t *pb = &enc[ch_num].priv_bs[sub_num];
+					if (enc[ch_num].bs[sub_num].audio.enabled == DVR_ENC_EBST_ENABLE && pb->audio.qno >= 0 && pb->sr >= 0 && pb->audio.sdpstr[0] != '\0') {
+						char *aac_copy = malloc(entity.size);
+						memcpy(aac_copy,entity.data,entity.size);
+						entity.data = aac_copy;
+						if (pb->audio.offs || pb->audio.len)
 							continue;
                         pthread_mutex_lock(&stream_queue_mutex);
                         ret = stream_media_enqueue(GM_SS_TYPE_AAC, pb->audio.qno, &entity);
