@@ -24,6 +24,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
+#include <stdint.h>
 #include <time.h>
 #include <unistd.h>
 #include <getopt.h>
@@ -58,6 +59,67 @@
 #define SDPSTR_MAX            128
 #define RTP_HZ                90000
 #define AUDIO_BS_BUF_LEN      4096
+
+/* -----------------------------------------------------------------------
+ * QUAN TRONG - RACE CONDITION DA GAP PHAI TREN PHAN CUNG THAT:
+ * stream_media_enqueue() cua librtsp KHONG copy du lieu ngay lap tuc, ma
+ * chi giu con tro (zero-copy) va gui bat dong bo qua hang doi rieng
+ * (do o gm_graph goc: VQ_LEN=5 frame co the dang "in-flight" cung luc).
+ * Chi khi librtsp thuc su gui xong 1 frame, no moi goi lai frm_cb() de
+ * bao "da xong, co the tai su dung buffer nay". Neu ghi de len buffer
+ * truoc khi frm_cb() bao xong -> vo du lieu dang gui giua chung -> chinh
+ * la nguyen nhan gay "concealing DC/AC/MV errors", "non-existing PPS",
+ * "non-intra slice in IDR" ma ban gap phai. Vi vay ta PHAI dung mot pool
+ * nhieu buffer (>= VQ_LEN+1, giong het hang so VIDEO_FRAME_NUMBER trong
+ * rtspd.c goc cua vendor) va CHI tai su dung 1 slot sau khi frm_cb() xac
+ * nhan no da duoc giai phong.
+ * ----------------------------------------------------------------------- */
+#define VQ_LEN                5
+#define AQ_LEN                4
+#define VIDEO_POOL_SIZE       (VQ_LEN + 1)
+#define AUDIO_POOL_SIZE       (AQ_LEN + 1)
+
+typedef struct {
+    char *buf;
+    int   buf_len;
+    volatile int pending;   /* 1 = da enqueue, cho frm_cb() giai phong */
+    int   size;              /* kich thuoc du lieu dang cho gui (de doi chieu trong frm_cb) */
+} buf_slot_t;
+
+static buf_slot_t g_vid_pool[VIDEO_POOL_SIZE];
+static buf_slot_t g_aud_pool[AUDIO_POOL_SIZE];
+static pthread_mutex_t g_vid_pool_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_mutex_t g_aud_pool_lock = PTHREAD_MUTEX_INITIALIZER;
+
+/* QUAN TRONG (phat hien khi doi chieu voi rtspd.c goc cua vendor):
+ * stream_media_enqueue() KHONG thread-safe khi goi dong thoi tu nhieu
+ * thread (video_thread + audio_thread). Code goc cua vendor khoa bang
+ * 1 mutex toan cuc quanh MOI loi goi stream_media_enqueue(), du la tu
+ * kenh/luong nao. Neu khong co mutex nay, goi dong thoi co the lam hong
+ * hang doi noi bo cua librtsp -> chinh la 1 nguyen nhan gay dung hinh/
+ * vo hinh con lai. */
+static pthread_mutex_t g_enqueue_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+/* entity.timestamp theo dinh nghia trong librtsp.h la:
+ *   "Global across all entities, in 90 KHz"
+ * tuc PHAI dung CHUNG 1 dong ho cho ca audio va video. Video va audio o
+ * day den tu 2 pipeline phan cung doc lap (2 groupfd khac nhau, bat
+ * buoc phai tach do gm_apply loi "audio function can't be group with
+ * video"), nen gia tri bs.timestamp cua tung ben CO THE khong cung goc
+ * thoi gian -> gay lech A-V hang chuc giay nhu da gap phai. Giai phap:
+ * bo qua bs.timestamp cua thiet bi, tu tao timestamp 90kHz tu 1 mot
+ * dong ho he thong (wall-clock) DUY NHAT, dung chung cho ca 2 thread. */
+static struct timeval g_stream_start_tv;
+
+static unsigned int rtp_now_ts(void)
+{
+    struct timeval now;
+    uint64_t us;
+    gettimeofday(&now, NULL);
+    us = (uint64_t)(now.tv_sec - g_stream_start_tv.tv_sec) * 1000000ULL
+       + (int64_t)(now.tv_usec - g_stream_start_tv.tv_usec);
+    return (unsigned int) (us * RTP_HZ / 1000000ULL);
+}
 
 /* =======================================================================
  * ENCODER TYPE (mac dinh H264; -j = MJPEG, -4 = MPEG4)
@@ -163,7 +225,7 @@ static void config_set_defaults(config_t *c)
     c->bitrate      = 2048;
     c->framerate     = 20;
     c->width          = 1920;
-    c->height          = 1080;
+    c->height          = 1280;
     c->mode             = 1;
     c->enc_type          = ENC_H264;
 
@@ -171,7 +233,7 @@ static void config_set_defaults(config_t *c)
     if (gethostname(hostname, sizeof(hostname)) == 0)
         strncpy(c->osd_text, hostname, sizeof(c->osd_text) - 1);
     else
-        strncpy(c->osd_text, "Mijia-1080p", sizeof(c->osd_text) - 1);
+        strncpy(c->osd_text, "GM8136-CAM", sizeof(c->osd_text) - 1);
     c->osd_zoom            = 0;
     c->osd_bg_palette      = 1;
 
@@ -321,7 +383,7 @@ char *get_local_ip(void)
 
     fd = socket(AF_INET, SOCK_DGRAM, 0);
     ifr.ifr_addr.sa_family = AF_INET;
-    strncpy(ifr.ifr_name, "eth0", IFNAMSIZ - 1);
+    strncpy(ifr.ifr_name, "mlan0", IFNAMSIZ - 1);
     ioctl(fd, SIOCGIFADDR, &ifr);
     close(fd);
     return inet_ntoa(((struct sockaddr_in *)&ifr.ifr_addr)->sin_addr);
@@ -654,22 +716,54 @@ static void *motion_thread(void *arg)
 /* =======================================================================
  * VIDEO ENCODE THREAD
  * ===================================================================== */
+/* Cho toi khi slot ranh (frm_cb da giai phong). Neu qua wait_ms ma van
+ * chua duoc giai phong (VD: canh huong hiem gap nhu client ngat dung luc
+ * 1 frame dang bay, khien librtsp khong con co hoi goi frm_cb cho no),
+ * EP GIAI PHONG slot (co canh bao) thay vi lap lai vo han tren cung 1
+ * slot -> tranh dung hinh hoan toan. Cai gia phai tra la co the 1 frame
+ * bi vo hinh thoang qua trong tinh huong hiem nay (se tu phuc hoi o
+ * I-frame ke tiep), nhung TOT HON NHIEU so voi dung hinh vinh vien. */
+static void wait_slot_free(buf_slot_t *slot, pthread_mutex_t *lock, int wait_ms)
+{
+    int waited = 0;
+    while (waited < wait_ms) {
+        pthread_mutex_lock(lock);
+        if (!slot->pending) {
+            pthread_mutex_unlock(lock);
+            return;
+        }
+        pthread_mutex_unlock(lock);
+        usleep(2000);
+        waited += 2;
+    }
+    fprintf(stderr, "[BUF] slot khong duoc giai phong sau %dms, ep giai phong "
+            "(co the gay 1 frame loi thoang qua, se tu phuc hoi)\n", wait_ms);
+    pthread_mutex_lock(lock);
+    slot->pending = 0;
+    pthread_mutex_unlock(lock);
+}
+
 static void *video_thread(void *arg)
 {
     (void) arg;
-    char *bs_buf;
     int bs_buf_len;
     gm_pollfd_t poll_fds[1];
     gm_enc_multi_bitstream_t multi_bs[1];
     gm_ss_entity entity;
     int ret, sdp_ready = 0;
     int ss_type;
+    int slot_idx = 0;
+    int i;
 
     bs_buf_len = g_cfg.width * g_cfg.height * 3 / 2;
-    bs_buf = (char *) malloc(bs_buf_len);
-    if (!bs_buf) {
-        fprintf(stderr, "[VID] khong du bo nho cho bitstream buffer\n");
-        return NULL;
+    for (i = 0; i < VIDEO_POOL_SIZE; i++) {
+        g_vid_pool[i].buf = (char *) malloc(bs_buf_len);
+        g_vid_pool[i].buf_len = bs_buf_len;
+        g_vid_pool[i].pending = 0;
+        if (!g_vid_pool[i].buf) {
+            fprintf(stderr, "[VID] khong du bo nho cho buffer pool[%d]\n", i);
+            return NULL;
+        }
     }
 
     switch (g_cfg.enc_type) {
@@ -685,16 +779,21 @@ static void *video_thread(void *arg)
     while (g_running) {
         ret = gm_poll(poll_fds, 1, 500);
         if (ret == GM_TIMEOUT) continue;
-
-        memset(multi_bs, 0, sizeof(multi_bs));
         if (poll_fds[0].revent.event != GM_POLL_READ) continue;
         if ((int) poll_fds[0].revent.bs_len > bs_buf_len) {
             fprintf(stderr, "[VID] buffer khong du: %u > %d\n",
                     poll_fds[0].revent.bs_len, bs_buf_len);
             continue;
         }
+
+        /* Cho slot hien tai duoc giai phong truoc khi ghi frame moi vao -
+         * day CHINH LA phan sua loi vo hinh/dung hinh: khong bao gio ghi
+         * de len buffer ma librtsp co the con dang gui dang do. */
+        wait_slot_free(&g_vid_pool[slot_idx], &g_vid_pool_lock, 800);
+
+        memset(multi_bs, 0, sizeof(multi_bs));
         multi_bs[0].bindfd = venc_bindfd;
-        multi_bs[0].bs.bs_buf = bs_buf;
+        multi_bs[0].bs.bs_buf = g_vid_pool[slot_idx].buf;
         multi_bs[0].bs.bs_buf_len = bs_buf_len;
         multi_bs[0].bs.mv_buf = 0;
         multi_bs[0].bs.mv_buf_len = 0;
@@ -713,21 +812,52 @@ static void *video_thread(void *arg)
             sdp_ready = 1;
             fprintf(stderr, "[VID] Da sinh SDP video (%s), sdp_ready\n",
                     enc_type_name[g_cfg.enc_type]);
-            continue;
+            continue; /* frame nay khong enqueue, slot van ranh, khong tang slot_idx */
         }
 
         if (g_cfg.motion_record)
             recorder_feed(multi_bs[0].bs.bs_buf, multi_bs[0].bs.bs_len);
 
         if (g_play && g_vqno >= 0) {
+            int enq_ret;
+
+            pthread_mutex_lock(&g_vid_pool_lock);
+            g_vid_pool[slot_idx].pending = 1;
+            g_vid_pool[slot_idx].size    = multi_bs[0].bs.bs_len;
+            pthread_mutex_unlock(&g_vid_pool_lock);
+
             entity.data = multi_bs[0].bs.bs_buf;
             entity.size = multi_bs[0].bs.bs_len;
-            entity.timestamp = multi_bs[0].bs.timestamp * (RTP_HZ / 1000);
-            stream_media_enqueue(ss_type, g_vqno, &entity);
+            entity.timestamp = rtp_now_ts();
+
+            pthread_mutex_lock(&g_enqueue_mutex);
+            enq_ret = stream_media_enqueue(ss_type, g_vqno, &entity);
+            pthread_mutex_unlock(&g_enqueue_mutex);
+
+            if (enq_ret < 0) {
+                /* KHONG duoc cho frm_cb() - vi enqueue that bai nen
+                 * librtsp se KHONG BAO GIO goi frm_cb() cho entity nay.
+                 * Neu khong giai phong ngay tai day, slot se ket vinh
+                 * vien -> sau VIDEO_POOL_SIZE lan la toan bo pool ket,
+                 * gay dung hinh (day la loi da gap phai truoc do). */
+                pthread_mutex_lock(&g_vid_pool_lock);
+                g_vid_pool[slot_idx].pending = 0;
+                pthread_mutex_unlock(&g_vid_pool_lock);
+                if (enq_ret == ERR_FULL)
+                    fprintf(stderr, "[VID] hang doi day (ERR_FULL), bo qua 1 frame\n");
+                else
+                    fprintf(stderr, "[VID] stream_media_enqueue loi %d\n", enq_ret);
+            } else {
+                slot_idx = (slot_idx + 1) % VIDEO_POOL_SIZE;
+            }
         }
+        /* Neu khong co client (g_play==0): khong enqueue nen slot van
+         * ranh ngay, khong can tang slot_idx - lan sau ghi de tiep len
+         * cung slot nay la an toan. */
     }
 
-    free(bs_buf);
+    for (i = 0; i < VIDEO_POOL_SIZE; i++)
+        free(g_vid_pool[i].buf);
     return NULL;
 }
 
@@ -737,14 +867,22 @@ static void *video_thread(void *arg)
 static void *audio_thread(void *arg)
 {
     (void) arg;
-    char *bs_buf;
     gm_pollfd_t poll_fds[1];
     gm_enc_multi_bitstream_t multi_bs[1];
     gm_ss_entity entity;
     int ret;
+    int slot_idx = 0;
+    int i;
 
-    bs_buf = (char *) malloc(AUDIO_BS_BUF_LEN);
-    if (!bs_buf) return NULL;
+    for (i = 0; i < AUDIO_POOL_SIZE; i++) {
+        g_aud_pool[i].buf = (char *) malloc(AUDIO_BS_BUF_LEN);
+        g_aud_pool[i].buf_len = AUDIO_BS_BUF_LEN;
+        g_aud_pool[i].pending = 0;
+        if (!g_aud_pool[i].buf) {
+            fprintf(stderr, "[AUD] khong du bo nho cho buffer pool[%d]\n", i);
+            return NULL;
+        }
+    }
 
     memset(poll_fds, 0, sizeof(poll_fds));
     poll_fds[0].bindfd = audio_bindfd;
@@ -753,13 +891,14 @@ static void *audio_thread(void *arg)
     while (g_running) {
         ret = gm_poll(poll_fds, 1, 500);
         if (ret == GM_TIMEOUT) continue;
-
-        memset(multi_bs, 0, sizeof(multi_bs));
         if (poll_fds[0].revent.event != GM_POLL_READ) continue;
         if ((int) poll_fds[0].revent.bs_len > AUDIO_BS_BUF_LEN) continue;
 
+        wait_slot_free(&g_aud_pool[slot_idx], &g_aud_pool_lock, 800);
+
+        memset(multi_bs, 0, sizeof(multi_bs));
         multi_bs[0].bindfd = audio_bindfd;
-        multi_bs[0].bs.bs_buf = bs_buf;
+        multi_bs[0].bs.bs_buf = g_aud_pool[slot_idx].buf;
         multi_bs[0].bs.bs_buf_len = AUDIO_BS_BUF_LEN;
         multi_bs[0].bs.mv_buf = 0;
         multi_bs[0].bs.mv_buf_len = 0;
@@ -768,23 +907,82 @@ static void *audio_thread(void *arg)
         if (multi_bs[0].retval != GM_SUCCESS) continue;
 
         if (g_play && g_aqno >= 0) {
+            int enq_ret;
+
+            pthread_mutex_lock(&g_aud_pool_lock);
+            g_aud_pool[slot_idx].pending = 1;
+            g_aud_pool[slot_idx].size    = multi_bs[0].bs.bs_len;
+            pthread_mutex_unlock(&g_aud_pool_lock);
+
             entity.data = multi_bs[0].bs.bs_buf;
             entity.size = multi_bs[0].bs.bs_len;
-            entity.timestamp = multi_bs[0].bs.timestamp * (RTP_HZ / 1000);
-            stream_media_enqueue(GM_SS_TYPE_G711A, g_aqno, &entity);
+            entity.timestamp = rtp_now_ts();
+
+            pthread_mutex_lock(&g_enqueue_mutex);
+            enq_ret = stream_media_enqueue(GM_SS_TYPE_G711A, g_aqno, &entity);
+            pthread_mutex_unlock(&g_enqueue_mutex);
+
+            if (enq_ret < 0) {
+                pthread_mutex_lock(&g_aud_pool_lock);
+                g_aud_pool[slot_idx].pending = 0;
+                pthread_mutex_unlock(&g_aud_pool_lock);
+                if (enq_ret != ERR_FULL)
+                    fprintf(stderr, "[AUD] stream_media_enqueue loi %d\n", enq_ret);
+            } else {
+                slot_idx = (slot_idx + 1) % AUDIO_POOL_SIZE;
+            }
         }
     }
 
-    free(bs_buf);
+    for (i = 0; i < AUDIO_POOL_SIZE; i++)
+        free(g_aud_pool[i].buf);
     return NULL;
 }
 
 /* =======================================================================
  * CALLBACK CUA LIBRTSP
  * ===================================================================== */
+/* librtsp goi callback nay khi da GUI XONG (hoac tieu thu xong) 1 entity
+ * da duoc stream_media_enqueue() truoc do -> day la tin hieu DUY NHAT de
+ * biet buffer tuong ung co the tai su dung an toan.
+ *
+ * QUAN TRONG: doi chieu voi frm_cb() GOC cua vendor (rtspd.c mau), ho
+ * KHONG dung tham so `type` de so khop (chi dung no de dinh tuyen o cac
+ * SDK khac, gia tri thuc te truyen vao co the khong dung nhu tai lieu
+ * suy doan). Vendor chi so khop bang `qno` + con tro du lieu + kich
+ * thuoc. Ban truoc cua toi loc truoc theo `type == GM_SS_TYPE_...` ->
+ * neu gia tri type thuc te khac voi suy doan, nhanh if/else khong bao
+ * gio dung -> pending khong bao gio duoc giai phong -> slot ket dan,
+ * gay "tuot dan roi dung" dung nhu quan sat duoc. Sua lai: so khop
+ * truoc tien bang qno (de biet la video hay audio), KHONG loc theo type. */
 static int frm_cb(int type, int qno, gm_ss_entity *entity)
 {
-    (void) type; (void) qno; (void) entity;
+    int i;
+    (void) type;
+
+    if (qno == g_vqno) {
+        pthread_mutex_lock(&g_vid_pool_lock);
+        for (i = 0; i < VIDEO_POOL_SIZE; i++) {
+            if (g_vid_pool[i].pending &&
+                g_vid_pool[i].buf == entity->data &&
+                g_vid_pool[i].size == entity->size) {
+                g_vid_pool[i].pending = 0;
+                break;
+            }
+        }
+        pthread_mutex_unlock(&g_vid_pool_lock);
+    } else if (qno == g_aqno) {
+        pthread_mutex_lock(&g_aud_pool_lock);
+        for (i = 0; i < AUDIO_POOL_SIZE; i++) {
+            if (g_aud_pool[i].pending &&
+                g_aud_pool[i].buf == entity->data &&
+                g_aud_pool[i].size == entity->size) {
+                g_aud_pool[i].pending = 0;
+                break;
+            }
+        }
+        pthread_mutex_unlock(&g_aud_pool_lock);
+    }
     return 0;
 }
 
@@ -1011,6 +1209,11 @@ int main(int argc, char *argv[])
         }
     }
 
+    /* Khoi tao 1 dong ho chung (wall-clock) cho ca video va audio -
+     * BAT BUOC phai lam TRUOC khi 2 thread bat dau chay, de dam bao
+     * "timestamp global across all entities" nhu librtsp.h yeu cau. */
+    gettimeofday(&g_stream_start_tv, NULL);
+
     pthread_create(&th_video, NULL, video_thread, NULL);
     if (audio_bindfd)
         pthread_create(&th_audio, NULL, audio_thread, NULL);
@@ -1028,7 +1231,7 @@ int main(int argc, char *argv[])
     }
 
     if ((ret = stream_server_init(NULL, RTSP_PORT, 0, 1444, 256,
-                                   4, 64, 5, 64, 4, frm_cb, cmd_cb)) < 0) {
+                                   4, 64, VQ_LEN, 64, AQ_LEN, frm_cb, cmd_cb)) < 0) {
         fprintf(stderr, "[FATAL] stream_server_init loi %d\n", ret);
         goto cleanup;
     }
