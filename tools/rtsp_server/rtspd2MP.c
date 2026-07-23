@@ -1566,9 +1566,10 @@ static void *audio_thread(void *arg)
     audio_encode_attr.encode_type = GM_G711_ALAW;					/* default output vch 0(adda302) */
     audio_encode_attr.bitrate = 8000;
     audio_encode_attr.frame_samples = 320;
-	audio_encode_attr.block_count = 1;
+	//audio_encode_attr.block_count = 1;
     gm_set_attr(audio_encode_object, &audio_encode_attr);
-    audio_groupfd = gm_new_groupfd();
+    
+	audio_groupfd = gm_new_groupfd();
 	
     audio_bindfd = gm_bind(audio_groupfd, audio_grab_object, audio_encode_object);
     if (!audio_bindfd) {
