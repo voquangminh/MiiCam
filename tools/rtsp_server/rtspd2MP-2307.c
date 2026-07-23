@@ -270,6 +270,24 @@ struct CommandLineArguments {
     char osd_text[32];
 } cliArgs;
 
+// * Timestamp Global across all entities, in 90 KHz.
+// Solution create new timestamp for video and audio
+static uint64_t rtsp_start_us = 0;
+
+uint32_t get_rtsp_tick(void)
+{
+    struct timeval tv;
+    uint64_t now_us;
+    gettimeofday(&tv, NULL);
+    now_us =
+        (uint64_t)tv.tv_sec * 1000000ULL +
+        tv.tv_usec;
+    if (rtsp_start_us == 0)
+        rtsp_start_us = now_us;
+    return (uint32_t)
+        (((now_us - rtsp_start_us) * 90ULL) / 1000ULL);
+}
+
 /* Read HOSTNAME from config file. Try common locations. */
 static void read_hostname(char *out, size_t outlen)
 {
@@ -1287,6 +1305,12 @@ static int frm_cb(int type, int qno, gm_ss_entity *entity)
                 pb->video.len = 0;
                 pthread_mutex_unlock(&pb->video.priv_vbs_mutex);
 			}
+			if (pb->audio.offs == (uintptr_t)entity->data && pb->audio.len == entity->size && pb->audio.qno == qno){
+	    		pthread_mutex_lock(&pb->audio.priv_vbs_mutex);
+				pb->audio.offs = 0;
+    			pb->audio.len  = 0;
+    			pthread_mutex_unlock(&pb->audio.priv_vbs_mutex);
+			}
     	}
 	}
     return 0;
@@ -1562,7 +1586,7 @@ static void *audio_thread(void *arg)
         ret = gm_poll(&poll_fd[0], 1, 1000);
         if (ret == GM_TIMEOUT)
             continue;
-
+    	
         memset(multi_bs, 0, sizeof(multi_bs));
         multi_bs[0].bindfd = audio_bindfd;
         multi_bs[0].bs.bs_buf = bitstream_data;
@@ -1576,15 +1600,13 @@ static void *audio_thread(void *arg)
         if (multi_bs[0].retval == GM_SUCCESS){
             FILE *fp = fopen("/tmp/test.aac","ab");
 	if (fp) {
-    fwrite(multi_bs[0].bs.bs_buf,1,multi_bs[0].bs.bs_len,fp);
+    	fwrite(multi_bs[0].bs.bs_buf,1,multi_bs[0].bs.bs_len,fp);
     }
     if (fp) 
-        fclose(fp)
+        fclose(fp);
     unsigned int prev = 0;
-    log_info("AAC ts=%u delta=%u len=%u",multi_bs[0].bs.timestamp,
-multi_bs[0].bs.timestamp - prev,
-multi_bs[0].bs.bs_len);
-prev = multi_bs[0].bs.timestamp;
+    log_info("AAC ts=%u delta=%u len=%u",multi_bs[0].bs.timestamp,multi_bs[0].bs.timestamp - prev,multi_bs[0].bs.bs_len);
+	prev = multi_bs[0].bs.timestamp;
 	// end of debug
             if (!audio_sdp_ready && multi_bs[0].bs.bs_len > 0) {
                 stream_sdp_parameter_encoder("AAC", (unsigned char *) multi_bs[0].bs.bs_buf, multi_bs[0].bs.bs_len, audio_sdpstr, SDPSTR_MAX);
@@ -1631,6 +1653,8 @@ prev = multi_bs[0].bs.timestamp;
                 for (sub_num = 0; sub_num < RTSP_NUM_PER_CAP; sub_num++) {
                     priv_avbs_t *pb = &enc[ch_num].priv_bs[sub_num];
                    if (enc[ch_num].bs[sub_num].audio.enabled == DVR_ENC_EBST_ENABLE && pb->audio.qno >= 0 && pb->sr >= 0 && pb->audio.sdpstr[0] != '\0') {
+					   	if (pb->audio.offs || pb->audio.len)
+							continue;
                         pthread_mutex_lock(&stream_queue_mutex);
                         ret = stream_media_enqueue(GM_SS_TYPE_AAC, pb->audio.qno, &entity);
                         pthread_mutex_unlock(&stream_queue_mutex);
@@ -2682,7 +2706,7 @@ int main(int argc, char *argv[])
     cliArgs.record      = 0;
     cliArgs.motion      = 0;
     cliArgs.osd         = 1;
-    cliArgs.font_zoom   = GM_OSD_FONT_ZOOM_NONE;
+    cliArgs.font_zoom   = 2;		// defualt is small GM_OSD_FONT_ZOOM_NONE;
     cliArgs.osd_bg_color= 1;
     cliArgs.osd_text[0] = '\0';
 
