@@ -866,13 +866,11 @@ static int open_live_streaming(int ch_num, int sub_num)
         pb->audio.qno = do_queue_alloc(a_media_type);
 		// debug
 		if (pb->video.sdpstr[0] == '\0') {
-			log_error("Refusing stream_reg: video SDP is empty ch=%d sub=%d",ch_num,sub_num);
 			stream_queue_release(pb->video.qno);pb->video.qno = -1;
     		return -1;
 		} 
 		// end of debug
 	    pb->sr = stream_reg(livename, pb->video.qno, pb->video.sdpstr, pb->audio.qno, pb->audio.sdpstr,1,0,0,0,0,0,0);
-/*debug*/log_info("stream_reg name='%s' vq=%d aq=%d vsdp='%s' asdp='%s'",livename,pb->video.qno,pb->audio.qno,pb->video.sdpstr,pb->audio.sdpstr);
     } else {
         pb->sr = stream_reg(livename, pb->video.qno, pb->video.sdpstr, pb->audio.qno, pb->audio.sdpstr,1,0,0,0,0,0,0);    
     }
@@ -881,7 +879,6 @@ static int open_live_streaming(int ch_num, int sub_num)
         strncpy(pb->audio.sdpstr,audio_sdpstr,SDPSTR_MAX - 1);
         pb->audio.sdpstr[SDPSTR_MAX - 1] = '\0';
         ret = stream_updatesdp(pb->sr,pb->video.sdpstr,pb->audio.sdpstr);
-		log_info("stream_updatesdp ret=%d", ret);
     }
 
     if (pb->sr < 0){
@@ -1608,10 +1605,10 @@ static void *audio_thread(void *arg)
                             if (enc[ch_num].bs[sub_num].audio.enabled == DVR_ENC_EBST_ENABLE) {
                                 strncpy(pb->audio.sdpstr, audio_sdpstr, SDPSTR_MAX - 1);
                                 pb->audio.sdpstr[SDPSTR_MAX - 1] = '\0';                        
-                                if (pb->sr >= 0 && pb->audio.sdpstr[0] != '\0') {
-                                    ret = stream_updatesdp(pb->sr, pb->video.sdpstr, pb->audio.sdpstr);
+                                if (pb->sr >= 0 && pb->audio.sdpstr[0] != '\0') {                                    
                                     if (ret == 0)
-                                        audio_sdp_ready = 1;           
+                                        audio_sdp_ready = 1;
+									ret = stream_updatesdp(pb->sr, pb->video.sdpstr, pb->audio.sdpstr);
                                 }
                             }
                         }
