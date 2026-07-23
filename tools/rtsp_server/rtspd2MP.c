@@ -1296,7 +1296,7 @@ static int frm_cb(int type, int qno, gm_ss_entity *entity)
     priv_avbs_t *pb;
     int ch_num, sub_num;
 	// debug
-	log_info("frm_cb type=%d qno=%d size=%d",type,qno,entity->size);
+	log_info("frm_cb type=%d qno=%d ptr=%p size=%d",type,qno,entity->data,entity->size);
 
     for (ch_num = 0; ch_num < CAP_CH_NUM; ch_num++) {
         for (sub_num = 0; sub_num < RTSP_NUM_PER_CAP; sub_num++) {
@@ -1658,6 +1658,7 @@ static void *audio_thread(void *arg)
 					if (enc[ch_num].bs[sub_num].audio.enabled == DVR_ENC_EBST_ENABLE && pb->audio.qno >= 0 && pb->sr >= 0 && pb->audio.sdpstr[0] != '\0') {
 						char *aac_copy = malloc(entity.size);
 						memcpy(aac_copy,entity.data,entity.size);
+						log_info("enqueue AAC ptr=%p size=%d",entity.data,entity.size);
 						entity.data = aac_copy;
 						if (pb->audio.offs || pb->audio.len)
 							continue;
