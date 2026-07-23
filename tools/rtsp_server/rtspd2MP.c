@@ -1978,8 +1978,7 @@ void gm_enc_init(int cap_ch, int cap_path, int rec_track, int enc_type, int mode
     }
 
     // * Enable Scaler Encoder if downscaling is required (only for H264)
-    //if (enc_type == ENC_TYPE_H264 && (width < gm_system.cap[cap_ch].dim.width || height < gm_system.cap[cap_ch].dim.height)) {
-    if (enc_type == ENC_TYPE_H264 && (width < 1920 || height < 1080)) {
+    if (enc_type == ENC_TYPE_H264 && (width < gm_system.cap[cap_ch].dim.width || height < gm_system.cap[cap_ch].dim.height)) {
 		h264e_attr.ratectl.bitrate      = bitrate;
         h264e_attr.frame_info.framerate = framerate;
         h264e_attr.dim.width            = width;
