@@ -1639,8 +1639,7 @@ thread_exit:
         gm_delete_obj(audio_encode_object);
     if (audio_groupfd)
         gm_delete_groupfd(audio_groupfd);
-    
-	gm_release();
+
 	return 0;
 }
 
