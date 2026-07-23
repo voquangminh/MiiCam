@@ -1563,7 +1563,7 @@ static void *audio_thread(void *arg)
     audio_grab_attr.channel_type = GM_MONO;
 	gm_set_attr(audio_grab_object, &audio_grab_attr);
 
-    audio_encode_attr.encode_type = GM_G711A;					/* default output vch 0(adda302) */
+    audio_encode_attr.encode_type = GM_G711_ALAW;					/* default output vch 0(adda302) */
     audio_encode_attr.bitrate = 32000;
     audio_encode_attr.frame_samples = 320;
 	//audio_encode_attr.block_count = 1;
