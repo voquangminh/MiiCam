@@ -2373,6 +2373,8 @@ void *encode_thread(void *ptr)
                         pb->video.offs  = (uintptr_t)bs[i][j].bs.bs_buf;
                         pb->video.len   = bs[i][j].bs.bs_len;
                         pb->video.tv_ms = bs[i][j].bs.timestamp;
+						// debug video ts
+						log_info("VIDEO ts=%u",bs[i][j].bs.timestamp);
                         pthread_mutex_unlock(&pb->video.priv_vbs_mutex);
 
                         // * Write buffer to the rtsp service and empty buffers
