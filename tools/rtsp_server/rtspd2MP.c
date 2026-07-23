@@ -862,7 +862,7 @@ static int open_live_streaming(int ch_num, int sub_num)
     sprintf(livename, "live/ch%02d_%d", ch_num, sub_num);
 
     if (b->audio.enabled == DVR_ENC_EBST_ENABLE) {
-        int a_media_type = GM_SS_TYPE_AAC; 				/* default to AAC audio */
+        int a_media_type = GM_SS_TYPE_G711A; 				/* default to AAC audio */
         pb->audio.qno = do_queue_alloc(a_media_type);
 		// debug
 		if (pb->video.sdpstr[0] == '\0') {
@@ -1563,7 +1563,7 @@ static void *audio_thread(void *arg)
     audio_grab_attr.channel_type = GM_MONO;
 	gm_set_attr(audio_grab_object, &audio_grab_attr);
 
-    audio_encode_attr.encode_type = GM_AAC;					/* default output vch 0(adda302) */
+    audio_encode_attr.encode_type = GM_G711_ALAW;					/* default output vch 0(adda302) */
     audio_encode_attr.bitrate = 32000;
     audio_encode_attr.frame_samples = 1024;
 	audio_encode_attr.block_count = 1;
