@@ -1295,8 +1295,6 @@ static int frm_cb(int type, int qno, gm_ss_entity *entity)
 {
     priv_avbs_t *pb;
     int ch_num, sub_num;
-	// debug
-	log_info("frm_cb type=%d qno=%d ptr=%p size=%d",type,qno,entity->data,entity->size);
 
     for (ch_num = 0; ch_num < CAP_CH_NUM; ch_num++) {
         for (sub_num = 0; sub_num < RTSP_NUM_PER_CAP; sub_num++) {
@@ -1535,14 +1533,9 @@ static void *playback_thread(void *arg)
 }
 
 /* ===========AUDIO ENCODE THREAD=========== */
-static unsigned int prev = 0;
 static void *audio_thread(void *arg)
 {
     int ret;
-    //void *audio_groupfd = NULL;
-    //void *audio_grab_object = NULL;
-    //void *audio_encode_object = NULL;
-    //void *audio_bindfd = NULL;
     DECLARE_ATTR(audio_grab_attr, gm_audio_grab_attr_t);
     DECLARE_ATTR(audio_encode_attr, gm_audio_enc_attr_t);
     gm_pollfd_t poll_fd[1];
@@ -1602,22 +1595,8 @@ static void *audio_thread(void *arg)
         }
 
         if (multi_bs[0].retval == GM_SUCCESS){
-            FILE *fp = fopen("/tmp/test.aac","ab");
-	if (fp) {
-    	fwrite(multi_bs[0].bs.bs_buf,1,multi_bs[0].bs.bs_len,fp);
-    }
-    if (fp) 
-        fclose(fp);
-    
-    log_info("AAC ts=%u delta=%u len=%u",multi_bs[0].bs.timestamp,multi_bs[0].bs.timestamp - prev,multi_bs[0].bs.bs_len);
-	prev = multi_bs[0].bs.timestamp;
-	// end of debug
             if (!audio_sdp_ready && multi_bs[0].bs.bs_len > 0) {
                 stream_sdp_parameter_encoder("AAC", (unsigned char *) multi_bs[0].bs.bs_buf, multi_bs[0].bs.bs_len, audio_sdpstr, SDPSTR_MAX);
-                log_info("AAC SDP=[%s]", audio_sdpstr);
-				log_info("ASDP len=%d", strlen(audio_sdpstr));
-				// debug
-				log_info("AAC cfg bitrate=%d frame_samples=%d block_count=%d",audio_encode_attr.bitrate,audio_encode_attr.frame_samples,audio_encode_attr.block_count);
 				if (!audio_sdp_ready)
                 {
                     int ch_num;
@@ -1657,10 +1636,6 @@ static void *audio_thread(void *arg)
                 for (sub_num = 0; sub_num < RTSP_NUM_PER_CAP; sub_num++) {
 					priv_avbs_t *pb = &enc[ch_num].priv_bs[sub_num];
 					if (enc[ch_num].bs[sub_num].audio.enabled == DVR_ENC_EBST_ENABLE && pb->audio.qno >= 0 && pb->sr >= 0 && pb->audio.sdpstr[0] != '\0') {
-						char *aac_copy = malloc(entity.size);
-						memcpy(aac_copy,entity.data,entity.size);
-						log_info("enqueue AAC ptr=%p size=%d",entity.data,entity.size);
-						entity.data = aac_copy;
 						if (pb->audio.offs || pb->audio.len)
 							continue;
                         pthread_mutex_lock(&stream_queue_mutex);
@@ -1677,6 +1652,8 @@ thread_exit:
         free(bitstream_data);
     if (audio_bindfd)
         gm_unbind(audio_bindfd);
+	if (audio_applyfd)
+		gm_apply(audio_applyfd);
     if (audio_grab_object)
         gm_delete_obj(audio_grab_object);
     if (audio_encode_object)
@@ -2381,8 +2358,6 @@ void *encode_thread(void *ptr)
                         pb->video.offs  = (uintptr_t)bs[i][j].bs.bs_buf;
                         pb->video.len   = bs[i][j].bs.bs_len;
                         pb->video.tv_ms = bs[i][j].bs.timestamp;
-						// debug video ts
-						log_info("VIDEO ts=%u",bs[i][j].bs.timestamp);
                         pthread_mutex_unlock(&pb->video.priv_vbs_mutex);
 
                         // * Write buffer to the rtsp service and empty buffers
@@ -2463,12 +2438,9 @@ void update_video_sdp(int cap_ch, int cap_path, int rec_track)
 
         else if ( ret == 0 && bs.retval == GM_SUCCESS ) {
             if (bs.bs.keyframe == 1 ) {
-				/* debug */ stream_sdp_parameter_encoder("H264",(unsigned char *)bs.bs.bs_buf,bs.bs.bs_len,pb->video.sdpstr,SDPSTR_MAX);
-				/* debug */ log_info("Generated H264 parameter sets=[%s]",pb->video.sdpstr);
                 switch (cliArgs.encoderType) {
                     case 0:
                         stream_sdp_parameter_encoder("H264", (unsigned char *) bs.bs.bs_buf, bs.bs.bs_len, pb->video.sdpstr, SDPSTR_MAX);
-                        log_info("Generated SDP=[%s]",pb->video.sdpstr);
                     case 1:
                         stream_sdp_parameter_encoder("H264", (unsigned char *) bs.bs.bs_buf, bs.bs.bs_len, pb->video.sdpstr, SDPSTR_MAX);
                     case 2:
@@ -2522,7 +2494,6 @@ static int rtspd_start(int port)
                 log_error("Video SDP unavailable ch=%d sub=%d",ch_num,stream);
                 return -1;
             }
-            log_info("Video SDP ready ch=%d sub=%d sdp='%s'",ch_num,stream,pb->video.sdpstr);
         }
     }
 	// end of debug
