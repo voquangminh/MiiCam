@@ -47,7 +47,8 @@
 #define CFG_INI_PATH          "/tmp/sd/midgard.ini"
 
 #define CFG_AUDIO_SAMPLERATE  8000
-#define CFG_AUDIO_FRAME_SAMPLES  320   /* G711 mono: 320*n, n=1 -> 40ms/frame */
+#define CFG_AUDIO_BITRATE     64000  /* AAC-LC: 14500~192000 theo tai lieu SDK, 64kbps la muc pho bien */
+#define CFG_AUDIO_FRAME_SAMPLES  1024   /* AAC mono: 1024*n theo tai lieu SDK (n=1) */
 
 #define CFG_SNAPSHOT_DIR      "/mnt/sd/snapshot"
 #define CFG_RECORD_DIR        "/mnt/sd/record"
@@ -99,6 +100,10 @@ static pthread_mutex_t g_aud_pool_lock = PTHREAD_MUTEX_INITIALIZER;
  * hang doi noi bo cua librtsp -> chinh la 1 nguyen nhan gay dung hinh/
  * vo hinh con lai. */
 static pthread_mutex_t g_enqueue_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+/* Bo dem chan doan (khong anh huong logic, chi de in heartbeat) */
+static volatile unsigned long g_vid_sent = 0, g_vid_dropped = 0, g_vid_forced = 0;
+static volatile unsigned long g_aud_sent = 0, g_aud_dropped = 0, g_aud_forced = 0;
 
 /* entity.timestamp theo dinh nghia trong librtsp.h la:
  *   "Global across all entities, in 90 KHz"
@@ -723,7 +728,8 @@ static void *motion_thread(void *arg)
  * slot -> tranh dung hinh hoan toan. Cai gia phai tra la co the 1 frame
  * bi vo hinh thoang qua trong tinh huong hiem nay (se tu phuc hoi o
  * I-frame ke tiep), nhung TOT HON NHIEU so voi dung hinh vinh vien. */
-static void wait_slot_free(buf_slot_t *slot, pthread_mutex_t *lock, int wait_ms)
+static void wait_slot_free(buf_slot_t *slot, pthread_mutex_t *lock, int wait_ms,
+                            volatile unsigned long *forced_counter)
 {
     int waited = 0;
     while (waited < wait_ms) {
@@ -738,6 +744,7 @@ static void wait_slot_free(buf_slot_t *slot, pthread_mutex_t *lock, int wait_ms)
     }
     fprintf(stderr, "[BUF] slot khong duoc giai phong sau %dms, ep giai phong "
             "(co the gay 1 frame loi thoang qua, se tu phuc hoi)\n", wait_ms);
+    (*forced_counter)++;
     pthread_mutex_lock(lock);
     slot->pending = 0;
     pthread_mutex_unlock(lock);
@@ -776,8 +783,26 @@ static void *video_thread(void *arg)
     poll_fds[0].bindfd = venc_bindfd;
     poll_fds[0].event  = GM_POLL_READ;
 
+    {
+        struct timeval hb_last, hb_now;
+        gettimeofday(&hb_last, NULL);
+
     while (g_running) {
         ret = gm_poll(poll_fds, 1, 500);
+
+        /* Heartbeat moi ~5s: neu dong nay ngung xuat hien tren log ->
+         * video_thread dang bi treo BEN TRONG gm_poll()/gm_recv_multi_bitstreams()
+         * (tuc la ket o tang driver/SDK, khong phai loi logic pool o
+         * tren). Neu heartbeat van xuat hien deu nhung hinh van dung ->
+         * loi nam o phia librtsp/client thay vi thread nay. */
+        gettimeofday(&hb_now, NULL);
+        if ((hb_now.tv_sec - hb_last.tv_sec) >= 5) {
+            fprintf(stderr, "[VID] heartbeat: sent=%lu dropped=%lu forced=%lu "
+                    "g_play=%d slot_idx=%d\n",
+                    g_vid_sent, g_vid_dropped, g_vid_forced, g_play, slot_idx);
+            hb_last = hb_now;
+        }
+
         if (ret == GM_TIMEOUT) continue;
         if (poll_fds[0].revent.event != GM_POLL_READ) continue;
         if ((int) poll_fds[0].revent.bs_len > bs_buf_len) {
@@ -789,7 +814,7 @@ static void *video_thread(void *arg)
         /* Cho slot hien tai duoc giai phong truoc khi ghi frame moi vao -
          * day CHINH LA phan sua loi vo hinh/dung hinh: khong bao gio ghi
          * de len buffer ma librtsp co the con dang gui dang do. */
-        wait_slot_free(&g_vid_pool[slot_idx], &g_vid_pool_lock, 800);
+        wait_slot_free(&g_vid_pool[slot_idx], &g_vid_pool_lock, 800, &g_vid_forced);
 
         memset(multi_bs, 0, sizeof(multi_bs));
         multi_bs[0].bindfd = venc_bindfd;
@@ -843,11 +868,13 @@ static void *video_thread(void *arg)
                 pthread_mutex_lock(&g_vid_pool_lock);
                 g_vid_pool[slot_idx].pending = 0;
                 pthread_mutex_unlock(&g_vid_pool_lock);
+                g_vid_dropped++;
                 if (enq_ret == ERR_FULL)
                     fprintf(stderr, "[VID] hang doi day (ERR_FULL), bo qua 1 frame\n");
                 else
                     fprintf(stderr, "[VID] stream_media_enqueue loi %d\n", enq_ret);
             } else {
+                g_vid_sent++;
                 slot_idx = (slot_idx + 1) % VIDEO_POOL_SIZE;
             }
         }
@@ -855,6 +882,7 @@ static void *video_thread(void *arg)
          * ranh ngay, khong can tang slot_idx - lan sau ghi de tiep len
          * cung slot nay la an toan. */
     }
+    } /* dong khoi heartbeat */
 
     for (i = 0; i < VIDEO_POOL_SIZE; i++)
         free(g_vid_pool[i].buf);
@@ -870,7 +898,7 @@ static void *audio_thread(void *arg)
     gm_pollfd_t poll_fds[1];
     gm_enc_multi_bitstream_t multi_bs[1];
     gm_ss_entity entity;
-    int ret;
+    int ret, sdp_ready = 0;
     int slot_idx = 0;
     int i;
 
@@ -888,13 +916,26 @@ static void *audio_thread(void *arg)
     poll_fds[0].bindfd = audio_bindfd;
     poll_fds[0].event  = GM_POLL_READ;
 
+    {
+        struct timeval hb_last, hb_now;
+        gettimeofday(&hb_last, NULL);
+
     while (g_running) {
         ret = gm_poll(poll_fds, 1, 500);
+
+        gettimeofday(&hb_now, NULL);
+        if ((hb_now.tv_sec - hb_last.tv_sec) >= 5) {
+            fprintf(stderr, "[AUD] heartbeat: sent=%lu dropped=%lu forced=%lu "
+                    "g_play=%d slot_idx=%d sdp_ready=%d\n",
+                    g_aud_sent, g_aud_dropped, g_aud_forced, g_play, slot_idx, sdp_ready);
+            hb_last = hb_now;
+        }
+
         if (ret == GM_TIMEOUT) continue;
         if (poll_fds[0].revent.event != GM_POLL_READ) continue;
         if ((int) poll_fds[0].revent.bs_len > AUDIO_BS_BUF_LEN) continue;
 
-        wait_slot_free(&g_aud_pool[slot_idx], &g_aud_pool_lock, 800);
+        wait_slot_free(&g_aud_pool[slot_idx], &g_aud_pool_lock, 800, &g_aud_forced);
 
         memset(multi_bs, 0, sizeof(multi_bs));
         multi_bs[0].bindfd = audio_bindfd;
@@ -905,6 +946,21 @@ static void *audio_thread(void *arg)
 
         if (gm_recv_multi_bitstreams(multi_bs, 1) < 0) continue;
         if (multi_bs[0].retval != GM_SUCCESS) continue;
+
+        /* AAC (khac voi G711A truoc day) BAT BUOC can SDP dong (chua
+         * AudioSpecificConfig) - phai doi frame AAC dau tien de sinh SDP
+         * truoc khi dang ky stream, giong het co che video H264/MPEG4/
+         * MJPEG (xem librtsp.h: stream_sdp_parameter_encoder ho tro
+         * "H264","MPEG4","MJPEG","AAC"). */
+        if (!sdp_ready) {
+            stream_sdp_parameter_encoder("AAC",
+                                          (unsigned char *) multi_bs[0].bs.bs_buf,
+                                          multi_bs[0].bs.bs_len,
+                                          g_asdp, SDPSTR_MAX);
+            sdp_ready = 1;
+            fprintf(stderr, "[AUD] Da sinh SDP audio (AAC), sdp_ready\n");
+            continue; /* frame nay khong enqueue, slot van ranh */
+        }
 
         if (g_play && g_aqno >= 0) {
             int enq_ret;
@@ -919,20 +975,23 @@ static void *audio_thread(void *arg)
             entity.timestamp = rtp_now_ts();
 
             pthread_mutex_lock(&g_enqueue_mutex);
-            enq_ret = stream_media_enqueue(GM_SS_TYPE_G711A, g_aqno, &entity);
+            enq_ret = stream_media_enqueue(GM_SS_TYPE_AAC, g_aqno, &entity);
             pthread_mutex_unlock(&g_enqueue_mutex);
 
             if (enq_ret < 0) {
                 pthread_mutex_lock(&g_aud_pool_lock);
                 g_aud_pool[slot_idx].pending = 0;
                 pthread_mutex_unlock(&g_aud_pool_lock);
+                g_aud_dropped++;
                 if (enq_ret != ERR_FULL)
                     fprintf(stderr, "[AUD] stream_media_enqueue loi %d\n", enq_ret);
             } else {
+                g_aud_sent++;
                 slot_idx = (slot_idx + 1) % AUDIO_POOL_SIZE;
             }
         }
     }
+    } /* dong khoi heartbeat */
 
     for (i = 0; i < AUDIO_POOL_SIZE; i++)
         free(g_aud_pool[i].buf);
@@ -1121,9 +1180,9 @@ static int graph_init(void)
     audio_grab_attr.channel_type = GM_MONO;
     gm_set_attr(audio_grab_object, &audio_grab_attr);
 
-    audio_enc_attr.encode_type   = GM_G711_ALAW;
-    audio_enc_attr.bitrate        = 64000;
-    audio_enc_attr.frame_samples  = CFG_AUDIO_FRAME_SAMPLES;
+    audio_enc_attr.encode_type   = GM_AAC;
+    audio_enc_attr.bitrate        = CFG_AUDIO_BITRATE;   /* AAC: 14500~192000 theo tai lieu SDK */
+    audio_enc_attr.frame_samples  = CFG_AUDIO_FRAME_SAMPLES; /* AAC mono: 1024*n */
     gm_set_attr(audio_enc_object, &audio_enc_attr);
 
     audio_bindfd = gm_bind(audio_groupfd, audio_grab_object, audio_enc_object);
@@ -1187,7 +1246,8 @@ int main(int argc, char *argv[])
            (g_cfg.mode == 3) ? "ECBR" : "EVBR",
            g_cfg.mode, g_cfg.bitrate, g_cfg.framerate * 2,
            enc_type_name[g_cfg.enc_type]);
-    printf("Audio : G.711A %dHz mono (groupfd rieng voi video)\n", CFG_AUDIO_SAMPLERATE);
+    printf("Audio : AAC-LC %dHz mono, %dbps (groupfd rieng voi video)\n",
+           CFG_AUDIO_SAMPLERATE, CFG_AUDIO_BITRATE);
     printf("OSD   : text=\"%s\" timestamp=%s zoom=%d bg_palette=%d\n",
            g_cfg.osd_text, g_cfg.osd_timestamp ? "on" : "off",
            g_cfg.osd_zoom, g_cfg.osd_bg_palette);
@@ -1224,10 +1284,20 @@ int main(int argc, char *argv[])
 
     {
         int waited_ms = 0;
-        while (g_vsdp[0] == '\0' && waited_ms < 5000) {
+        /* Doi ca SDP video LAN SDP audio (AAC bat buoc can, khac G711A
+         * truoc day la static payload type khong can cho). */
+        while (waited_ms < 5000) {
+            int vid_ok = (g_vsdp[0] != '\0');
+            int aud_ok = (!audio_bindfd) || (g_asdp[0] != '\0');
+            if (vid_ok && aud_ok) break;
             usleep(50000);
             waited_ms += 50;
         }
+        if (g_vsdp[0] == '\0')
+            fprintf(stderr, "[WARN] Chua co SDP video sau 5s, van tiep tuc dang ky stream\n");
+        if (audio_bindfd && g_asdp[0] == '\0')
+            fprintf(stderr, "[WARN] Chua co SDP audio (AAC) sau 5s, track audio co the "
+                    "khong hoat dong dung\n");
     }
 
     if ((ret = stream_server_init(NULL, RTSP_PORT, 0, 1444, 256,
@@ -1243,12 +1313,7 @@ int main(int argc, char *argv[])
     g_vqno = stream_queue_alloc(g_cfg.enc_type == ENC_MPEG4 ? GM_SS_TYPE_MP4 :
                                  g_cfg.enc_type == ENC_MJPEG ? GM_SS_TYPE_MJPEG :
                                  GM_SS_TYPE_H264);
-    g_aqno = audio_bindfd ? stream_queue_alloc(GM_SS_TYPE_G711A) : -1;
-
-    /* G.711A la static RTP payload type (PT=8, PCMA/8000), khong can
-     * stream_sdp_parameter_encoder(). Neu track audio khong hien tren
-     * TinyCam/SmartRTSP, thu dat g_asdp = "a=rtpmap:8 PCMA/8000\r\n". */
-    g_asdp[0] = '\0';
+    g_aqno = audio_bindfd ? stream_queue_alloc(GM_SS_TYPE_AAC) : -1;
 
     g_sr = stream_reg(STREAM_NAME, g_vqno, g_vsdp,
                        g_aqno, g_asdp,
