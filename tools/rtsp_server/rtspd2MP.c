@@ -406,8 +406,8 @@ static void rtspd_set_osd_text(void *capture_obj, const char *line1, const char 
     osd_font2.enabled = 1;
     osd_font2.win_idx = 0;
     osd_font2.align_type = GM_OSD_ALIGN_TOP_LEFT;
-    osd_font2.x = 10;
-    osd_font2.y = 10;
+    osd_font2.x = 20;
+    osd_font2.y = 20;
     osd_font2.h_words = h_words;
     osd_font2.v_words = v_words;
     osd_font2.h_space = 0;
@@ -1978,8 +1978,9 @@ void gm_enc_init(int cap_ch, int cap_path, int rec_track, int enc_type, int mode
     }
 
     // * Enable Scaler Encoder if downscaling is required (only for H264)
-    if (enc_type == ENC_TYPE_H264 && (width < gm_system.cap[cap_ch].dim.width || height < gm_system.cap[cap_ch].dim.height)) {
-        h264e_attr.ratectl.bitrate      = bitrate;
+    //if (enc_type == ENC_TYPE_H264 && (width < gm_system.cap[cap_ch].dim.width || height < gm_system.cap[cap_ch].dim.height)) {
+    if (enc_type == ENC_TYPE_H264 && (width < 1920 || height < 1080)) {
+		h264e_attr.ratectl.bitrate      = bitrate;
         h264e_attr.frame_info.framerate = framerate;
         h264e_attr.dim.width            = width;
         h264e_attr.dim.height           = height;
