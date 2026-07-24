@@ -1351,8 +1351,7 @@ static int frm_cb(int type, int qno, gm_ss_entity *entity)
     }
     log_error("frm_cb: unknown buffer type=%d qno=%d data=%p size=%d",type,qno,entity->data,entity->size);
     return 0;
-
-*/}
+}
 
 priv_avbs_t *find_file_sr(char *name, int srno)
 {
