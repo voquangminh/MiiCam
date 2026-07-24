@@ -174,21 +174,7 @@ typedef struct st_priv_vbs {
     char *bs_buf;
     unsigned int bs_buf_len;
     pthread_mutex_t priv_vbs_mutex;
-// add buffer pool
-	video_pool_slot_t pool[VIDEO_POOL_SLOT_COUNT];
-	char *drop_buf;
-    unsigned int drop_buf_len;
-	int wait_idr;
-    unsigned int dropped_frames;
-    unsigned int enqueue_errors;
 } priv_vbs_t;
-
-static int video_pool_init(priv_vbs_t *video);
-static int video_pool_acquire(priv_vbs_t *video);
-
-static void video_pool_release_slot(priv_vbs_t *video,int slot);
-static int video_pool_release_ptr(priv_vbs_t *video,const char *data);
-static void video_pool_destroy(priv_vbs_t *video);
 
 typedef struct st_bs {
     int event;                    // * Config change please set 1 for enqueue_thread to config this
@@ -206,7 +192,6 @@ typedef struct st_priv_bs {
     open_container_fn open;
     close_container_fn close;
     priv_vbs_t video;             // * VIDEO, 0: main-bitstream, 1: sub1-bitstream, 2:sub2-bitstream
-    priv_vbs_t audio;             // * AUDIO
 } priv_avbs_t;
 
 typedef struct st_av {
@@ -226,19 +211,11 @@ pthread_t encode_thread_id    		= 0;
 pthread_t motion_thread_id    		= 0;
 pthread_t media_thread_id     		= 0;
 pthread_t osd_thread_id       		= 0;
-pthread_t audio_thread_id     		= 0;
 
 unsigned int sys_tick         = 0;
 struct timeval sys_sec        = {-1, -1};
 int sys_port                  = 554;
 char *ipptr                   = NULL;
-
-void *audio_groupfd;
-void *audio_grab_object;
-void *audio_encode_object;
-void *audio_bindfd;
-char audio_sdpstr[SDPSTR_MAX];
-int audio_sdp_ready           = 0;
 
 static int rtspd_sysinit      = 0;
 static int rtspd_set_event    = 0;
@@ -260,8 +237,8 @@ void *encode_object;
 void *sub_enc_object;             // * Create encoder object (scaler)
 void *sub_bindfd;                 // * Create encoder object (scaler) bind
 
-static unsigned short rtspd_osd_font2_text[64];
-static int rtspd_osd_font2_ready = 0;
+static unsigned short rtspd_osd_font_text[64];
+static int rtspd_osd_font_ready = 0;
 static pthread_mutex_t rtspd_osd_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 FILE *logfile = NULL;             // * File for logging
@@ -299,40 +276,24 @@ static void read_hostname(char *out, size_t outlen)
 {
     FILE *f;
     char line[256];
-
     out[0] = '\0';
-
     f = fopen("/tmp/sd/midgard.ini", "r");
     if (!f) 
 		return;
-
     while (fgets(line, sizeof(line), f)) {
-
         if (strncmp(line, "HOSTNAME=", 9) != 0)
             continue;
-
         char *v = line + 9;
-
         if (*v == '"')
             v++;
-
         char *end = v + strlen(v);
-
-        while (end > v &&
-              (end[-1] == '\n' ||
-               end[-1] == '\r' ||
-               end[-1] == '"'  ||
-               end[-1] == ' '))
-        {
+        while (end > v && (end[-1] == '\n' || end[-1] == '\r' || end[-1] == '"'  || end[-1] == ' ')){
             *--end = '\0';
         }
-
         strncpy(out, v, outlen - 1);
         out[outlen - 1] = '\0';
-
         break;
     }
-
     fclose(f);
 }
 
@@ -387,7 +348,7 @@ static void rtspd_set_osd_palette(void)
 
 static void rtspd_set_osd_text(void *capture_obj, const char *line1, const char *line2)
 {
-    gm_osd_font2_t osd_font2;
+    gm_osd_font_t osd_font;
     
     int h_words;
     int v_words;
@@ -419,43 +380,43 @@ static void rtspd_set_osd_text(void *capture_obj, const char *line1, const char 
 
     pthread_mutex_lock(&rtspd_osd_mutex);
 
-    for (i = 0; i < (int)(sizeof(rtspd_osd_font2_text) / sizeof(rtspd_osd_font2_text[0])); i++)
-        rtspd_osd_font2_text[i] = (unsigned short) ' ';
+    for (i = 0; i < (int)(sizeof(rtspd_osd_font_text) / sizeof(rtspd_osd_font_text[0])); i++)
+        rtspd_osd_font_text[i] = (unsigned short) ' ';
     for (i = 0; i < line1_len; i++)
-        rtspd_osd_font2_text[i] = (unsigned short) line1[i];
+        rtspd_osd_font_text[i] = (unsigned short) line1[i];
     for (i = 0; i < line2_len; i++)
-        rtspd_osd_font2_text[h_words + i] = (unsigned short) line2[i];
+        rtspd_osd_font_text[h_words + i] = (unsigned short) line2[i];
 
-    memset(&osd_font2, 0, sizeof(osd_font2));
-    osd_font2.enabled = 1;
-    osd_font2.win_idx = 0;
-    osd_font2.align_type = GM_OSD_ALIGN_TOP_LEFT;
-    osd_font2.x = 20;
-    osd_font2.y = 20;
-    osd_font2.h_words = h_words;
-    osd_font2.v_words = v_words;
-    osd_font2.h_space = 0;
-    osd_font2.v_space = 0;
-    osd_font2.font_index_len = h_words * v_words;
-    osd_font2.font_index = rtspd_osd_font2_text;
-    osd_font2.font_alpha = GM_OSD_FONT_ALPHA_75;
-    osd_font2.win_alpha = GM_OSD_FONT_ALPHA_75;
-    osd_font2.font_palette_idx = 14;   // WHITE
-    osd_font2.priority = GM_OSD_PRIORITY_MARK_ON_OSD;
-    osd_font2.smooth.enabled = 1;
-    osd_font2.smooth.level = GM_OSD_FONT_SMOOTH_LEVEL_WEAK;
-    osd_font2.marquee.mode = GM_OSD_MARQUEE_MODE_NONE;
-    osd_font2.win_palette_idx  = cliArgs.osd_bg_color;  // background color
-    osd_font2.border.enabled = 0;   // without border
-    osd_font2.border.width = 1;
-    osd_font2.border.type = GM_OSD_BORDER_TYPE_WIN;
-    osd_font2.border.palette_idx = 1;
-    osd_font2.font_zoom = cliArgs.font_zoom;
+    memset(&osd_font, 0, sizeof(osd_font));
+    osd_font.enabled = 1;
+    osd_font.win_idx = 0;
+    osd_font.align_type = GM_OSD_ALIGN_TOP_LEFT;
+    osd_font.x = 20;
+    osd_font.y = 20;
+    osd_font.h_words = h_words;
+    osd_font.v_words = v_words;
+    osd_font.h_space = 0;
+    osd_font.v_space = 0;
+    osd_font.font_index_len = h_words * v_words;
+    osd_font.font_index = rtspd_osd_font_text;
+    osd_font.font_alpha = GM_OSD_FONT_ALPHA_75;
+    osd_font.win_alpha = GM_OSD_FONT_ALPHA_75;
+    osd_font.font_palette_idx = 14;   // WHITE
+    osd_font.priority = GM_OSD_PRIORITY_MARK_ON_OSD;
+    osd_font.smooth.enabled = 1;
+    osd_font.smooth.level = GM_OSD_FONT_SMOOTH_LEVEL_WEAK;
+    osd_font.marquee.mode = GM_OSD_MARQUEE_MODE_NONE;
+    osd_font.win_palette_idx  = cliArgs.osd_bg_color;  // background color
+    osd_font.border.enabled = 0;   // without border
+    osd_font.border.width = 1;
+    osd_font.border.type = GM_OSD_BORDER_TYPE_WIN;
+    osd_font.border.palette_idx = 1;
+    osd_font.font_zoom = cliArgs.font_zoom;
 
     int ret;
-    ret = gm_set_osd_font2(capture_obj, &osd_font2);
+    ret = gm_set_osd_font(capture_obj, &osd_font);
     
-    rtspd_osd_font2_ready = 1;
+    rtspd_osd_font_ready = 1;
 
     pthread_mutex_unlock(&rtspd_osd_mutex);
 }
@@ -642,7 +603,7 @@ static int set_cap_motion(int cap_vch, unsigned int id, unsigned int value)
     return 0;
 }
 
-
+// training motion
 static int set_interesting_area(int ch)
 {
     int ret = 0;
@@ -721,6 +682,7 @@ int init_snapshot(void)
 
     return 0;
 }
+
 
 void take_snapshot(void)
 {
@@ -815,13 +777,11 @@ static int do_queue_alloc(int type)
     return rc;
 }
 
-// video_rtp_tick
 static unsigned int get_tick_gm(unsigned int tv_ms)
 {
     sys_tick = tv_ms*(RTP_HZ / 1000);
     return sys_tick;
 }
-
 
 static int convert_gmss_media_type(int type)
 {
@@ -845,11 +805,9 @@ static int convert_gmss_media_type(int type)
     return media_type;
 }
 
-
 static int open_live_streaming(int ch_num, int sub_num)
 {
     int media_type;
-    int ret;
     avbs_t *b;
     priv_avbs_t *pb;
     char livename[64];
@@ -861,26 +819,7 @@ static int open_live_streaming(int ch_num, int sub_num)
     pb->video.qno = do_queue_alloc(media_type);
 
     sprintf(livename, "live/ch%02d_%d", ch_num, sub_num);
-
-    if (b->audio.enabled == DVR_ENC_EBST_ENABLE) {
-        int a_media_type = GM_SS_TYPE_G711A; 				/* default to AAC audio */
-        pb->audio.qno = do_queue_alloc(a_media_type);
-		// debug
-		if (pb->video.sdpstr[0] == '\0') {
-			stream_queue_release(pb->video.qno);pb->video.qno = -1;
-    		return -1;
-		} 
-		// end of debug
-	    pb->sr = stream_reg(livename, pb->video.qno, pb->video.sdpstr, pb->audio.qno, pb->audio.sdpstr,1,0,0,0,0,0,0);
-    } else {
-        pb->sr = stream_reg(livename, pb->video.qno, pb->video.sdpstr, pb->audio.qno, pb->audio.sdpstr,1,0,0,0,0,0,0);    
-    }
-    
-    if (audio_sdpstr[0] != '\0') {
-        strncpy(pb->audio.sdpstr,audio_sdpstr,SDPSTR_MAX - 1);
-        pb->audio.sdpstr[SDPSTR_MAX - 1] = '\0';
-        ret = stream_updatesdp(pb->sr,pb->video.sdpstr,pb->audio.sdpstr);
-    }
+    pb->sr = stream_reg(livename, pb->video.qno, pb->video.sdpstr,0,0,1,0,0,0,0,0,0);
 
     if (pb->sr < 0){
         log_error("open_live_streaming: ch_num=%d, sub_num=%d setup error", ch_num, sub_num);
@@ -888,7 +827,7 @@ static int open_live_streaming(int ch_num, int sub_num)
 
     // * Enable authentication for the stream if the username and password are set
     if (rtsp_use_auth == 1) {
-        stream_authorization(pb->sr, rtsp_username, rtsp_password);
+        stream_authorization(pb->sr, cliArgs.user, cliArgs.password);
     }
     strcpy(pb->name, livename);
     return 0;
@@ -952,7 +891,6 @@ exit_free_as_buf:
     return 1;
 }
 
-
 static int close_live_streaming(int ch_num, int sub_num)
 {
     avbs_t *b;
@@ -980,7 +918,6 @@ err_exit:
     return ret;
 }
 
-
 int open_bs(int ch_num, int sub_num)
 {
     avbs_t *b;
@@ -1007,7 +944,6 @@ int open_bs(int ch_num, int sub_num)
     return 0;
 }
 
-
 int close_bs(int ch_num, int sub_num)
 {
     av_t *e;
@@ -1032,7 +968,6 @@ int close_bs(int ch_num, int sub_num)
     return 0;
 }
 
-
 static int bs_check_event(void)
 {
     int ch_num, sub_num, ret = 0;
@@ -1050,7 +985,6 @@ static int bs_check_event(void)
 
     return ret;
 }
-
 
 void bs_new_event(void)
 {
@@ -1133,7 +1067,6 @@ err_exit:
     return ret;
 }
 
-
 int set_poll_event(void)
 {
     int ch_num, sub_num, ret = -1;
@@ -1156,11 +1089,9 @@ int set_poll_event(void)
     return ret;
 }
 
-
 void get_enc_res(gm_enc_info_t *enc, int *enc_type, int *width, int *height)
 {
-    int w = 0; 
-    int h = 0;
+    int w, h;
     gm_h264e_attr_t *h264e_attr;
     gm_mpeg4e_attr_t *mpeg4e_attr;
     gm_mjpege_attr_t *mjpege_attr;
@@ -1196,7 +1127,7 @@ void get_enc_res(gm_enc_info_t *enc, int *enc_type, int *width, int *height)
 }
 
 
-#define PRINT_INTERVAL_MS 30000
+#define PRINT_INTERVAL_MS 15000
 static unsigned int frame_counts[CAP_CH_NUM][RTSP_NUM_PER_CAP] = {{0}};
 static unsigned int rec_bs_len[CAP_CH_NUM][RTSP_NUM_PER_CAP]   = {{0}};
 static void print_enc_average(int ch_num, int sub_num, int bs_len, struct timeval *cur_timeval)
@@ -1276,8 +1207,11 @@ static void print_enc_average(int ch_num, int sub_num, int bs_len, struct timeva
 static unsigned int poll_wait_time = 0;
 static void env_release_resources(void)
 {
-    int ch_num;
+    int ret, ch_num;
     av_t *e;
+
+    if ((ret = stream_server_stop()))
+        log_error("stream_server_stop() error %d", ret);
 
     for (ch_num = 0; ch_num < CAP_CH_NUM; ch_num++) {
         e = &enc[ch_num];
@@ -1285,68 +1219,24 @@ static void env_release_resources(void)
     }
 }
 
-
 static int frm_cb(int type, int qno, gm_ss_entity *entity)
 {
     priv_avbs_t *pb;
     int ch_num, sub_num;
 	
-	if (entity == NULL) return -1;
-/*    for (ch_num = 0; ch_num < CAP_CH_NUM; ch_num++) {
+	for (ch_num = 0; ch_num < CAP_CH_NUM; ch_num++) {
         for (sub_num = 0; sub_num < RTSP_NUM_PER_CAP; sub_num++) {
             pb = &enc[ch_num].priv_bs[sub_num];
-            if (pb->video.offs == (uintptr_t)(entity->data) && pb->video.len == entity->size && pb->video.qno==qno){
+
+            if (pb->video.offs == (int)(entity->data) && pb->video.len == entity->size && pb->video.qno==qno) {
                 pthread_mutex_lock(&pb->video.priv_vbs_mutex);
                 pb->video.offs = 0;
                 pb->video.len = 0;
                 pthread_mutex_unlock(&pb->video.priv_vbs_mutex);
-			}
-			if (pb->audio.offs == (uintptr_t)entity->data && pb->audio.len == entity->size && pb->audio.qno == qno){
-	    		pthread_mutex_lock(&pb->audio.priv_vbs_mutex);
-				pb->audio.offs = 0;
-    			pb->audio.len  = 0;
-    			pthread_mutex_unlock(&pb->audio.priv_vbs_mutex);
-			}
-    	}
-	}
-	return 0;
-
-	pb = &enc[ch_num].priv_bs[sub_num];
-	if (pb->video.qno == qno) {
-    	if (video_pool_release_ptr(&pb->video,entity->data)) {
-        	return 0;
-    	}
-	}
-	if (pb->audio.qno == qno && pb->audio.offs == (uintptr_t)entity->data && pb->audio.len == entity->size) {
-		pthread_mutex_lock(&pb->audio.priv_vbs_mutex);
-		pb->audio.offs = 0;
-		pb->audio.len = 0;
-		pthread_mutex_unlock(&pb->audio.priv_vbs_mutex);
-		return 0;        
-	}
-	return 0;
-*/
-	for (ch_num = 0;ch_num < CAP_CH_NUM;ch_num++) {
-        for (sub_num = 0; sub_num < RTSP_NUM_PER_CAP; sub_num++) {
-            pb = &enc[ch_num].priv_bs[sub_num];
-            /* Video frame callback */
-            if (pb->video.qno == qno) {
-                if (video_pool_release_ptr(&pb->video,entity->data)) {
-					return 0;
-				}
-            }
-
-            /* Audio callback */
-            if (pb->audio.qno == qno && pb->audio.offs == (uintptr_t)entity->data && pb->audio.len == entity->size) {
-                pthread_mutex_lock(&pb->audio.priv_vbs_mutex);
-                pb->audio.offs = 0;
-                pb->audio.len = 0;
-                pthread_mutex_unlock(&pb->audio.priv_vbs_mutex);
-                return 0;
             }
         }
     }
-    log_error("frm_cb: unknown buffer type=%d qno=%d data=%p size=%d",type,qno,entity->data,entity->size);
+
     return 0;
 }
 
@@ -1388,8 +1278,7 @@ static int cmd_cb(char *name, int sno, int cmd, void *p)
 
         case GM_STREAM_CMD_OPEN:
             log_error("%s:%d <GM_STREAM_CMD_OPEN>", __FUNCTION__, __LINE__);
-            //ERR_GOTO(-10, cmd_cb_err);
-            ret = 0;
+            ERR_GOTO(-10, cmd_cb_err);
             break;
 
         case GM_STREAM_CMD_SETUP:
@@ -1403,12 +1292,12 @@ static int cmd_cb(char *name, int sno, int cmd, void *p)
                     ERR_GOTO(-1, cmd_cb_err);
                 }
                 if (pb->video.qno >= 0){
-					pb->video.wait_idr = 1;
                     pb->play = 1;
                 }
             }
             ret = 0;
             break;
+		
         case GM_STREAM_CMD_PAUSE:
             log_info("%s:%d <GM_STREAM_CMD_PAUSE>", __FUNCTION__, __LINE__);
             ret = 0;
@@ -1419,7 +1308,6 @@ static int cmd_cb(char *name, int sno, int cmd, void *p)
                 if ((pb = find_file_sr(name, sno)) == NULL){
                     ERR_GOTO(-1, cmd_cb_err);
                 }
-				pb->video.wait_idr = 1;
                 pb->play = 0;
             }
             ret = 0;
@@ -1501,298 +1389,6 @@ static void *media_thread(void *arg)
     }
 
     return 0;
-}
-
-static void *playback_thread(void *arg)
-{
-    int ret, length;
-    char filename[50];
-    FILE *bs_fd, *len_fd;
-    char *bitstream_data;
-    gm_dec_multi_bitstream_t multi_bs[1];
-	//pthread_t thread_id;
-	int pb_exit = 0;
-    
-    sprintf(filename, "%s.aac", PATTERN_NAME);
-    bs_fd = fopen(filename, "rb");
-    if (bs_fd == NULL) {
-        printf("[ERROR] Open %s failed!!\n", filename);
-        exit(1);
-    }
-
-    printf("Play file: [%s]\n", filename);
-    sprintf(filename, "%s.len", PATTERN_NAME);
-    len_fd = fopen(filename, "rb");
-    if (len_fd == NULL) {
-        printf("[ERROR] Open %s failed!!\n", filename);
-        exit(1);
-    } 
-
-    bitstream_data = (char *)malloc(AU_BITSTREAM_LEN);
-    if (!bitstream_data) {
-        printf("Error allocation\n");
-        exit(1);
-    }
-
-    while (1) {
-        if (pb_exit == 1)
-            break;
-
-        if (fscanf(len_fd, "%d\n", &length) == EOF) {
-            fseek(bs_fd, 0, SEEK_SET);
-            fseek(len_fd, 0, SEEK_SET);
-            fscanf(len_fd, "%d\n", &length);
-        }
-        if (length == 0)
-            continue;
-
-        if (length > AU_BITSTREAM_LEN) {
-            printf("Invalid length, len(%d)\n", length);
-            exit(1);
-        }
-
-        fread(bitstream_data, 1, length, bs_fd);
-
-        memset(multi_bs, 0, sizeof(multi_bs));  //clear all mutli bs         
-        multi_bs[0].bindfd = bindfd;
-        multi_bs[0].bs_buf = bitstream_data;
-        multi_bs[0].bs_buf_len = length;
-
-        if ((ret = gm_send_multi_bitstreams(multi_bs, 1, 500)) < 0) {
-            printf("<send bitstream fail(%d)!>\n", ret);
-            exit(1);
-        }
-    }
-
-    fclose(bs_fd);
-    fclose(len_fd);
-    free(bitstream_data);
-    return 0;
-}
-
-/* ===========AUDIO ENCODE THREAD=========== */
-static void *audio_thread(void *arg)
-{
-    int ret;
-    int ch_num;
-    int sub_num;
-    priv_avbs_t *pb;
-    gm_ss_entity entity;
-
-    DECLARE_ATTR(audio_grab_attr, gm_audio_grab_attr_t);
-    DECLARE_ATTR(audio_encode_attr, gm_audio_enc_attr_t);
-
-    gm_pollfd_t poll_fd[1];
-    gm_enc_multi_bitstream_t multi_bs[1];
-    char *bitstream_data;
-
-    bitstream_data = NULL;
-
-    bitstream_data = (char *)malloc(AU_BITSTREAM_LEN);
-    if (bitstream_data == NULL)
-        goto thread_exit;
-
-    audio_grab_object = gm_new_obj(GM_AUDIO_GRAB_OBJECT);
-    audio_encode_object = gm_new_obj(GM_AUDIO_ENCODER_OBJECT);
-
-    if (audio_grab_object == NULL || audio_encode_object == NULL) {
-        log_error("audio_thread: gm_new_obj failed");
-        goto thread_exit;
-    }
-
-    audio_grab_attr.vch = 0;
-    audio_grab_attr.sample_rate = 8000;
-    audio_grab_attr.sample_size = 16;
-    audio_grab_attr.channel_type = GM_MONO;
-
-    ret = gm_set_attr(audio_grab_object,&audio_grab_attr);
-
-    if (ret < 0) {
-        log_error("audio_thread: gm_set_attr grab failed ret=%d",ret);
-        goto thread_exit;
-    }
-
-    audio_encode_attr.encode_type = GM_G711_ALAW;
-    audio_encode_attr.bitrate = 32000;
-    audio_encode_attr.frame_samples = 320;
-
-    ret = gm_set_attr(audio_encode_object,&audio_encode_attr);
-
-    if (ret < 0) {
-        log_error("audio_thread: gm_set_attr encoder failed ret=%d",ret);
-        goto thread_exit;
-    }
-
-    audio_groupfd = gm_new_groupfd();
-
-    if (audio_groupfd == NULL) {
-        log_error("audio_thread: gm_new_groupfd failed");
-        goto thread_exit;
-    }
-
-    audio_bindfd = gm_bind(audio_groupfd,audio_grab_object,audio_encode_object);
-
-    if (audio_bindfd == NULL) {
-        log_error("audio_thread: gm_bind failed");
-        goto thread_exit;
-    }
-
-    ret = gm_apply(audio_groupfd);
-
-    if (ret < 0) {
-        log_error("audio_thread: gm_apply failed ret=%d",ret);
-        goto thread_exit;
-    }
-
-    memset(poll_fd, 0, sizeof(poll_fd));
-
-    poll_fd[0].bindfd = audio_bindfd;
-    poll_fd[0].event = GM_POLL_READ;
-
-    while (rtspd_sysinit) {
-        ret = gm_poll(&poll_fd[0],1,1000);
-
-        if (ret == GM_TIMEOUT)
-            continue;
-
-        if (ret < 0) {
-            log_error("audio_thread: gm_poll failed ret=%d",ret);
-            continue;
-        }
-
-        if (poll_fd[0].revent.event != GM_POLL_READ)
-            continue;
-
-        memset(multi_bs, 0, sizeof(multi_bs));
-
-        multi_bs[0].bindfd = audio_bindfd;
-
-        multi_bs[0].bs.bs_buf = bitstream_data;
-
-        multi_bs[0].bs.bs_buf_len = AU_BITSTREAM_LEN;
-
-        ret = gm_recv_multi_bitstreams(multi_bs,1);
-
-        if (ret < 0) {
-            log_error("audio_thread: gm_recv_multi_bitstreams failed ret=%d",ret);
-            continue;
-        }
-
-        if (multi_bs[0].retval != GM_SUCCESS)
-            continue;
-
-        if (multi_bs[0].bs.bs_len <= 0)
-            continue;
-
-        if (!audio_sdp_ready) {
-            memset(audio_sdpstr,0,sizeof(audio_sdpstr));
-
-        stream_sdp_parameter_encoder("G711A", (unsigned char *) multi_bs[0].bs.bs_buf, multi_bs[0].bs.bs_len,audio_sdpstr,SDPSTR_MAX);
-            log_info("G711A SDP ret=%d sdp='%s'",ret,audio_sdpstr);
-
-            if (ret >= 0 && audio_sdpstr[0] != '\0') {
-                for (ch_num = 0; ch_num < CAP_CH_NUM; ch_num++) {
-                    for (sub_num = 0; sub_num < RTSP_NUM_PER_CAP; sub_num++) {
-                        pb = &enc[ch_num].priv_bs[sub_num];
-                        if (enc[ch_num].bs[sub_num].audio.enabled != DVR_ENC_EBST_ENABLE) {
-                            continue;
-                        }
-
-                        strncpy(pb->audio.sdpstr,audio_sdpstr,SDPSTR_MAX - 1);
-
-                        pb->audio.sdpstr[SDPSTR_MAX - 1] = '\0';
-
-                        if (pb->sr < 0)
-                            continue;
-
-                        ret = stream_updatesdp(pb->sr,pb->video.sdpstr,pb->audio.sdpstr);
-
-                        if (ret == 0) {
-                            audio_sdp_ready = 1;
-                        } else {
-                            log_error("stream_updatesdp failed ret=%d",ret);
-                        }
-                    }
-                }
-            }
-        }
-
-        if (VideoRecorder.recording == 1 && VideoRecorder.fh_aac != NULL) {
-            fwrite(multi_bs[0].bs.bs_buf,1,multi_bs[0].bs.bs_len,VideoRecorder.fh_aac);
-            fflush(VideoRecorder.fh_aac);
-        }
-
-        entity.data = multi_bs[0].bs.bs_buf;
-        entity.size = multi_bs[0].bs.bs_len;
-        entity.timestamp = get_tick_gm(multi_bs[0].bs.timestamp);
-
-        for (ch_num = 0; ch_num < CAP_CH_NUM;ch_num++) {
-            for (sub_num = 0; sub_num < RTSP_NUM_PER_CAP; sub_num++) {
-                pb = &enc[ch_num].priv_bs[sub_num];
-                if (enc[ch_num].bs[sub_num].audio.enabled != DVR_ENC_EBST_ENABLE || pb->audio.qno < 0 || pb->sr < 0 || pb->play == 0) {
-                    continue;
-                }
-                pthread_mutex_lock(&pb->audio.priv_vbs_mutex);
-                if (pb->audio.offs != 0 || pb->audio.len != 0) {
-                    pthread_mutex_unlock(&pb->audio.priv_vbs_mutex);
-                    continue;
-                }
-
-                pb->audio.offs = (uintptr_t)entity.data;
-                pb->audio.len = entity.size;
-
-                pthread_mutex_unlock(&pb->audio.priv_vbs_mutex);
-
-                pthread_mutex_lock(&stream_queue_mutex);
-
-                ret = stream_media_enqueue(GM_SS_TYPE_G711A,pb->audio.qno,&entity);
-
-                pthread_mutex_unlock(&stream_queue_mutex);
-
-                if (ret < 0) {
-                    pthread_mutex_lock(&pb->audio.priv_vbs_mutex);
-                    pb->audio.offs = 0;
-                    pb->audio.len = 0;
-                    pthread_mutex_unlock(&pb->audio.priv_vbs_mutex);
-                    log_error("G711A enqueue failed ret=%d",ret);
-                }
-            }
-        }
-    }
-
-thread_exit:
-
-    if (audio_bindfd != NULL) {
-        gm_unbind(audio_bindfd);
-        audio_bindfd = NULL;
-    }
-
-    if (audio_groupfd != NULL)
-        gm_apply(audio_groupfd);
-
-    if (audio_grab_object != NULL) {
-        gm_delete_obj(audio_grab_object);
-        audio_grab_object = NULL;
-    }
-
-    if (audio_encode_object != NULL) {
-        gm_delete_obj(audio_encode_object);
-        audio_encode_object = NULL;
-    }
-
-    if (audio_groupfd != NULL) {
-        gm_delete_groupfd(audio_groupfd);
-        audio_groupfd = NULL;
-    }
-
-    if (bitstream_data != NULL) {
-        free(bitstream_data);
-        bitstream_data = NULL;
-    }
-
-    audio_thread_id = (pthread_t)NULL;
-
-    return NULL;
 }
 
 static void *motion_thread(void *arg)
@@ -1940,7 +1536,6 @@ void *enqueue_thread(void *ptr)
     return NULL;
 }
 
-
 void gm_update_bs_info(void)
 {
     int cap_ch,cap_path,rec_track;
@@ -1961,7 +1556,6 @@ void gm_update_bs_info(void)
         }
     }
 }
-
 
 int env_init(void)
 {
@@ -1989,23 +1583,15 @@ int env_init(void)
             b->event          = NONE_BS_EVENT;
             b->enabled        = DVR_ENC_EBST_DISABLE;
             b->video.enabled  = DVR_ENC_EBST_DISABLE;
-            b->audio.enabled  = DVR_ENC_EBST_ENABLE;				/* disable audio by default */
 
             pb                = &e->priv_bs[sub_num];
             pb->video.qno     = -1;
             pb->video.offs    = 0;
             pb->video.len     = 0;
-            pb->audio.qno     = -1;
-            pb->audio.offs    = 0;
-            pb->audio.len     = 0;
             pb->sr            = -1;
 
             if (pthread_mutex_init(&pb->video.priv_vbs_mutex, NULL)) {
                 log_error("env_enc_init: priv_vbs mutex init failed");
-                exit(-1);
-            }
-            if (pthread_mutex_init(&pb->audio.priv_vbs_mutex, NULL)) {
-                log_error("env_enc_init: audio priv_vbs mutex init failed");
                 exit(-1);
             }
         }
@@ -2067,7 +1653,7 @@ void gm_enc_init(int cap_ch, int cap_path, int rec_track, int enc_type, int mode
             h264e_attr.dim.height            = height;
             h264e_attr.frame_info.framerate  = framerate;
             h264e_attr.ratectl.mode          = mode;
-            h264e_attr.ratectl.gop           = 20;			   // I-frame per fps = second
+            h264e_attr.ratectl.gop           = 60;			   // I-frame per fps = second
             h264e_attr.ratectl.bitrate       = bitrate;
             h264e_attr.ratectl.bitrate_max   = bitrate;
             h264e_attr.b_frame_num           = 0;              // * B-frames per GOP (H.264 high profile)
@@ -2114,14 +1700,9 @@ void gm_enc_init(int cap_ch, int cap_path, int rec_track, int enc_type, int mode
 
     // * Set motion detection
     if (cliArgs.motion == 1) {
-
-        // * Enable motion detection
-        motion_detection_init();
-
-        // * Set area for motion detection
+        motion_detection_init();					// * Enable motion detection
         int ret = 0;
-        ret = set_interesting_area(rec_track);
-
+        ret = set_interesting_area(rec_track);		// * Set area for motion detection
         if (ret != 0) {
             log_error("Failed running set_interesting_area!");
         }
@@ -2139,7 +1720,6 @@ void gm_enc_init(int cap_ch, int cap_path, int rec_track, int enc_type, int mode
 
     rtspd_avail_ch++;
 }
-
 
 int gm_get_chipinfo(void)
 {
@@ -2166,7 +1746,6 @@ int gm_get_chipinfo(void)
 
     return chipid;
 }
-
 
 static int gm_get_max_bandwidth(char *list)
 {
@@ -2206,7 +1785,6 @@ static int gm_get_max_bandwidth(char *list)
     return bandwidth;
 }
 
-
 int gm_get_bandwidth_info(void)
 {
     FILE *fp;
@@ -2242,7 +1820,6 @@ int gm_get_bandwidth_info(void)
     else
         return 0;
 }
-
 
 void gm_graph_init(void)
 {
@@ -2299,22 +1876,14 @@ void gm_graph_release(void)
     for (cap_ch = 0; cap_ch < CAP_CH_NUM; cap_ch++) {
         for (cap_path = 0; cap_path < CAP_PATH_NUM; cap_path++) {
             param = &enc_param[cap_ch][cap_path];
-            for (rec_track = 0; rec_track < ENC_TRACK_NUM; rec_track++) {
+            
+			for (rec_track = 0; rec_track < ENC_TRACK_NUM; rec_track++) {
                 if (param->enc[rec_track].obj)
                     gm_delete_obj(param->enc[rec_track].obj);
             }
+			
             if (param->cap.obj)
                 gm_delete_obj(param->cap.obj);
-        }
-    }
-
-    /* Free any allocated video buffers to reduce RAM usage */
-    for (cap_ch = 0; cap_ch < CAP_CH_NUM; cap_ch++) {
-        int sub;
-        for (sub = 0; sub < RTSP_NUM_PER_CAP; sub++) {
-            priv_avbs_t *pb = &enc[cap_ch].priv_bs[sub];
-            //if (pb->video.bs_buf) { free(pb->video.bs_buf); pb->video.bs_buf = NULL; }
-			video_pool_destroy(&pb->video);
         }
     }
 
@@ -2322,235 +1891,10 @@ void gm_graph_release(void)
     gm_release();
 }
 
-// debug thêm hàm kiểm tra Annex-B
-static int h264_has_nal_type(
-    const unsigned char *data,
-    int len,
-    int wanted_type)
-{
-    int i;
-
-    if (!data || len < 5)
-        return 0;
-
-    for (i = 0; i + 4 < len; i++) {
-        int nal_pos = -1;
-
-        if (i + 4 < len &&
-            data[i] == 0x00 &&
-            data[i + 1] == 0x00 &&
-            data[i + 2] == 0x00 &&
-            data[i + 3] == 0x01) {
-            nal_pos = i + 4;
-        } else if (i + 3 < len &&
-                   data[i] == 0x00 &&
-                   data[i + 1] == 0x00 &&
-                   data[i + 2] == 0x01) {
-            nal_pos = i + 3;
-        }
-
-        if (nal_pos >= 0 && nal_pos < len) {
-            int nal_type = data[nal_pos] & 0x1f;
-
-            if (nal_type == wanted_type)
-                return 1;
-        }
-    }
-
-    return 0;
-}
-
-// add hàm buffer pool
-static int video_pool_init(priv_vbs_t *video)
-{
-    int i;
-
-    if (video == NULL)
-        return -1;
-
-    for (i = 0; i < VIDEO_POOL_SLOT_COUNT; i++) {
-        video->pool[i].data = NULL;
-        video->pool[i].capacity = 0;
-        video->pool[i].in_use = 0;
-    }
-
-    video->drop_buf = NULL;
-    video->drop_buf_len = 0;
-    video->wait_idr = 1;
-    video->dropped_frames = 0;
-    video->enqueue_errors = 0;
-
-    for (i = 0; i < VIDEO_POOL_SLOT_COUNT; i++) {
-        video->pool[i].data =
-            (char *)malloc(VIDEO_POOL_SLOT_SIZE);
-
-        if (video->pool[i].data == NULL) {
-            log_error(
-                "video_pool_init: failed allocating slot %d",
-                i);
-
-            goto init_failed;
-        }
-
-        video->pool[i].capacity = VIDEO_POOL_SLOT_SIZE;
-        video->pool[i].in_use = 0;
-    }
-
-    video->drop_buf =
-        (char *)malloc(VIDEO_DROP_BUFFER_SIZE);
-
-    if (video->drop_buf == NULL) {
-        log_error(
-            "video_pool_init: failed allocating drop buffer");
-
-        goto init_failed;
-    }
-
-    video->drop_buf_len = VIDEO_DROP_BUFFER_SIZE;
-
-    log_info(
-        "Video pool initialized slots=%d slot_size=%u drop_size=%u",
-        VIDEO_POOL_SLOT_COUNT,
-        (unsigned int)VIDEO_POOL_SLOT_SIZE,
-        (unsigned int)VIDEO_DROP_BUFFER_SIZE);
-
-    return 0;
-
-init_failed:
-
-    for (i = 0; i < VIDEO_POOL_SLOT_COUNT; i++) {
-        if (video->pool[i].data != NULL) {
-            free(video->pool[i].data);
-            video->pool[i].data = NULL;
-        }
-
-        video->pool[i].capacity = 0;
-        video->pool[i].in_use = 0;
-    }
-
-    if (video->drop_buf != NULL) {
-        free(video->drop_buf);
-        video->drop_buf = NULL;
-    }
-
-    video->drop_buf_len = 0;
-
-    return -1;
-}
-
-// debug add continue buffer pool
-static int video_pool_acquire(priv_vbs_t *video)
-{
-    int i;
-    int slot = -1;
-
-    if (video == NULL)
-        return -1;
-
-    pthread_mutex_lock(&video->priv_vbs_mutex);
-
-    for (i = 0; i < VIDEO_POOL_SLOT_COUNT; i++) {
-        if (video->pool[i].data != NULL &&
-            video->pool[i].in_use == 0) {
-
-            video->pool[i].in_use = 1;
-            slot = i;
-            break;
-        }
-    }
-
-    pthread_mutex_unlock(&video->priv_vbs_mutex);
-
-    return slot;
-}
-
-// buffer pool continue
-static void video_pool_release_slot(
-    priv_vbs_t *video,
-    int slot)
-{
-    if (video == NULL)
-        return;
-
-    if (slot < 0 || slot >= VIDEO_POOL_SLOT_COUNT)
-        return;
-
-    pthread_mutex_lock(&video->priv_vbs_mutex);
-
-    video->pool[slot].in_use = 0;
-
-    pthread_mutex_unlock(&video->priv_vbs_mutex);
-}
-
-// buffer pool conntinue too
-static int video_pool_release_ptr(priv_vbs_t *video,const char *data)
-{
-    int i;
-    int found = 0;
-
-    if (video == NULL || data == NULL)
-        return 0;
-
-    pthread_mutex_lock(&video->priv_vbs_mutex);
-
-    for (i = 0; i < VIDEO_POOL_SLOT_COUNT; i++) {
-        if (video->pool[i].data == data) {
-            video->pool[i].in_use = 0;
-            found = 1;
-            break;
-        }
-    }
-
-    pthread_mutex_unlock(&video->priv_vbs_mutex);
-
-    return found;
-}
-
-// buffer pool release
-static void video_pool_destroy(priv_vbs_t *video)
-{
-    int i;
-
-    if (video == NULL)
-        return;
-
-    pthread_mutex_lock(&video->priv_vbs_mutex);
-
-    for (i = 0; i < VIDEO_POOL_SLOT_COUNT; i++) {
-        if (video->pool[i].data != NULL) {
-            free(video->pool[i].data);
-            video->pool[i].data = NULL;
-        }
-
-        video->pool[i].capacity = 0;
-        video->pool[i].in_use = 0;
-    }
-
-    if (video->drop_buf != NULL) {
-        free(video->drop_buf);
-        video->drop_buf = NULL;
-    }
-
-    video->drop_buf_len = 0;
-
-    pthread_mutex_unlock(&video->priv_vbs_mutex);
-}
-
-
-int video_slot[CAP_CH_NUM][RTSP_NUM_PER_CAP];
-int discard_frame[CAP_CH_NUM][RTSP_NUM_PER_CAP];
 void *encode_thread(void *ptr)
 {
     int i, j, ch = 0, ret, cap_ch, cap_path, rec_track, rcv_nr, w, h;
     int first_play[CAP_CH_NUM][RTSP_NUM_PER_CAP];
-	   // memset(first_play, 0, sizeof(first_play));
-	for (i = 0; i < CAP_CH_NUM; i++) {
-    	for (j = 0; j < RTSP_NUM_PER_CAP; j++) {
-        	first_play[i][j] = -1;
-			video_slot[i][j] = -1;
-        	discard_frame[i][j] = 0;
-    	}
-	}
     priv_avbs_t *pb;
     avbs_t *avbs;
     gm_enc_multi_bitstream_t bs[CAP_CH_NUM][RTSP_NUM_PER_CAP];
@@ -2575,20 +1919,11 @@ void *encode_thread(void *ptr)
                     get_enc_res(&param->enc[rec_track], NULL, &w, &h);
 
                     pb = &enc[cap_ch].priv_bs[ch];
-                    //pb->video.bs_buf_len = w * h * 3 / 2;                    
-					//pb->video.bs_buf     = malloc(pb->video.bs_buf_len);
-                    if (video_pool_init(&pb->video) < 0) {
-	    				log_fatal("Failed initializing video buffer pool cap=%d path=%d track=%d",cap_ch,cap_path,rec_track);
-						rtspd_sysinit = 0;
-    					encode_thread_id = (pthread_t)NULL;
-    					return NULL;
-					}
+                    pb->video.bs_buf_len = w * h * 3 / 2;                    
+					pb->video.bs_buf     = malloc(pb->video.bs_buf_len);
 					pb->video.cap_ch     = cap_ch;
                     pb->video.cap_path   = cap_path;
                     pb->video.rec_track  = rec_track;
-                    /* initialize audio queue number and sdp */                    
-                    if (pb->audio.sdpstr[0] == '\0')
-                        pb->audio.sdpstr[0] = '\0';
                     ch++;
                 }
             }
@@ -2641,46 +1976,25 @@ void *encode_thread(void *ptr)
             for (j = 0; j < RTSP_NUM_PER_CAP; j++) {
                 pb = &enc[i].priv_bs[j];
 
-                //if (pb->video.offs || pb->video.len)
-				//	continue;
+                if (pb->video.offs || pb->video.len)
+					continue;
 
 				if (poll_fds[i][j].revent.event != GM_POLL_READ)
                     continue;
 				
-/* debug */		video_slot[i][j] = -1;
-				discard_frame[i][j] = 0;
-				video_slot[i][j] = video_pool_acquire(&pb->video);
-				if (video_slot[i][j] >= 0 && poll_fds[i][j].revent.bs_len <= pb->video.pool[video_slot[i][j]].capacity) {
-    				bs[i][j].bs.bs_buf = pb->video.pool[video_slot[i][j]].data;
-					bs[i][j].bs.bs_buf_len = pb->video.pool[video_slot[i][j]].capacity;
-				} else {
-					if (video_slot[i][j] >= 0) {
-        				video_pool_release_slot(&pb->video,video_slot[i][j]);
-				        video_slot[i][j] = -1;
-    				}
-					if (pb->video.drop_buf == NULL || poll_fds[i][j].revent.bs_len > pb->video.drop_buf_len) {
-        				log_error("Video frame too large len=%u pool=%u drop=%u",poll_fds[i][j].revent.bs_len,(unsigned int)VIDEO_POOL_SLOT_SIZE,pb->video.drop_buf_len);
-						continue;
-					}
-					bs[i][j].bs.bs_buf = pb->video.drop_buf;
-	    			bs[i][j].bs.bs_buf_len = pb->video.drop_buf_len;
-    				discard_frame[i][j] = 1;
-					pb->video.wait_idr = 1;
-    				first_play[i][j] = -1;
-    				pb->video.dropped_frames++;
-				}
-// end of debug
-                //if (poll_fds[i][j].revent.bs_len > pb->video.bs_buf_len)
-                //	continue;
+                if (poll_fds[i][j].revent.bs_len > pb->video.bs_buf_len) {
+                    log_error("%d_%d: bindfd(%p) bitstream buffer length is not enough! (%d_bytes vs %d_bytes)", i, j, poll_fds[i][j].bindfd, poll_fds[i][j].revent.bs_len, pb->video.bs_buf_len);
+                    continue;
+                }
 
                 rcv_nr++;
                 bs[i][j].bindfd = poll_fds[i][j].bindfd;
 
                 // * Set buffer point
-                //bs[i][j].bs.bs_buf = pb->video.bs_buf;
+                bs[i][j].bs.bs_buf = pb->video.bs_buf;
 
                 // * Set buffer length
-                //bs[i][j].bs.bs_buf_len = pb->video.bs_buf_len;
+                bs[i][j].bs.bs_buf_len = pb->video.bs_buf_len;
 
                 // * Turn receiving MV data off
                 bs[i][j].bs.mv_buf = NULL;
@@ -2688,10 +2002,8 @@ void *encode_thread(void *ptr)
 
                 if (pb->play == 0) {
                     first_play[i][j] = -1;
-					pb->video.wait_idr = 1;
 				}
 			}
-        }
 
         if (rcv_nr == 0)
             continue;
@@ -2702,15 +2014,6 @@ void *encode_thread(void *ptr)
         if ( (ret = gm_recv_multi_bitstreams(&bs[0][0], CAP_CH_NUM * RTSP_NUM_PER_CAP)) < 0 ) {
             // <= -1: fail, 0: success
             log_error("Failed to receive bitstream (gm_recv_multi_bitstreams).");
-/* debug */ for (i = 0; i < CAP_CH_NUM; i++) {
-        		for (j = 0;j < RTSP_NUM_PER_CAP;j++) {
-		            pb = &enc[i].priv_bs[j];
-            		if (video_slot[i][j] >= 0) {
-                		video_pool_release_slot(&pb->video,video_slot[i][j]);
-		                video_slot[i][j] = -1;
-            		}
-        		}
-    		}
             continue;
         }
 
@@ -2723,25 +2026,10 @@ void *encode_thread(void *ptr)
                 pb = &enc[i].priv_bs[j];
                 avbs = &enc[i].bs[j];
 
-                //if ((bs[i][j].retval < 0) && bs[i][j].bindfd)
-                //    log_error("Failed to receive bitstream.");
+                if ((bs[i][j].retval < 0) && bs[i][j].bindfd)
+                    log_error("Failed to receive bitstream.");
 
-/* debug */		if (discard_frame[i][j]) {
-    				discard_frame[i][j] = 0;
-					pb->video.wait_idr = 1;
-    				first_play[i][j] = -1;
-    				continue;
-				}
-				if (video_slot[i][j] < 0) continue;
-				if (bs[i][j].retval != GM_SUCCESS) {
-    				if (bs[i][j].bindfd) {
-        				log_error("Failed receiving video bitstream retval=%d",bs[i][j].retval);
-    				}
-    				video_pool_release_slot(&pb->video,video_slot[i][j]);
-					video_slot[i][j] = -1;
-    				continue;
-				}
-                //else if (bs[i][j].retval == GM_SUCCESS) {
+                else if (bs[i][j].retval == GM_SUCCESS) {
                     if (bs[i][j].bs.keyframe == 1)
                         VideoRecorder.waiting_for_keyframe = 0;
 
