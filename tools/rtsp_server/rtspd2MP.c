@@ -1313,7 +1313,7 @@ static int frm_cb(int type, int qno, gm_ss_entity *entity)
     	}
 	}
 	return 0;
-*/
+
 	pb = &enc[ch_num].priv_bs[sub_num];
 	if (pb->video.qno == qno) {
     	if (video_pool_release_ptr(&pb->video,entity->data)) {
@@ -1328,7 +1328,31 @@ static int frm_cb(int type, int qno, gm_ss_entity *entity)
 		return 0;        
 	}
 	return 0;
-}
+*/
+	for (ch_num = 0;ch_num < CAP_CH_NUM;ch_num++) {
+        for (sub_num = 0; sub_num < RTSP_NUM_PER_CAP; sub_num++) {
+            pb = &enc[ch_num].priv_bs[sub_num];
+            /* Video frame callback */
+            if (pb->video.qno == qno) {
+                if (video_pool_release_ptr(&pb->video,entity->data)) {
+					return 0;
+				}
+            }
+
+            /* Audio callback */
+            if (pb->audio.qno == qno && pb->audio.offs == (uintptr_t)entity->data && pb->audio.len == entity->size) {
+                pthread_mutex_lock(&pb->audio.priv_vbs_mutex);
+                pb->audio.offs = 0;
+                pb->audio.len = 0;
+                pthread_mutex_unlock(&pb->audio.priv_vbs_mutex);
+                return 0;
+            }
+        }
+    }
+    log_error("frm_cb: unknown buffer type=%d qno=%d data=%p size=%d",type,qno,entity->data,entity->size);
+    return 0;
+
+*/}
 
 priv_avbs_t *find_file_sr(char *name, int srno)
 {
@@ -1561,8 +1585,7 @@ static void *audio_thread(void *arg)
     char *bitstream_data;
 
 	bitstream_data = (char *) malloc(AU_BITSTREAM_LEN);
-    if (!bitstream_data)
-        return NULL;
+    if (!bitstream_data) return NULL;
 		//goto thread_exit;
 
 	audio_grab_object = gm_new_obj(GM_AUDIO_GRAB_OBJECT);
@@ -1583,15 +1606,9 @@ static void *audio_thread(void *arg)
 	audio_groupfd = gm_new_groupfd();
 	
     audio_bindfd = gm_bind(audio_groupfd, audio_grab_object, audio_encode_object);
-    if (!audio_bindfd) {
-        log_error("gm_bind failed");
-        goto thread_exit;
-    }
+    if (!audio_bindfd) { log_error("gm_bind failed"); goto thread_exit; }
     
-    if (gm_apply(audio_groupfd) < 0) {
-        log_error("audio_thread: gm_apply failed");
-        goto thread_exit;
-    }
+    if (gm_apply(audio_groupfd) < 0) { log_error("audio_thread: gm_apply failed"); goto thread_exit;}
 
 	memset(poll_fd, 0, sizeof(poll_fd));
     poll_fd[0].bindfd = audio_bindfd;
@@ -1615,8 +1632,7 @@ static void *audio_thread(void *arg)
         if (multi_bs[0].retval == GM_SUCCESS){
             if (!audio_sdp_ready && multi_bs[0].bs.bs_len > 0) {
                 stream_sdp_parameter_encoder("G711A", (unsigned char *) multi_bs[0].bs.bs_buf, multi_bs[0].bs.bs_len, audio_sdpstr, SDPSTR_MAX);
-				if (!audio_sdp_ready)
-                {
+				if (!audio_sdp_ready){
                     int ch_num, sub_num;
                     for (ch_num = 0; ch_num < CAP_CH_NUM; ch_num++) {
                         for (sub_num = 0; sub_num < RTSP_NUM_PER_CAP; sub_num++) {
@@ -1624,17 +1640,15 @@ static void *audio_thread(void *arg)
                             if (enc[ch_num].bs[sub_num].audio.enabled == DVR_ENC_EBST_ENABLE) {
                                 strncpy(pb->audio.sdpstr, audio_sdpstr, SDPSTR_MAX - 1);
                                 pb->audio.sdpstr[SDPSTR_MAX - 1] = '\0';                        
-                                if (pb->sr >= 0 && pb->audio.sdpstr[0] != '\0') {                                    
-                                    if (ret == 0)
-                                        audio_sdp_ready = 1;
-									ret = stream_updatesdp(pb->sr, pb->video.sdpstr, pb->audio.sdpstr);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
+                                if (pb->sr >= 0 && pb->audio.sdpstr[0] != '\0') {
+                                    if (ret == 0) audio_sdp_ready = 1; ret = stream_updatesdp(pb->sr, pb->video.sdpstr, pb->audio.sdpstr);
+								}
+							}
+						}
+					}
+				}
+			}
+		
             if (VideoRecorder.recording == 1 && VideoRecorder.fh_aac != NULL) {
                 fwrite(multi_bs[0].bs.bs_buf, 1, multi_bs[0].bs.bs_len, VideoRecorder.fh_aac);
                 fflush(VideoRecorder.fh_aac);
@@ -1650,16 +1664,29 @@ static void *audio_thread(void *arg)
                 for (sub_num = 0; sub_num < RTSP_NUM_PER_CAP; sub_num++) {
 					priv_avbs_t *pb = &enc[ch_num].priv_bs[sub_num];
 					if (enc[ch_num].bs[sub_num].audio.enabled == DVR_ENC_EBST_ENABLE && pb->audio.qno >= 0 && pb->sr >= 0 && pb->audio.sdpstr[0] != '\0') {
+						pthread_mutex_lock(&stream_queue_mutex);
 						if (pb->audio.offs || pb->audio.len)
-							continue;
-                        pthread_mutex_lock(&stream_queue_mutex);
-                        ret = stream_media_enqueue(GM_SS_TYPE_G711A, pb->audio.qno, &entity);
-                        pthread_mutex_unlock(&stream_queue_mutex);
-                        }
+							pthread_mutex_unlock(&stream_queue_mutex);
+							continue;						
+						pb->audio.offs = (uintptr_t)entity.data;
+						pb->audio.len = entity.size;
+						pthread_mutex_unlock(&pb->audio.priv_vbs_mutex);
+
+						pthread_mutex_lock(&stream_queue_mutex);
+						ret = stream_media_enqueue(GM_SS_TYPE_G711A, pb->audio.qno, &entity);
+						pthread_mutex_unlock(&pb->audio.priv_vbs_mutex);
+						if (ret < 0) {
+    						pthread_mutex_lock(&pb->audio.priv_vbs_mutex);
+    						pb->audio.offs = 0;
+    						pb->audio.len = 0;
+    						pthread_mutex_unlock(&pb->audio.priv_vbs_mutex);
+    						log_error("G711A enqueue failed ret=%d",ret);
+						}
                     }
                 }
             }
-        }
+		}
+	}
 	
 thread_exit:
     if (bitstream_data)
@@ -2203,7 +2230,6 @@ void gm_graph_release(void)
     }
 
     gm_delete_groupfd(enc_groupfd);
-	gm_delete_groupfd(audio_groupfd);
     gm_release();
 }
 
@@ -2552,26 +2578,27 @@ void *encode_thread(void *ptr)
     				pb->video.dropped_frames++;
 				}
 // end of debug
-                if (poll_fds[i][j].revent.bs_len > pb->video.bs_buf_len)
-                	continue;
+                //if (poll_fds[i][j].revent.bs_len > pb->video.bs_buf_len)
+                //	continue;
 
                 rcv_nr++;
                 bs[i][j].bindfd = poll_fds[i][j].bindfd;
 
                 // * Set buffer point
-                bs[i][j].bs.bs_buf = pb->video.bs_buf;
+                //bs[i][j].bs.bs_buf = pb->video.bs_buf;
 
                 // * Set buffer length
-                bs[i][j].bs.bs_buf_len = pb->video.bs_buf_len;
+                //bs[i][j].bs.bs_buf_len = pb->video.bs_buf_len;
 
                 // * Turn receiving MV data off
                 bs[i][j].bs.mv_buf = NULL;
                 bs[i][j].bs.mv_buf_len = 0;
 
-                if (pb->play == 0)
+                if (pb->play == 0) {
                     first_play[i][j] = -1;
 					pb->video.wait_idr = 1;
-            }
+				}
+			}
         }
 
         if (rcv_nr == 0)
@@ -2912,6 +2939,7 @@ int is_bs_all_disable(void)
 static void rtspd_stop(void)
 {
     rtspd_sysinit = 0;
+	stream_server_stop();
 	usleep(1500000);
 	pthread_mutex_destroy(&stream_queue_mutex);
 	
