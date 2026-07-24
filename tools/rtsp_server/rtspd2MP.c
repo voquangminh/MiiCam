@@ -63,6 +63,10 @@
 #define ERR_GOTO(x, y)           do { ret = x; goto y; } while(0)
 #define MUTEX_FAILED(x)          (x == ERR_MUTEX)
 #define VIDEO_FRAME_NUMBER       VQ_LEN+1
+#define VIDEO_BUFFER_COUNT 		 8
+#define VIDEO_POOL_SLOT_COUNT    8
+#define VIDEO_POOL_SLOT_SIZE     (512 * 1024)
+#define VIDEO_DROP_BUFFER_SIZE   (1024 * 1024)
 
 #define NONE_BS_EVENT            0
 #define START_BS_EVENT           1
@@ -114,6 +118,12 @@
 struct mdt_alg_t mdt_alg = {mb_cell_en: NULL};
 struct mdt_result_t mdt_result[ENC_TRACK_NUM];
 
+typedef struct st_video_pool_slot {
+    char *data;
+    unsigned int capacity;
+    int in_use;
+} video_slot_t;
+
 typedef struct {
     void *obj;
     gm_cap_attr_t cap_attr;
@@ -164,6 +174,13 @@ typedef struct st_priv_vbs {
     char *bs_buf;
     unsigned int bs_buf_len;
     pthread_mutex_t priv_vbs_mutex;
+// add buffer pool
+	video_pool_slot_t pool[VIDEO_POOL_SLOT_COUNT];
+	char *drop_buf;
+    unsigned int drop_buf_len;
+	int wait_idr;
+    unsigned int dropped_frames;
+    unsigned int enqueue_errors;
 } priv_vbs_t;
 
 typedef struct st_bs {
@@ -1275,8 +1292,9 @@ static int frm_cb(int type, int qno, gm_ss_entity *entity)
 {
     priv_avbs_t *pb;
     int ch_num, sub_num;
-
-    for (ch_num = 0; ch_num < CAP_CH_NUM; ch_num++) {
+	
+	if (entity == NULL) return -1;
+/*    for (ch_num = 0; ch_num < CAP_CH_NUM; ch_num++) {
         for (sub_num = 0; sub_num < RTSP_NUM_PER_CAP; sub_num++) {
             pb = &enc[ch_num].priv_bs[sub_num];
             if (pb->video.offs == (uintptr_t)(entity->data) && pb->video.len == entity->size && pb->video.qno==qno){
@@ -1293,7 +1311,22 @@ static int frm_cb(int type, int qno, gm_ss_entity *entity)
 			}
     	}
 	}
-    return 0;
+	return 0;
+*/
+	pb = &enc[ch_num].priv_bs[sub_num];
+	if (pb->video.qno == qno) {
+    	if (video_pool_release_ptr(&pb->video,entity->data)) {
+        	return 0;
+    	}
+	}
+	if (pb->audio.qno == qno && pb->audio.offs == (uintptr_t)entity->data && pb->audio.len == entity->size) {
+		pthread_mutex_lock(&pb->audio.priv_vbs_mutex);
+		pb->audio.offs = 0;
+		pb->audio.len = 0;
+		pthread_mutex_unlock(&pb->audio.priv_vbs_mutex);
+		return 0;        
+	}
+	return 0;
 }
 
 priv_avbs_t *find_file_sr(char *name, int srno)
@@ -2211,6 +2244,187 @@ static int h264_has_nal_type(
     return 0;
 }
 
+// add hàm buffer pool
+static int video_pool_init(priv_vbs_t *video)
+{
+    int i;
+
+    if (video == NULL)
+        return -1;
+
+    for (i = 0; i < VIDEO_POOL_SLOT_COUNT; i++) {
+        video->pool[i].data = NULL;
+        video->pool[i].capacity = 0;
+        video->pool[i].in_use = 0;
+    }
+
+    video->drop_buf = NULL;
+    video->drop_buf_len = 0;
+    video->wait_idr = 1;
+    video->dropped_frames = 0;
+    video->enqueue_errors = 0;
+
+    for (i = 0; i < VIDEO_POOL_SLOT_COUNT; i++) {
+        video->pool[i].data =
+            (char *)malloc(VIDEO_POOL_SLOT_SIZE);
+
+        if (video->pool[i].data == NULL) {
+            log_error(
+                "video_pool_init: failed allocating slot %d",
+                i);
+
+            goto init_failed;
+        }
+
+        video->pool[i].capacity = VIDEO_POOL_SLOT_SIZE;
+        video->pool[i].in_use = 0;
+    }
+
+    video->drop_buf =
+        (char *)malloc(VIDEO_DROP_BUFFER_SIZE);
+
+    if (video->drop_buf == NULL) {
+        log_error(
+            "video_pool_init: failed allocating drop buffer");
+
+        goto init_failed;
+    }
+
+    video->drop_buf_len = VIDEO_DROP_BUFFER_SIZE;
+
+    log_info(
+        "Video pool initialized slots=%d slot_size=%u drop_size=%u",
+        VIDEO_POOL_SLOT_COUNT,
+        (unsigned int)VIDEO_POOL_SLOT_SIZE,
+        (unsigned int)VIDEO_DROP_BUFFER_SIZE);
+
+    return 0;
+
+init_failed:
+
+    for (i = 0; i < VIDEO_POOL_SLOT_COUNT; i++) {
+        if (video->pool[i].data != NULL) {
+            free(video->pool[i].data);
+            video->pool[i].data = NULL;
+        }
+
+        video->pool[i].capacity = 0;
+        video->pool[i].in_use = 0;
+    }
+
+    if (video->drop_buf != NULL) {
+        free(video->drop_buf);
+        video->drop_buf = NULL;
+    }
+
+    video->drop_buf_len = 0;
+
+    return -1;
+}
+
+// debug add continue buffer pool
+static int video_pool_acquire(priv_vbs_t *video)
+{
+    int i;
+    int slot = -1;
+
+    if (video == NULL)
+        return -1;
+
+    pthread_mutex_lock(&video->priv_vbs_mutex);
+
+    for (i = 0; i < VIDEO_POOL_SLOT_COUNT; i++) {
+        if (video->pool[i].data != NULL &&
+            video->pool[i].in_use == 0) {
+
+            video->pool[i].in_use = 1;
+            slot = i;
+            break;
+        }
+    }
+
+    pthread_mutex_unlock(&video->priv_vbs_mutex);
+
+    return slot;
+}
+
+// buffer pool continue
+static void video_pool_release_slot(
+    priv_vbs_t *video,
+    int slot)
+{
+    if (video == NULL)
+        return;
+
+    if (slot < 0 || slot >= VIDEO_POOL_SLOT_COUNT)
+        return;
+
+    pthread_mutex_lock(&video->priv_vbs_mutex);
+
+    video->pool[slot].in_use = 0;
+
+    pthread_mutex_unlock(&video->priv_vbs_mutex);
+}
+
+// buffer pool conntinue too
+static int video_pool_release_ptr(
+    priv_vbs_t *video,
+    const char *data)
+{
+    int i;
+    int found = 0;
+
+    if (video == NULL || data == NULL)
+        return 0;
+
+    pthread_mutex_lock(&video->priv_vbs_mutex);
+
+    for (i = 0; i < VIDEO_POOL_SLOT_COUNT; i++) {
+        if (video->pool[i].data == data) {
+            video->pool[i].in_use = 0;
+            found = 1;
+            break;
+        }
+    }
+
+    pthread_mutex_unlock(&video->priv_vbs_mutex);
+
+    return found;
+}
+
+// buffer pool release
+static void video_pool_destroy(priv_vbs_t *video)
+{
+    int i;
+
+    if (video == NULL)
+        return;
+
+    pthread_mutex_lock(&video->priv_vbs_mutex);
+
+    for (i = 0; i < VIDEO_POOL_SLOT_COUNT; i++) {
+        if (video->pool[i].data != NULL) {
+            free(video->pool[i].data);
+            video->pool[i].data = NULL;
+        }
+
+        video->pool[i].capacity = 0;
+        video->pool[i].in_use = 0;
+    }
+
+    if (video->drop_buf != NULL) {
+        free(video->drop_buf);
+        video->drop_buf = NULL;
+    }
+
+    video->drop_buf_len = 0;
+
+    pthread_mutex_unlock(&video->priv_vbs_mutex);
+}
+
+
+int video_slot[CAP_CH_NUM][RTSP_NUM_PER_CAP];
+int discard_frame[CAP_CH_NUM][RTSP_NUM_PER_CAP];
 void *encode_thread(void *ptr)
 {
     int i, j, ch = 0, ret, cap_ch, cap_path, rec_track, rcv_nr, w, h;
@@ -2219,6 +2433,8 @@ void *encode_thread(void *ptr)
 	for (i = 0; i < CAP_CH_NUM; i++) {
     	for (j = 0; j < RTSP_NUM_PER_CAP; j++) {
         	first_play[i][j] = -1;
+			video_slot[i][j] = -1;
+        	discard_frame[i][j] = 0;
     	}
 	}
     priv_avbs_t *pb;
@@ -2245,9 +2461,12 @@ void *encode_thread(void *ptr)
                     get_enc_res(&param->enc[rec_track], NULL, &w, &h);
 
                     pb = &enc[cap_ch].priv_bs[ch];
-                    pb->video.bs_buf_len = w * h * 3 / 2;
-                    pb->video.bs_buf     = malloc(pb->video.bs_buf_len);
-                    pb->video.cap_ch     = cap_ch;
+                    //pb->video.bs_buf_len = w * h * 3 / 2;                    
+					//pb->video.bs_buf     = malloc(pb->video.bs_buf_len);
+                    if (video_pool_init(&pb->video) < 0) {
+	    				log_fatal("Failed initializing video buffer pool cap=%d path=%d track=%d",cap_ch,cap_path,rec_track);
+					}
+					pb->video.cap_ch     = cap_ch;
                     pb->video.cap_path   = cap_path;
                     pb->video.rec_track  = rec_track;
                     /* initialize audio queue number and sdp */                    
@@ -2305,12 +2524,35 @@ void *encode_thread(void *ptr)
             for (j = 0; j < RTSP_NUM_PER_CAP; j++) {
                 pb = &enc[i].priv_bs[j];
 
-                if (pb->video.offs || pb->video.len)
-					continue;
+                //if (pb->video.offs || pb->video.len)
+				//	continue;
 
-                if (poll_fds[i][j].revent.event != GM_POLL_READ)
+				if (poll_fds[i][j].revent.event != GM_POLL_READ)
                     continue;
-
+				
+/* debug */		video_slot[i][j] = -1;
+				discard_frame[i][j] = 0;
+				video_slot[i][j] = video_pool_acquire(&pb->video);
+				if (video_slot[i][j] >= 0 && poll_fds[i][j].revent.bs_len <= pb->video.pool[video_slot[i][j]].capacity) {
+    				bs[i][j].bs.bs_buf = pb->video.pool[video_slot[i][j]].data;
+					bs[i][j].bs.bs_buf_len = pb->video.pool[video_slot[i][j]].capacity;
+				} else {
+					if (video_slot[i][j] >= 0) {
+        				video_pool_release_slot(&pb->video,video_slot[i][j]);
+				        video_slot[i][j] = -1;
+    				}
+					if (pb->video.drop_buf == NULL || poll_fds[i][j].revent.bs_len > pb->video.drop_buf_len) {
+        				log_error("Video frame too large len=%u pool=%u drop=%u",poll_fds[i][j].revent.bs_len,(unsigned int)VIDEO_POOL_SLOT_SIZE,pb->video.drop_buf_len);
+						continue;
+					}
+					bs[i][j].bs.bs_buf = pb->video.drop_buf;
+	    			bs[i][j].bs.bs_buf_len = pb->video.drop_buf_len;
+    				discard_frame[i][j] = 1;
+					pb->video.wait_idr = 1;
+    				first_play[i][j] = -1;
+    				pb->video.dropped_frames++;
+				}
+// end of debug
                 if (poll_fds[i][j].revent.bs_len > pb->video.bs_buf_len)
                 	continue;
 
@@ -2324,11 +2566,12 @@ void *encode_thread(void *ptr)
                 bs[i][j].bs.bs_buf_len = pb->video.bs_buf_len;
 
                 // * Turn receiving MV data off
-                bs[i][j].bs.mv_buf = 0;
+                bs[i][j].bs.mv_buf = NULL;
                 bs[i][j].bs.mv_buf_len = 0;
 
                 if (pb->play == 0)
                     first_play[i][j] = -1;
+					pb->video.wait_idr = 1;
             }
         }
 
@@ -2341,6 +2584,15 @@ void *encode_thread(void *ptr)
         if ( (ret = gm_recv_multi_bitstreams(&bs[0][0], CAP_CH_NUM * RTSP_NUM_PER_CAP)) < 0 ) {
             // <= -1: fail, 0: success
             log_error("Failed to receive bitstream (gm_recv_multi_bitstreams).");
+/* debug */ for (i = 0; i < CAP_CH_NUM; i++) {
+        		for (j = 0;j < RTSP_NUM_PER_CAP;j++) {
+		            pb = &enc[i].priv_bs[j];
+            		if (video_slot[i][j] >= 0) {
+                		video_pool_release_slot(&pb->video,video_slot[i][j]);
+		                video_slot[i][j] = -1;
+            		}
+        		}
+    		}
             continue;
         }
 
@@ -2353,10 +2605,25 @@ void *encode_thread(void *ptr)
                 pb = &enc[i].priv_bs[j];
                 avbs = &enc[i].bs[j];
 
-                if ((bs[i][j].retval < 0) && bs[i][j].bindfd)
-                    log_error("Failed to receive bitstream.");
+                //if ((bs[i][j].retval < 0) && bs[i][j].bindfd)
+                //    log_error("Failed to receive bitstream.");
 
-                else if (bs[i][j].retval == GM_SUCCESS) {
+/* debug */		if (discard_frame[i][j]) {
+    				discard_frame[i][j] = 0;
+					pb->video.wait_idr = 1;
+    				first_play[i][j] = -1;
+    				continue;
+				}
+				if (video_slot[i][j] < 0) continue;
+				if (bs[i][j].retval != GM_SUCCESS) {
+    				if (bs[i][j].bindfd) {
+        				log_error("Failed receiving video bitstream retval=%d",bs[i][j].retval);
+    				}
+    				video_pool_release_slot(&pb->video,video_slot[i][j]);
+					video_slot[i][j] = -1;
+    				continue;
+				}
+                //else if (bs[i][j].retval == GM_SUCCESS) {
                     if (bs[i][j].bs.keyframe == 1)
                         VideoRecorder.waiting_for_keyframe = 0;
 
@@ -2368,22 +2635,37 @@ void *encode_thread(void *ptr)
 					// debug
 					if (pb->play == 0) {
     					first_play[i][j] = -1;
+						pb->video.wait_idr = 1;
+						video_pool_release_slot(&pb->video,video_slot[i][j]);
+					    video_slot[i][j] = -1;
     					continue;
 					}
 					if (avbs->video.enc_type != ENC_TYPE_MJPEG && first_play[i][j] != 1) {
 	    				if (!h264_has_nal_type((unsigned char *)bs[i][j].bs.bs_buf,bs[i][j].bs.bs_len,5)) {
-        					continue;
-    					}
-    					first_play[i][j] = 1;
-    					log_info("First IDR accepted ch=%d sub=%d", i, j);
-					}
+							int has_sps, has_pps, has_idr;
+							has_sps = h264_has_nal_type((unsigned char *)bs[i][j].bs.bs_buf,bs[i][j].bs.bs_len,7);						
+						    has_pps = h264_has_nal_type((unsigned char *)bs[i][j].bs.bs_buf,bs[i][j].bs.bs_len,8);
+						    has_idr = h264_has_nal_type((unsigned char *)bs[i][j].bs.bs_buf,bs[i][j].bs.bs_len,5);
+						    if (!has_idr) {
+								video_pool_release_slot(&pb->video,video_slot[i][j]);							
+								video_slot[i][j] = -1;
+        						continue;
+    						}
+    						first_play[i][j] = 1;
+							pb->video.wait_idr = 0;
+							log_info("First IDR accepted ch=%d sub=%d SPS=%d PPS=%d IDR=%d len=%d ts=%u",
+						        i,j,has_sps,has_pps,has_idr,bs[i][j].bs.bs_len,bs[i][j].bs.timestamp);
+						} else if (avbs->video.enc_type == ENC_TYPE_MJPEG) {
+						    first_play[i][j] = 1;
+						    pb->video.wait_idr = 0;
+						}
 
                     /*if (avbs->video.enc_type != ENC_TYPE_MJPEG) {
                         if ((pb->play == 1) && (bs[i][j].bs.keyframe == 1))
                             first_play[i][j] = 1;
                     } else {
                         first_play[i][j] = 1;
-						} */	
+						} 	
                     if (first_play[i][j] == 1) {
                         pthread_mutex_lock(&pb->video.priv_vbs_mutex);
                         pb->video.offs  = (uintptr_t)bs[i][j].bs.bs_buf;
@@ -2397,13 +2679,22 @@ void *encode_thread(void *ptr)
                             pb->video.len  = 0;
                         }
                     }
-
-                    print_enc_average(i, j, bs[i][j].bs.bs_len, &prev);
+					print_enc_average(i, j, bs[i][j].bs.bs_len, &prev); */
+					ret = write_rtp_frame_ext(i,j,bs[i][j].bs.bs_buf,bs[i][j].bs.bs_len,bs[i][j].bs.timestamp);
+					if (ret != 0) {					
+						video_pool_release_slot(&pb->video,video_slot[i][j]);
+					    video_slot[i][j] = -1;				
+					    pb->video.enqueue_errors++;					
+						pb->video.wait_idr = 1;
+					    first_play[i][j] = -1;
+					} else {					
+						video_slot[i][j] = -1;
+					}
+					print_enc_average(i,j,bs[i][j].bs.bs_len,&prev);
                 }
             }
         }
     }
-
     pthread_exit(NULL);
     encode_thread_id = (pthread_t)NULL;
     return NULL;
@@ -2472,11 +2763,14 @@ void update_video_sdp(int cap_ch, int cap_path, int rec_track)
                 switch (cliArgs.encoderType) {
                     case 0:
                         stream_sdp_parameter_encoder("H264", (unsigned char *) bs.bs.bs_buf, bs.bs.bs_len, pb->video.sdpstr, SDPSTR_MAX);
+						break;
                     case 1:
                         stream_sdp_parameter_encoder("H264", (unsigned char *) bs.bs.bs_buf, bs.bs.bs_len, pb->video.sdpstr, SDPSTR_MAX);
-                    case 2:
-                        stream_sdp_parameter_encoder("H264", (unsigned char *) bs.bs.bs_buf, bs.bs.bs_len, pb->video.sdpstr, SDPSTR_MAX);
-                    }
+                    	break;
+					case 2:
+                    	stream_sdp_parameter_encoder("H264", (unsigned char *) bs.bs.bs_buf, bs.bs.bs_len, pb->video.sdpstr, SDPSTR_MAX);
+                		break;    
+				}
                 break;
             }
             else {
