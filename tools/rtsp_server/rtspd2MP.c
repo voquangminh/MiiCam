@@ -2173,6 +2173,43 @@ void gm_graph_release(void)
     gm_release();
 }
 
+// debug thêm hàm kiểm tra Annex-B
+static int h264_has_nal_type(
+    const unsigned char *data,
+    int len,
+    int wanted_type)
+{
+    int i;
+
+    if (!data || len < 5)
+        return 0;
+
+    for (i = 0; i + 4 < len; i++) {
+        int nal_pos = -1;
+
+        if (i + 4 < len &&
+            data[i] == 0x00 &&
+            data[i + 1] == 0x00 &&
+            data[i + 2] == 0x00 &&
+            data[i + 3] == 0x01) {
+            nal_pos = i + 4;
+        } else if (i + 3 < len &&
+                   data[i] == 0x00 &&
+                   data[i + 1] == 0x00 &&
+                   data[i + 2] == 0x01) {
+            nal_pos = i + 3;
+        }
+
+        if (nal_pos >= 0 && nal_pos < len) {
+            int nal_type = data[nal_pos] & 0x1f;
+
+            if (nal_type == wanted_type)
+                return 1;
+        }
+    }
+
+    return 0;
+}
 
 void *encode_thread(void *ptr)
 {
