@@ -1279,9 +1279,6 @@ static void env_release_resources(void)
     int ret, ch_num;
     av_t *e;
 
-    if ((ret = stream_server_stop()))
-        log_error("stream_server_stop() error %d", ret);
-
     for (ch_num = 0; ch_num < CAP_CH_NUM; ch_num++) {
         e = &enc[ch_num];
         pthread_mutex_destroy(&e->ubs_mutex);
@@ -2724,8 +2721,8 @@ void *encode_thread(void *ptr)
                 }
             }
         }
-    }
-    pthread_exit(NULL);
+    
+    //pthread_exit(NULL);
     encode_thread_id = (pthread_t)NULL;
     return NULL;
 }
