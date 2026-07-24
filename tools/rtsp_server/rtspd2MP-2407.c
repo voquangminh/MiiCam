@@ -1640,7 +1640,8 @@ static void *audio_thread(void *arg)
                                 strncpy(pb->audio.sdpstr, audio_sdpstr, SDPSTR_MAX - 1);
                                 pb->audio.sdpstr[SDPSTR_MAX - 1] = '\0';                        
                                 if (pb->sr >= 0 && pb->audio.sdpstr[0] != '\0') {
-                                    if (ret == 0) audio_sdp_ready = 1; ret = stream_updatesdp(pb->sr, pb->video.sdpstr, pb->audio.sdpstr);
+                                    ret = stream_updatesdp(pb->sr, pb->video.sdpstr, pb->audio.sdpstr);
+									if (ret == 0) audio_sdp_ready = 1; 								
 								}
 							}
 						}
@@ -1665,9 +1666,9 @@ static void *audio_thread(void *arg)
 					if (enc[ch_num].bs[sub_num].audio.enabled != DVR_ENC_EBST_ENABLE || pb->audio.qno < 0 || pb->sr < 0 || pb->play == 0) {
                 		continue;
 					}
-						pthread_mutex_lock(&stream_queue_mutex);
+						pthread_mutex_lock(&pb->audio.priv_vbs_mutex);
 						if (pb->audio.offs || pb->audio.len) {
-							pthread_mutex_unlock(&stream_queue_mutex);
+							pthread_mutex_unlock(&pb->audio.priv_vbs_mutex);
 							continue;
 						}
 						pb->audio.offs = (uintptr_t)entity.data;
@@ -1676,7 +1677,7 @@ static void *audio_thread(void *arg)
 
 						pthread_mutex_lock(&stream_queue_mutex);
 						ret = stream_media_enqueue(GM_SS_TYPE_G711A, pb->audio.qno, &entity);
-						pthread_mutex_unlock(&pb->audio.priv_vbs_mutex);
+						pthread_mutex_unlock(&stream_queue_mutex);
 						if (ret < 0) {
     						pthread_mutex_lock(&pb->audio.priv_vbs_mutex);
     						pb->audio.offs = 0;
