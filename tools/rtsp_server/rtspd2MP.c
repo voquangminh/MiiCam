@@ -63,7 +63,7 @@
 #define ERR_GOTO(x, y)           do { ret = x; goto y; } while(0)
 #define MUTEX_FAILED(x)          (x == ERR_MUTEX)
 #define VIDEO_FRAME_NUMBER       VQ_LEN+1
-#define VIDEO_BUFFER_COUNT 		 8
+
 #define VIDEO_POOL_SLOT_COUNT    8
 #define VIDEO_POOL_SLOT_SIZE     (512 * 1024)
 #define VIDEO_DROP_BUFFER_SIZE   (1024 * 1024)
@@ -122,7 +122,7 @@ typedef struct st_video_pool_slot {
     char *data;
     unsigned int capacity;
     int in_use;
-} video_slot_t;
+} video_pool_slot_t;
 
 typedef struct {
     void *obj;
@@ -182,6 +182,13 @@ typedef struct st_priv_vbs {
     unsigned int dropped_frames;
     unsigned int enqueue_errors;
 } priv_vbs_t;
+
+static int video_pool_init(priv_vbs_t *video);
+static int video_pool_acquire(priv_vbs_t *video);
+
+static void video_pool_release_slot(priv_vbs_t *video,int slot);
+static int video_pool_release_ptr(priv_vbs_t *video,const char *data);
+static void video_pool_destroy(priv_vbs_t *video);
 
 typedef struct st_bs {
     int event;                    // * Config change please set 1 for enqueue_thread to config this
