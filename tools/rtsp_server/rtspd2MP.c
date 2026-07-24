@@ -1276,7 +1276,7 @@ static void print_enc_average(int ch_num, int sub_num, int bs_len, struct timeva
 static unsigned int poll_wait_time = 0;
 static void env_release_resources(void)
 {
-    int ret, ch_num;
+    int ch_num;
     av_t *e;
 
     for (ch_num = 0; ch_num < CAP_CH_NUM; ch_num++) {
@@ -1602,12 +1602,11 @@ static void *audio_thread(void *arg)
 	audio_groupfd = gm_new_groupfd();
 	
     audio_bindfd = gm_bind(audio_groupfd, audio_grab_object, audio_encode_object);
-    if (!audio_bindfd) { 
-		log_error("gm_bind failed"); 
-		goto thread_exit; 
-	}
     
-    if (gm_apply(audio_groupfd) < 0) { log_error("audio_thread: gm_apply failed"); goto thread_exit;}
+    if (gm_apply(audio_groupfd) < 0) { 
+		log_error("audio_thread: gm_apply failed"); 
+		goto thread_exit;
+	}
 
 	memset(poll_fd, 0, sizeof(poll_fd));
     poll_fd[0].bindfd = audio_bindfd;
@@ -1692,7 +1691,7 @@ static void *audio_thread(void *arg)
 	}
 
 thread_exit:
-    if (bitstream_data)
+	if (bitstream_data)
         free(bitstream_data);
     if (audio_bindfd)
         gm_unbind(audio_bindfd);
