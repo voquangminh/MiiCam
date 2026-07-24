@@ -815,12 +815,6 @@ static unsigned int get_tick_gm(unsigned int tv_ms)
     return sys_tick;
 }
 
-// audio_rtp_tick
-static unsigned int get_autick_gm(unsigned int tv_ms)
-{
-    sys_tick = tv_ms*(RTP_HZ / 1000);
-    return sys_tick;
-}
 
 static int convert_gmss_media_type(int type)
 {
@@ -1382,6 +1376,7 @@ static int cmd_cb(char *name, int sno, int cmd, void *p)
                     ERR_GOTO(-1, cmd_cb_err);
                 }
                 if (pb->video.qno >= 0){
+					pb->video.wait_idr = 1;
                     pb->play = 1;
                 }
             }
@@ -1397,6 +1392,7 @@ static int cmd_cb(char *name, int sno, int cmd, void *p)
                 if ((pb = find_file_sr(name, sno)) == NULL){
                     ERR_GOTO(-1, cmd_cb_err);
                 }
+				pb->video.wait_idr = 1;
                 pb->play = 0;
             }
             ret = 0;
@@ -2194,10 +2190,8 @@ void gm_graph_release(void)
         int sub;
         for (sub = 0; sub < RTSP_NUM_PER_CAP; sub++) {
             priv_avbs_t *pb = &enc[cap_ch].priv_bs[sub];
-            if (pb->video.bs_buf) {
-                free(pb->video.bs_buf);
-                pb->video.bs_buf = NULL;
-            }
+            //if (pb->video.bs_buf) { free(pb->video.bs_buf); pb->video.bs_buf = NULL; }
+			video_pool_destroy(&pb->video);
         }
     }
 
@@ -2912,9 +2906,10 @@ int is_bs_all_disable(void)
 
 static void rtspd_stop(void)
 {
-    pthread_mutex_destroy(&stream_queue_mutex);
     rtspd_sysinit = 0;
-
+	usleep(1500000);
+	pthread_mutex_destroy(&stream_queue_mutex);
+	
     if (cliArgs.motion == 1)
         motion_detection_end();
 
