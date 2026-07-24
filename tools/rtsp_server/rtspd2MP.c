@@ -1605,7 +1605,10 @@ static void *audio_thread(void *arg)
 	audio_groupfd = gm_new_groupfd();
 	
     audio_bindfd = gm_bind(audio_groupfd, audio_grab_object, audio_encode_object);
-    if (!audio_bindfd) { log_error("gm_bind failed"); goto thread_exit; }
+    if (!audio_bindfd) { 
+		log_error("gm_bind failed"); 
+		goto thread_exit; 
+	}
     
     if (gm_apply(audio_groupfd) < 0) { log_error("audio_thread: gm_apply failed"); goto thread_exit;}
 
@@ -1690,7 +1693,7 @@ static void *audio_thread(void *arg)
             }
 		}
 	}
-	
+
 thread_exit:
     if (bitstream_data)
         free(bitstream_data);
