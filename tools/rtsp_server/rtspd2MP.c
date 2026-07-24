@@ -1574,139 +1574,226 @@ static void *playback_thread(void *arg)
 static void *audio_thread(void *arg)
 {
     int ret;
+    int ch_num;
+    int sub_num;
+    priv_avbs_t *pb;
+    gm_ss_entity entity;
+
     DECLARE_ATTR(audio_grab_attr, gm_audio_grab_attr_t);
     DECLARE_ATTR(audio_encode_attr, gm_audio_enc_attr_t);
+
     gm_pollfd_t poll_fd[1];
     gm_enc_multi_bitstream_t multi_bs[1];
     char *bitstream_data;
 
-	bitstream_data = (char *) malloc(AU_BITSTREAM_LEN);
-    if (!bitstream_data) return NULL;
-		//goto thread_exit;
+    bitstream_data = NULL;
 
-	audio_grab_object = gm_new_obj(GM_AUDIO_GRAB_OBJECT);
-	audio_encode_object = gm_new_obj(GM_AUDIO_ENCODER_OBJECT);
+    bitstream_data = (char *)malloc(AU_BITSTREAM_LEN);
+    if (bitstream_data == NULL)
+        goto thread_exit;
 
-    audio_grab_attr.vch = 0; 								/* default input vch 0 */
+    audio_grab_object = gm_new_obj(GM_AUDIO_GRAB_OBJECT);
+    audio_encode_object = gm_new_obj(GM_AUDIO_ENCODER_OBJECT);
+
+    if (audio_grab_object == NULL || audio_encode_object == NULL) {
+        log_error("audio_thread: gm_new_obj failed");
+        goto thread_exit;
+    }
+
+    audio_grab_attr.vch = 0;
     audio_grab_attr.sample_rate = 8000;
     audio_grab_attr.sample_size = 16;
     audio_grab_attr.channel_type = GM_MONO;
-	gm_set_attr(audio_grab_object, &audio_grab_attr);
 
-    audio_encode_attr.encode_type = GM_G711_ALAW;					/* default output vch 0(adda302) */
+    ret = gm_set_attr(audio_grab_object,&audio_grab_attr);
+
+    if (ret < 0) {
+        log_error("audio_thread: gm_set_attr grab failed ret=%d",ret);
+        goto thread_exit;
+    }
+
+    audio_encode_attr.encode_type = GM_G711_ALAW;
     audio_encode_attr.bitrate = 32000;
     audio_encode_attr.frame_samples = 320;
-	//audio_encode_attr.block_count = 1;
-    gm_set_attr(audio_encode_object, &audio_encode_attr);
-    
-	audio_groupfd = gm_new_groupfd();
-	
-    audio_bindfd = gm_bind(audio_groupfd, audio_grab_object, audio_encode_object);
-    
-    if (gm_apply(audio_groupfd) < 0){
-		log_error("audio_thread: gm_apply failed"); 
-		goto thread_exit;
-	}
-	
-	memset(poll_fd, 0, sizeof(poll_fd));
+
+    ret = gm_set_attr(audio_encode_object,&audio_encode_attr);
+
+    if (ret < 0) {
+        log_error("audio_thread: gm_set_attr encoder failed ret=%d",ret);
+        goto thread_exit;
+    }
+
+    audio_groupfd = gm_new_groupfd();
+
+    if (audio_groupfd == NULL) {
+        log_error("audio_thread: gm_new_groupfd failed");
+        goto thread_exit;
+    }
+
+    audio_bindfd = gm_bind(audio_groupfd,audio_grab_object,audio_encode_object);
+
+    if (audio_bindfd == NULL) {
+        log_error("audio_thread: gm_bind failed");
+        goto thread_exit;
+    }
+
+    ret = gm_apply(audio_groupfd);
+
+    if (ret < 0) {
+        log_error("audio_thread: gm_apply failed ret=%d",ret);
+        goto thread_exit;
+    }
+
+    memset(poll_fd, 0, sizeof(poll_fd));
+
     poll_fd[0].bindfd = audio_bindfd;
     poll_fd[0].event = GM_POLL_READ;
 
     while (rtspd_sysinit) {
-        ret = gm_poll(&poll_fd[0], 1, 1000);
+        ret = gm_poll(&poll_fd[0],1,1000);
+
         if (ret == GM_TIMEOUT)
             continue;
-    	
-        memset(multi_bs, 0, sizeof(multi_bs));
-        multi_bs[0].bindfd = audio_bindfd;
-        multi_bs[0].bs.bs_buf = bitstream_data;
-        multi_bs[0].bs.bs_buf_len = AU_BITSTREAM_LEN;
 
-        if ((ret = gm_recv_multi_bitstreams(multi_bs, 1)) < 0) {
-            log_error("audio_thread: gm_recv_multi_bitstreams failed %d", ret);
+        if (ret < 0) {
+            log_error("audio_thread: gm_poll failed ret=%d",ret);
             continue;
         }
 
-        if (multi_bs[0].retval == GM_SUCCESS){
-            if (!audio_sdp_ready && multi_bs[0].bs.bs_len > 0) {
-                stream_sdp_parameter_encoder("G711A", (unsigned char *) multi_bs[0].bs.bs_buf, multi_bs[0].bs.bs_len, audio_sdpstr, SDPSTR_MAX);
-				if (!audio_sdp_ready){
-                    int ch_num, sub_num;
-                    for (ch_num = 0; ch_num < CAP_CH_NUM; ch_num++) {
-                        for (sub_num = 0; sub_num < RTSP_NUM_PER_CAP; sub_num++) {
-                            priv_avbs_t *pb = &enc[ch_num].priv_bs[sub_num];
-                            if (enc[ch_num].bs[sub_num].audio.enabled == DVR_ENC_EBST_ENABLE) {
-                                strncpy(pb->audio.sdpstr, audio_sdpstr, SDPSTR_MAX - 1);
-                                pb->audio.sdpstr[SDPSTR_MAX - 1] = '\0';                        
-                                if (pb->sr >= 0 && pb->audio.sdpstr[0] != '\0') {
-                                    ret = stream_updatesdp(pb->sr, pb->video.sdpstr, pb->audio.sdpstr);
-									if (ret == 0) audio_sdp_ready = 1; 								
-								}
-							}
-						}
-					}
-				}
-			}
-		
-            if (VideoRecorder.recording == 1 && VideoRecorder.fh_aac != NULL) {
-                fwrite(multi_bs[0].bs.bs_buf, 1, multi_bs[0].bs.bs_len, VideoRecorder.fh_aac);
-                fflush(VideoRecorder.fh_aac);
-            }
-			
-            gm_ss_entity entity;
-            entity.data = multi_bs[0].bs.bs_buf;
-            entity.size = multi_bs[0].bs.bs_len;
-            entity.timestamp = get_tick_gm(multi_bs[0].bs.timestamp);
-            
-            int ch_num, sub_num;
-            for (ch_num = 0; ch_num < CAP_CH_NUM; ch_num++) {
-                for (sub_num = 0; sub_num < RTSP_NUM_PER_CAP; sub_num++) {
-					priv_avbs_t *pb = &enc[ch_num].priv_bs[sub_num];
-					if (enc[ch_num].bs[sub_num].audio.enabled != DVR_ENC_EBST_ENABLE || pb->audio.qno < 0 || pb->sr < 0 || pb->play == 0) {
-                		continue;
-					}
-						pthread_mutex_lock(&pb->audio.priv_vbs_mutex);
-						if (pb->audio.offs || pb->audio.len) {
-							pthread_mutex_unlock(&pb->audio.priv_vbs_mutex);
-							continue;
-						}
-						pb->audio.offs = (uintptr_t)entity.data;
-						pb->audio.len = entity.size;
-						pthread_mutex_unlock(&pb->audio.priv_vbs_mutex);
+        if (poll_fd[0].revent.event != GM_POLL_READ)
+            continue;
 
-						pthread_mutex_lock(&stream_queue_mutex);
-						ret = stream_media_enqueue(GM_SS_TYPE_G711A, pb->audio.qno, &entity);
-						pthread_mutex_unlock(&stream_queue_mutex);
-						if (ret < 0) {
-    						pthread_mutex_lock(&pb->audio.priv_vbs_mutex);
-    						pb->audio.offs = 0;
-    						pb->audio.len = 0;
-    						pthread_mutex_unlock(&pb->audio.priv_vbs_mutex);
-    						log_error("G711A enqueue failed ret=%d",ret);
-						}
+        memset(multi_bs, 0, sizeof(multi_bs));
+
+        multi_bs[0].bindfd = audio_bindfd;
+
+        multi_bs[0].bs.bs_buf = bitstream_data;
+
+        multi_bs[0].bs.bs_buf_len = AU_BITSTREAM_LEN;
+
+        ret = gm_recv_multi_bitstreams(multi_bs,1);
+
+        if (ret < 0) {
+            log_error("audio_thread: gm_recv_multi_bitstreams failed ret=%d",ret);
+            continue;
+        }
+
+        if (multi_bs[0].retval != GM_SUCCESS)
+            continue;
+
+        if (multi_bs[0].bs.bs_len <= 0)
+            continue;
+
+        if (!audio_sdp_ready) {
+            memset(audio_sdpstr,0,sizeof(audio_sdpstr));
+
+            ret = stream_sdp_parameter_encoder("G711A",(unsigned char *)multi_bs[0].bs.bs_buf,multi_bs[0].bs.bs_len,audio_sdpstr,SDPSTR_MAX);
+            log_info("G711A SDP ret=%d sdp='%s'",ret,audio_sdpstr);
+
+            if (ret >= 0 && audio_sdpstr[0] != '\0') {
+                for (ch_num = 0; ch_num < CAP_CH_NUM; ch_num++) {
+                    for (sub_num = 0; sub_num < RTSP_NUM_PER_CAP; sub_num++) {
+                        pb = &enc[ch_num].priv_bs[sub_num];
+                        if (enc[ch_num].bs[sub_num].audio.enabled != DVR_ENC_EBST_ENABLE) {
+                            continue;
+                        }
+
+                        strncpy(pb->audio.sdpstr,audio_sdpstr,SDPSTR_MAX - 1);
+
+                        pb->audio.sdpstr[SDPSTR_MAX - 1] = '\0';
+
+                        if (pb->sr < 0)
+                            continue;
+
+                        ret = stream_updatesdp(pb->sr,pb->video.sdpstr,pb->audio.sdpstr);
+
+                        if (ret == 0) {
+                            audio_sdp_ready = 1;
+                        } else {
+                            log_error("stream_updatesdp failed ret=%d",ret);
+                        }
                     }
                 }
             }
-		}
-	}
+        }
+
+        if (VideoRecorder.recording == 1 && VideoRecorder.fh_aac != NULL) {
+            fwrite(multi_bs[0].bs.bs_buf,1,multi_bs[0].bs.bs_len,VideoRecorder.fh_aac);
+            fflush(VideoRecorder.fh_aac);
+        }
+
+        entity.data = multi_bs[0].bs.bs_buf;
+        entity.size = multi_bs[0].bs.bs_len;
+        entity.timestamp = get_tick_gm(multi_bs[0].bs.timestamp);
+
+        for (ch_num = 0; ch_num < CAP_CH_NUM;ch_num++) {
+            for (sub_num = 0; sub_num < RTSP_NUM_PER_CAP; sub_num++) {
+                pb = &enc[ch_num].priv_bs[sub_num];
+                if (enc[ch_num].bs[sub_num].audio.enabled != DVR_ENC_EBST_ENABLE || pb->audio.qno < 0 || pb->sr < 0 || pb->play == 0) {
+                    continue;
+                }
+                pthread_mutex_lock(&pb->audio.priv_vbs_mutex);
+                if (pb->audio.offs != 0 || pb->audio.len != 0) {
+                    pthread_mutex_unlock(&pb->audio.priv_vbs_mutex);
+                    continue;
+                }
+
+                pb->audio.offs = (uintptr_t)entity.data;
+                pb->audio.len = entity.size;
+
+                pthread_mutex_unlock(&pb->audio.priv_vbs_mutex);
+
+                pthread_mutex_lock(&stream_queue_mutex);
+
+                ret = stream_media_enqueue(GM_SS_TYPE_G711A,pb->audio.qno,&entity);
+
+                pthread_mutex_unlock(&stream_queue_mutex);
+
+                if (ret < 0) {
+                    pthread_mutex_lock(&pb->audio.priv_vbs_mutex);
+                    pb->audio.offs = 0;
+                    pb->audio.len = 0;
+                    pthread_mutex_unlock(&pb->audio.priv_vbs_mutex);
+                    log_error("G711A enqueue failed ret=%d",ret);
+                }
+            }
+        }
+    }
 
 thread_exit:
-	if (bitstream_data)
-        free(bitstream_data);
-    if (audio_bindfd)
+
+    if (audio_bindfd != NULL) {
         gm_unbind(audio_bindfd);
-	if (audio_groupfd)
-		gm_apply(audio_groupfd);
-    if (audio_grab_object)
+        audio_bindfd = NULL;
+    }
+
+    if (audio_groupfd != NULL)
+        gm_apply(audio_groupfd);
+
+    if (audio_grab_object != NULL) {
         gm_delete_obj(audio_grab_object);
-    if (audio_encode_object)
+        audio_grab_object = NULL;
+    }
+
+    if (audio_encode_object != NULL) {
         gm_delete_obj(audio_encode_object);
-    if (audio_groupfd)
+        audio_encode_object = NULL;
+    }
+
+    if (audio_groupfd != NULL) {
         gm_delete_groupfd(audio_groupfd);
+        audio_groupfd = NULL;
+    }
 
-	return 0;
+    if (bitstream_data != NULL) {
+        free(bitstream_data);
+        bitstream_data = NULL;
+    }
+
+    audio_thread_id = (pthread_t)NULL;
+
+    return NULL;
 }
-
 
 static void *motion_thread(void *arg)
 {
