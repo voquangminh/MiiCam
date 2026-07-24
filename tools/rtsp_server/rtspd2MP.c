@@ -2179,6 +2179,11 @@ void *encode_thread(void *ptr)
     int i, j, ch = 0, ret, cap_ch, cap_path, rec_track, rcv_nr, w, h;
     int first_play[CAP_CH_NUM][RTSP_NUM_PER_CAP];
 	   // memset(first_play, 0, sizeof(first_play));
+	for (i = 0; i < CAP_CH_NUM; i++) {
+    	for (j = 0; j < RTSP_NUM_PER_CAP; j++) {
+        	first_play[i][j] = -1;
+    	}
+	}
     priv_avbs_t *pb;
     avbs_t *avbs;
     gm_enc_multi_bitstream_t bs[CAP_CH_NUM][RTSP_NUM_PER_CAP];
@@ -2323,14 +2328,25 @@ void *encode_thread(void *ptr)
                         fwrite(bs[i][j].bs.bs_buf, 1, bs[i][j].bs.bs_len, VideoRecorder.fh);
                         fflush(VideoRecorder.fh);
                     }
+					// debug
+					if (pb->play == 0) {
+    					first_play[i][j] = -1;
+    					continue;
+					}
+					if (avbs->video.enc_type != ENC_TYPE_MJPEG && first_play[i][j] != 1) {
+	    				if (!h264_has_nal_type((unsigned char *)bs[i][j].bs.bs_buf,bs[i][j].bs.bs_len,5)) {
+        					continue;
+    					}
+    					first_play[i][j] = 1;
+    					log_info("First IDR accepted ch=%d sub=%d", i, j);
+					}
 
-                    if (avbs->video.enc_type != ENC_TYPE_MJPEG) {
+                    /*if (avbs->video.enc_type != ENC_TYPE_MJPEG) {
                         if ((pb->play == 1) && (bs[i][j].bs.keyframe == 1))
                             first_play[i][j] = 1;
-                    }
-                    else
+                    } else {
                         first_play[i][j] = 1;
-
+						} */	
                     if (first_play[i][j] == 1) {
                         pthread_mutex_lock(&pb->video.priv_vbs_mutex);
                         pb->video.offs  = (uintptr_t)bs[i][j].bs.bs_buf;
