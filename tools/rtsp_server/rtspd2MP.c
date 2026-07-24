@@ -1636,7 +1636,7 @@ static void *audio_thread(void *arg)
             gm_ss_entity entity;
             entity.data = multi_bs[0].bs.bs_buf;
             entity.size = multi_bs[0].bs.bs_len;
-            entity.timestamp = get_autick_gm(multi_bs[0].bs.timestamp);
+            entity.timestamp = get_tick_gm(multi_bs[0].bs.timestamp);
             
             int ch_num, sub_num;
             for (ch_num = 0; ch_num < CAP_CH_NUM; ch_num++) {
@@ -2361,9 +2361,7 @@ static void video_pool_release_slot(
 }
 
 // buffer pool conntinue too
-static int video_pool_release_ptr(
-    priv_vbs_t *video,
-    const char *data)
+static int video_pool_release_ptr(priv_vbs_t *video,const char *data)
 {
     int i;
     int found = 0;
