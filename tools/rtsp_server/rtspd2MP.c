@@ -1687,7 +1687,7 @@ static void *audio_thread(void *arg)
         if (!audio_sdp_ready) {
             memset(audio_sdpstr,0,sizeof(audio_sdpstr));
 
-            ret = stream_sdp_parameter_encoder("G711A",(unsigned char *)multi_bs[0].bs.bs_buf,multi_bs[0].bs.bs_len,audio_sdpstr,SDPSTR_MAX);
+            ret = stream_sdp_parameter_encoder("G711A", (unsigned char *) multi_bs[0].bs.bs_buf,multi_bs[0].bs.bs_len,audio_sdpstr,SDPSTR_MAX);
             log_info("G711A SDP ret=%d sdp='%s'",ret,audio_sdpstr);
 
             if (ret >= 0 && audio_sdpstr[0] != '\0') {
