@@ -1603,11 +1603,11 @@ static void *audio_thread(void *arg)
 	
     audio_bindfd = gm_bind(audio_groupfd, audio_grab_object, audio_encode_object);
     
-    if (gm_apply(audio_groupfd) < 0) { 
+    if (gm_apply(audio_groupfd) < 0){
 		log_error("audio_thread: gm_apply failed"); 
 		goto thread_exit;
 	}
-
+	
 	memset(poll_fd, 0, sizeof(poll_fd));
     poll_fd[0].bindfd = audio_bindfd;
     poll_fd[0].event = GM_POLL_READ;
