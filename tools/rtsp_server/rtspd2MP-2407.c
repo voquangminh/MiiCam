@@ -1662,11 +1662,14 @@ static void *audio_thread(void *arg)
             for (ch_num = 0; ch_num < CAP_CH_NUM; ch_num++) {
                 for (sub_num = 0; sub_num < RTSP_NUM_PER_CAP; sub_num++) {
 					priv_avbs_t *pb = &enc[ch_num].priv_bs[sub_num];
-					if (enc[ch_num].bs[sub_num].audio.enabled == DVR_ENC_EBST_ENABLE && pb->audio.qno >= 0 && pb->sr >= 0 && pb->audio.sdpstr[0] != '\0') {
+					if (enc[ch_num].bs[sub_num].audio.enabled != DVR_ENC_EBST_ENABLE || pb->audio.qno < 0 || pb->sr < 0 || pb->play == 0) {
+                		continue;
+					}
 						pthread_mutex_lock(&stream_queue_mutex);
-						if (pb->audio.offs || pb->audio.len)
+						if (pb->audio.offs || pb->audio.len) {
 							pthread_mutex_unlock(&stream_queue_mutex);
-							continue;						
+							continue;
+						}
 						pb->audio.offs = (uintptr_t)entity.data;
 						pb->audio.len = entity.size;
 						pthread_mutex_unlock(&pb->audio.priv_vbs_mutex);
@@ -2489,6 +2492,9 @@ void *encode_thread(void *ptr)
 					//pb->video.bs_buf     = malloc(pb->video.bs_buf_len);
                     if (video_pool_init(&pb->video) < 0) {
 	    				log_fatal("Failed initializing video buffer pool cap=%d path=%d track=%d",cap_ch,cap_path,rec_track);
+						rtspd_sysinit = 0;
+    					encode_thread_id = (pthread_t)NULL;
+    					return NULL;
 					}
 					pb->video.cap_ch     = cap_ch;
                     pb->video.cap_path   = cap_path;
@@ -2665,17 +2671,12 @@ void *encode_thread(void *ptr)
 					    video_slot[i][j] = -1;
     					continue;
 					}
-					if (avbs->video.enc_type != ENC_TYPE_MJPEG && first_play[i][j] != 1) {
-	    				if (!h264_has_nal_type((unsigned char *)bs[i][j].bs.bs_buf,bs[i][j].bs.bs_len,5)) {
+					if (avbs->video.enc_type != ENC_TYPE_MJPEG && (first_play[i][j] != 1 || pb->video.wait_idr)) {
 							int has_sps, has_pps, has_idr;
 							has_sps = h264_has_nal_type((unsigned char *)bs[i][j].bs.bs_buf,bs[i][j].bs.bs_len,7);						
 						    has_pps = h264_has_nal_type((unsigned char *)bs[i][j].bs.bs_buf,bs[i][j].bs.bs_len,8);
 						    has_idr = h264_has_nal_type((unsigned char *)bs[i][j].bs.bs_buf,bs[i][j].bs.bs_len,5);
-						    if (!has_idr) {
-								video_pool_release_slot(&pb->video,video_slot[i][j]);							
-								video_slot[i][j] = -1;
-        						continue;
-    						}
+						    if (!has_idr) { video_pool_release_slot(&pb->video,video_slot[i][j]); video_slot[i][j] = -1; continue;}
     						first_play[i][j] = 1;
 							pb->video.wait_idr = 0;
 							log_info("First IDR accepted ch=%d sub=%d SPS=%d PPS=%d IDR=%d len=%d ts=%u",
@@ -2790,10 +2791,10 @@ void update_video_sdp(int cap_ch, int cap_path, int rec_track)
                         stream_sdp_parameter_encoder("H264", (unsigned char *) bs.bs.bs_buf, bs.bs.bs_len, pb->video.sdpstr, SDPSTR_MAX);
 						break;
                     case 1:
-                        stream_sdp_parameter_encoder("H264", (unsigned char *) bs.bs.bs_buf, bs.bs.bs_len, pb->video.sdpstr, SDPSTR_MAX);
+                        stream_sdp_parameter_encoder("MPEG4", (unsigned char *) bs.bs.bs_buf, bs.bs.bs_len, pb->video.sdpstr, SDPSTR_MAX);
                     	break;
 					case 2:
-                    	stream_sdp_parameter_encoder("H264", (unsigned char *) bs.bs.bs_buf, bs.bs.bs_len, pb->video.sdpstr, SDPSTR_MAX);
+                    	stream_sdp_parameter_encoder("MJPEG", (unsigned char *) bs.bs.bs_buf, bs.bs.bs_len, pb->video.sdpstr, SDPSTR_MAX);
                 		break;    
 				}
                 break;
