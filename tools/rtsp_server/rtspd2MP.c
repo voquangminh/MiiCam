@@ -385,8 +385,8 @@ static void rtspd_set_osd_text(void *capture_obj, const char *line1, const char 
     osd_font.enabled = 1;
     osd_font.win_idx = 0;
     osd_font.align_type = GM_OSD_ALIGN_TOP_LEFT;
-    osd_font.x = 20;
-    osd_font.y = 20;
+    osd_font.x = 15;
+    osd_font.y = 15;
     osd_font.h_words = h_words;
     osd_font.v_words = v_words;
     osd_font.h_space = 0;
@@ -821,7 +821,7 @@ static int open_live_streaming(int ch_num, int sub_num)
 
     // * Enable authentication for the stream if the username and password are set
     if (rtsp_use_auth == 1) {
-        stream_authorization(pb->sr, cliArgs.user, cliArgs.password);
+        stream_authorization(pb->sr, rtsp_username, rtsp_password);
     }
     strcpy(pb->name, livename);
     return 0;
@@ -2051,7 +2051,7 @@ void *encode_thread(void *ptr)
                             pb->video.len  = 0;
                         }
                     }
-					print_enc_average(i, j, bs[i][j].bs.bs_len, &prev); */
+					print_enc_average(i, j, bs[i][j].bs.bs_len, &prev);
 				}
             }
         }
@@ -2148,7 +2148,7 @@ void update_video_sdp(int cap_ch, int cap_path, int rec_track)
 static int rtspd_start(int port)
 {
     int ret, ch_num, stream;
-	int cap_ch, cap_path, rec_track;
+	//int cap_ch, cap_path, rec_track;
     pthread_attr_t attr;
 
     if (rtspd_sysinit == 1)
