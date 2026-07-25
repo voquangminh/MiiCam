@@ -231,8 +231,8 @@ void *encode_object;
 void *sub_enc_object;             // * Create encoder object (scaler)
 void *sub_bindfd;                 // * Create encoder object (scaler) bind
 
-static unsigned short rtspd_osd_font_text[64];
-static int rtspd_osd_font_ready = 0;
+static unsigned short rtspd_osd_font2_text[64];
+static int rtspd_osd_font2_ready = 0;
 static pthread_mutex_t rtspd_osd_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 FILE *logfile = NULL;             // * File for logging
@@ -260,7 +260,7 @@ struct CommandLineArguments {
     int record;
     int motion;
     int osd;
-    int font_zoom;
+    int font2_zoom;
     int osd_bg_color;
     char osd_text[32];
 } cliArgs;
@@ -314,7 +314,7 @@ static gm_palette_table_t rtspd_osd_palette = {
 
 static void rtspd_set_osd_text(void *capture_obj, const char *line1, const char *line2);
 static void rtspd_update_osd_text(void *capture_obj);
-static void rtspd_enable_osd_font(void *capture_obj, const char *text)
+static void rtspd_enable_osd_font2(void *capture_obj, const char *text)
 {
     char line1[64];
     char timestamp[32];
@@ -342,7 +342,7 @@ static void rtspd_set_osd_palette(void)
 
 static void rtspd_set_osd_text(void *capture_obj, const char *line1, const char *line2)
 {
-    gm_osd_font_t osd_font;
+    gm_osd_font2_t osd_font2;
     
     int h_words;
     int v_words;
@@ -374,43 +374,43 @@ static void rtspd_set_osd_text(void *capture_obj, const char *line1, const char 
 
     pthread_mutex_lock(&rtspd_osd_mutex);
 
-    for (i = 0; i < (int)(sizeof(rtspd_osd_font_text) / sizeof(rtspd_osd_font_text[0])); i++)
-        rtspd_osd_font_text[i] = (unsigned short) ' ';
+    for (i = 0; i < (int)(sizeof(rtspd_osd_font2_text) / sizeof(rtspd_osd_font2_text[0])); i++)
+        rtspd_osd_font2_text[i] = (unsigned short) ' ';
     for (i = 0; i < line1_len; i++)
-        rtspd_osd_font_text[i] = (unsigned short) line1[i];
+        rtspd_osd_font2_text[i] = (unsigned short) line1[i];
     for (i = 0; i < line2_len; i++)
-        rtspd_osd_font_text[h_words + i] = (unsigned short) line2[i];
+        rtspd_osd_font2_text[h_words + i] = (unsigned short) line2[i];
 
-    memset(&osd_font, 0, sizeof(osd_font));
-    osd_font.enabled = 1;
-    osd_font.win_idx = 0;
-    osd_font.align_type = GM_OSD_ALIGN_TOP_LEFT;
-    osd_font.x = 15;
-    osd_font.y = 15;
-    osd_font.h_words = h_words;
-    osd_font.v_words = v_words;
-    osd_font.h_space = 0;
-    osd_font.v_space = 0;
-    osd_font.font_index_len = h_words * v_words;
-    osd_font.font_index = rtspd_osd_font_text;
-    osd_font.font_alpha = GM_OSD_FONT_ALPHA_75;
-    osd_font.win_alpha = GM_OSD_FONT_ALPHA_75;
-    osd_font.font_palette_idx = 14;   // WHITE
-    osd_font.priority = GM_OSD_PRIORITY_MARK_ON_OSD;
-    osd_font.smooth.enabled = 1;
-    osd_font.smooth.level = GM_OSD_FONT_SMOOTH_LEVEL_WEAK;
-    osd_font.marquee.mode = GM_OSD_MARQUEE_MODE_NONE;
-    osd_font.win_palette_idx  = cliArgs.osd_bg_color;  // background color
-    osd_font.border.enabled = 0;   // without border
-    osd_font.border.width = 1;
-    osd_font.border.type = GM_OSD_BORDER_TYPE_WIN;
-    osd_font.border.palette_idx = 1;
-    osd_font.font_zoom = cliArgs.font_zoom;
+    memset(&osd_font2, 0, sizeof(osd_font2));
+    osd_font2.enabled = 1;
+    osd_font2.win_idx = 0;
+    osd_font2.align_type = GM_OSD_ALIGN_TOP_LEFT;
+    osd_font2.x = 15;
+    osd_font2.y = 15;
+    osd_font2.h_words = h_words;
+    osd_font2.v_words = v_words;
+    osd_font2.h_space = 0;
+    osd_font2.v_space = 0;
+    osd_font2.font2_index_len = h_words * v_words;
+    osd_font2.font2_index = rtspd_osd_font2_text;
+    osd_font2.font2_alpha = GM_OSD_font2_ALPHA_75;
+    osd_font2.win_alpha = GM_OSD_font2_ALPHA_75;
+    osd_font2.font2_palette_idx = 14;   // WHITE
+    osd_font2.priority = GM_OSD_PRIORITY_MARK_ON_OSD;
+    osd_font2.smooth.enabled = 1;
+    osd_font2.smooth.level = GM_OSD_font2_SMOOTH_LEVEL_WEAK;
+    osd_font2.marquee.mode = GM_OSD_MARQUEE_MODE_NONE;
+    osd_font2.win_palette_idx  = cliArgs.osd_bg_color;  // background color
+    osd_font2.border.enabled = 0;   // without border
+    osd_font2.border.width = 1;
+    osd_font2.border.type = GM_OSD_BORDER_TYPE_WIN;
+    osd_font2.border.palette_idx = 1;
+    osd_font2.font2_zoom = cliArgs.font2_zoom;
 
     int ret;
-    ret = gm_set_osd_font(capture_obj, &osd_font);
+    ret = gm_set_osd_font2(capture_obj, &osd_font2);
     
-    rtspd_osd_font_ready = 1;
+    rtspd_osd_font2_ready = 1;
 
     pthread_mutex_unlock(&rtspd_osd_mutex);
 }
@@ -1689,7 +1689,7 @@ void gm_enc_init(int cap_ch, int cap_path, int rec_track, int enc_type, int mode
     param->bindfd[rec_track] = gm_bind(enc_groupfd, param->cap.obj, param->enc[rec_track].obj);
 
     if (cliArgs.osd) {
-    	rtspd_enable_osd_font(param->cap.obj, cliArgs.osd_text[0] != '\0' ? cliArgs.osd_text : "chuangmi");
+    	rtspd_enable_osd_font2(param->cap.obj, cliArgs.osd_text[0] != '\0' ? cliArgs.osd_text : "chuangmi");
     }
 
     // * Set motion detection
@@ -2321,7 +2321,7 @@ static void print_usage(void)
         "-4 (optional)  - Use MPEG4 encoding      (default: off)\n"
         "-o (optional)  - Enable OSD timestamp    (default: on)\n"
         "-t [text]      - Set OSD string text     (default: 'hostname')\n"
-        "-z [0-4]       - Set OSD font zoom (0=none,1=2x,2=3x,3=4x,4=1/2) (default: 0)\n"
+        "-z [0-4]       - Set OSD font2 zoom (0=none,1=2x,2=3x,3=4x,4=1/2) (default: 0)\n"
         "-d (optional)  - Enable motion detection (default: off)\n"
         "-s (optional)  - Take a snapshot when motion detected (default: off)\n"
         "-r (optional)  - Record a 10 second clip on motion    (default: off)\n"
@@ -2367,7 +2367,7 @@ int main(int argc, char *argv[])
     cliArgs.record      = 0;
     cliArgs.motion      = 0;
     cliArgs.osd         = 1;
-    cliArgs.font_zoom   = 2;	// small is GM_OSD_FONT_ZOOM_NONE;
+    cliArgs.font2_zoom   = 2;	// small is GM_OSD_font2_ZOOM_NONE;
     cliArgs.osd_bg_color= 1;	// 1 is Black
     cliArgs.osd_text[0] = '\0';
 
@@ -2432,13 +2432,13 @@ int main(int argc, char *argv[])
                     case 'z':
                         /* expect a digit after -z or -zN */
                         if (argv[i][2] != '\0')
-                            cliArgs.font_zoom = atoi(&argv[i][2]);
+                            cliArgs.font2_zoom = atoi(&argv[i][2]);
                         else if ((i + 1) < argc && argv[i + 1][0] != '-')
-                            cliArgs.font_zoom = atoi(argv[++i]);
+                            cliArgs.font2_zoom = atoi(argv[++i]);
                         else
-                            cliArgs.font_zoom = GM_OSD_FONT_ZOOM_NONE;
-                        if (cliArgs.font_zoom < 0 || cliArgs.font_zoom > 4)
-                            cliArgs.font_zoom = GM_OSD_FONT_ZOOM_NONE;
+                            cliArgs.font2_zoom = GM_OSD_font2_ZOOM_NONE;
+                        if (cliArgs.font2_zoom < 0 || cliArgs.font2_zoom > 4)
+                            cliArgs.font2_zoom = GM_OSD_font2_ZOOM_NONE;
                         break;
                     case 't':
                         if (argv[i][2] != '\0') {
