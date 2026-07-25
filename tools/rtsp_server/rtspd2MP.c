@@ -260,7 +260,7 @@ struct CommandLineArguments {
     int record;
     int motion;
     int osd;
-    int font2_zoom;
+    int font_zoom;
     int osd_bg_color;
     char osd_text[32];
 } cliArgs;
