@@ -391,11 +391,11 @@ static void rtspd_set_osd_text(void *capture_obj, const char *line1, const char 
     osd_font2.v_words = v_words;
     osd_font2.h_space = 0;
     osd_font2.v_space = 0;
-    osd_font2.font2_index_len = h_words * v_words;
-    osd_font2.font2_index = rtspd_osd_font2_text;
-    osd_font2.font2_alpha = GM_OSD_font2_ALPHA_75;
+    osd_font2.font_index_len = h_words * v_words;
+    osd_font2.font_index = rtspd_osd_font2_text;
+    osd_font2.font_alpha = GM_OSD_font2_ALPHA_75;
     osd_font2.win_alpha = GM_OSD_font2_ALPHA_75;
-    osd_font2.font2_palette_idx = 14;   // WHITE
+    osd_font2.font_palette_idx = 14;   // WHITE
     osd_font2.priority = GM_OSD_PRIORITY_MARK_ON_OSD;
     osd_font2.smooth.enabled = 1;
     osd_font2.smooth.level = GM_OSD_font2_SMOOTH_LEVEL_WEAK;
@@ -405,7 +405,7 @@ static void rtspd_set_osd_text(void *capture_obj, const char *line1, const char 
     osd_font2.border.width = 1;
     osd_font2.border.type = GM_OSD_BORDER_TYPE_WIN;
     osd_font2.border.palette_idx = 1;
-    osd_font2.font2_zoom = cliArgs.font2_zoom;
+    osd_font2.font_zoom = cliArgs.font_zoom;
 
     int ret;
     ret = gm_set_osd_font2(capture_obj, &osd_font2);
