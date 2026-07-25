@@ -118,12 +118,6 @@
 struct mdt_alg_t mdt_alg = {mb_cell_en: NULL};
 struct mdt_result_t mdt_result[ENC_TRACK_NUM];
 
-typedef struct st_video_pool_slot {
-    char *data;
-    unsigned int capacity;
-    int in_use;
-} video_pool_slot_t;
-
 typedef struct {
     void *obj;
     gm_cap_attr_t cap_attr;
@@ -2000,7 +1994,7 @@ void *encode_thread(void *ptr)
                 bs[i][j].bs.mv_buf = NULL;
                 bs[i][j].bs.mv_buf_len = 0;
 
-                if (pb->play == 0) {
+                if (pb->play == 0) 
                     first_play[i][j] = -1;
 				}
 			}
@@ -2038,35 +2032,12 @@ void *encode_thread(void *ptr)
                         fwrite(bs[i][j].bs.bs_buf, 1, bs[i][j].bs.bs_len, VideoRecorder.fh);
                         fflush(VideoRecorder.fh);
                     }
-					// debug
-					if (pb->play == 0) {
-    					first_play[i][j] = -1;
-						pb->video.wait_idr = 1;
-						video_pool_release_slot(&pb->video,video_slot[i][j]);
-					    video_slot[i][j] = -1;
-    					continue;
-					}
-					if (avbs->video.enc_type != ENC_TYPE_MJPEG && (first_play[i][j] != 1 || pb->video.wait_idr)) {
-							int has_sps, has_pps, has_idr;
-							has_sps = h264_has_nal_type((unsigned char *)bs[i][j].bs.bs_buf,bs[i][j].bs.bs_len,7);						
-						    has_pps = h264_has_nal_type((unsigned char *)bs[i][j].bs.bs_buf,bs[i][j].bs.bs_len,8);
-						    has_idr = h264_has_nal_type((unsigned char *)bs[i][j].bs.bs_buf,bs[i][j].bs.bs_len,5);
-						    if (!has_idr) { video_pool_release_slot(&pb->video,video_slot[i][j]); video_slot[i][j] = -1; continue;}
-    						first_play[i][j] = 1;
-							pb->video.wait_idr = 0;
-							log_info("First IDR accepted ch=%d sub=%d SPS=%d PPS=%d IDR=%d len=%d ts=%u",
-						        i,j,has_sps,has_pps,has_idr,bs[i][j].bs.bs_len,bs[i][j].bs.timestamp);
-						} else if (avbs->video.enc_type == ENC_TYPE_MJPEG) {
-						    first_play[i][j] = 1;
-						    pb->video.wait_idr = 0;
-						}
-
-                    /*if (avbs->video.enc_type != ENC_TYPE_MJPEG) {
+					
+                    if (avbs->video.enc_type != ENC_TYPE_MJPEG) {
                         if ((pb->play == 1) && (bs[i][j].bs.keyframe == 1))
                             first_play[i][j] = 1;
-                    } else {
-                        first_play[i][j] = 1;
-						} 	
+                    } else 
+                        first_play[i][j] = 1; 	
                     if (first_play[i][j] == 1) {
                         pthread_mutex_lock(&pb->video.priv_vbs_mutex);
                         pb->video.offs  = (uintptr_t)bs[i][j].bs.bs_buf;
@@ -2081,26 +2052,15 @@ void *encode_thread(void *ptr)
                         }
                     }
 					print_enc_average(i, j, bs[i][j].bs.bs_len, &prev); */
-					ret = write_rtp_frame_ext(i,j,bs[i][j].bs.bs_buf,bs[i][j].bs.bs_len,bs[i][j].bs.timestamp);
-					if (ret != 0) {					
-						video_pool_release_slot(&pb->video,video_slot[i][j]);
-					    video_slot[i][j] = -1;				
-					    pb->video.enqueue_errors++;					
-						pb->video.wait_idr = 1;
-					    first_play[i][j] = -1;
-					} else {					
-						video_slot[i][j] = -1;
-					}
-					print_enc_average(i,j,bs[i][j].bs.bs_len,&prev);
-                }
+				}
             }
         }
-    
-    //pthread_exit(NULL);
+	}
+	
+    pthread_exit(NULL);
     encode_thread_id = (pthread_t)NULL;
     return NULL;
 }
-
 
 void update_video_sdp(int cap_ch, int cap_path, int rec_track)
 {
@@ -2137,8 +2097,10 @@ void update_video_sdp(int cap_ch, int cap_path, int rec_track)
         if ( poll_fds.revent.event != GM_POLL_READ )
             continue;
 
-        if ( poll_fds.revent.bs_len > bitstream_data_len) 
+        if ( poll_fds.revent.bs_len > bitstream_data_len) {
+			log_error("bitstream buffer length is too small! %d, %d", poll_fds.revent.bs_len, bitstream_data_len);
             continue;
+		}
 
         bs.bindfd = poll_fds.bindfd;
 
@@ -2164,13 +2126,10 @@ void update_video_sdp(int cap_ch, int cap_path, int rec_track)
                 switch (cliArgs.encoderType) {
                     case 0:
                         stream_sdp_parameter_encoder("H264", (unsigned char *) bs.bs.bs_buf, bs.bs.bs_len, pb->video.sdpstr, SDPSTR_MAX);
-						break;
                     case 1:
                         stream_sdp_parameter_encoder("MPEG4", (unsigned char *) bs.bs.bs_buf, bs.bs.bs_len, pb->video.sdpstr, SDPSTR_MAX);
-                    	break;
 					case 2:
                     	stream_sdp_parameter_encoder("MJPEG", (unsigned char *) bs.bs.bs_buf, bs.bs.bs_len, pb->video.sdpstr, SDPSTR_MAX);
-                		break;    
 				}
                 break;
             }
@@ -2185,7 +2144,6 @@ void update_video_sdp(int cap_ch, int cap_path, int rec_track)
     if (bitstream_data)
         free(bitstream_data);
 }
-
 
 static int rtspd_start(int port)
 {
@@ -2202,7 +2160,7 @@ static int rtspd_start(int port)
     if ((ret = env_init()) < 0)
         return ret;
 
-	// debug
+	/* debug
 	for (cap_ch = 0; cap_ch < CAP_CH_NUM; cap_ch++) {
         for (cap_path = 0; cap_path < CAP_PATH_NUM; cap_path++) {
 			for (rec_track = 0; rec_track < ENC_TRACK_NUM; rec_track++) {
@@ -2222,7 +2180,7 @@ static int rtspd_start(int port)
             }
         }
     }
-	// end of debug
+	end of debug */
 	
     if (pthread_mutex_init(&stream_queue_mutex, NULL)) {
         log_error("rtspd_start: mutex init failed");
@@ -2274,27 +2232,26 @@ static int rtspd_start(int port)
     }
 	
     // * Audio thread: capture, encode and enqueue audio frames to stream */
-    if (audio_thread_id == (pthread_t)NULL) {
+/*    if (audio_thread_id == (pthread_t)NULL) {
         pthread_attr_init(&attr);
         pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
         ret = pthread_create(&audio_thread_id, &attr, &audio_thread, NULL);
         pthread_attr_destroy(&attr);
-    }
-
-	// debug
+    } 
+*/
 	for (ch_num = 0; ch_num < CAP_CH_NUM; ch_num++) {
         pthread_mutex_lock(&enc[ch_num].ubs_mutex);
-        for (stream = 0;stream < RTSP_NUM_PER_CAP;stream++) {
+		
+        for (stream = 0;stream < RTSP_NUM_PER_CAP;stream++)
             env_set_bs_new_event(ch_num,stream,START_BS_EVENT);
-        }		
+
         pthread_mutex_unlock(&enc[ch_num].ubs_mutex);
     }
-	// end of debug
 	
     return 0;
 }
 
-
+/*
 int is_bs_all_disable(void)
 {
     av_t *e;
@@ -2309,15 +2266,10 @@ int is_bs_all_disable(void)
     }
     return 1;
 }
-
+*/
 
 static void rtspd_stop(void)
 {
-    rtspd_sysinit = 0;
-	stream_server_stop();
-	usleep(1500000);
-	pthread_mutex_destroy(&stream_queue_mutex);
-	
     if (cliArgs.motion == 1)
         motion_detection_end();
 
@@ -2330,6 +2282,9 @@ static void rtspd_stop(void)
         free(snapshot_buf);
         snapshot_buf = NULL;
     }
+
+	pthread_mutex_destroy(&stream_queue_mutex);
+	rtspd_sysinit = 0;
 }
 
 char *get_local_ip(void)
@@ -2348,19 +2303,20 @@ char *get_local_ip(void)
     return inet_ntoa(sin.sin_addr);
 }
 
-
 static void print_usage(void)
 {
     printf("Usage:\n");
     printf(" ./rtspd [-bfwhm] [-j|-4]\n");
     printf(
         "\nAvailable options:\n"
-        "-b [1-8192]    - Set the bitrate         (default: 2048)\n"
+        "-b [1-8192]    - Set the bitrate         (default: 4096)\n"
         "-f [1-20]      - Set the framerate       (default: 20)\n"
         "-w [1-1920]    - Set the image width     (default: 1920 pixels)\n"
-        "-h [1-1280]    - Set the image height    (default: 1290 pixels)\n"
-        "-m [1-4]       - Set the bitrate mode    (default: 1, CBR)\n\n"
-
+        "-h [1-1280]    - Set the image height    (default: 1080 pixels)\n"
+        "-m [1-4]       - Set the bitrate mode    (default: 1, CBR)\n"
+		"-u string      - Set the user name       (default: none)\n"
+        "-p string      - Set the user password   (default: none)\n\n"
+		
         "-j (optional)  - Use MJPEG encoding      (default: off)\n"
         "-4 (optional)  - Use MPEG4 encoding      (default: off)\n"
         "-o (optional)  - Enable OSD timestamp    (default: on)\n"
@@ -2374,7 +2330,6 @@ static void print_usage(void)
 
 	exit(EXIT_FAILURE);
 }
-
 
 void signal_handler(int sig)
 {
@@ -2393,11 +2348,11 @@ void setup_logging(void)
         log_set_fp(logfile);
 }
 
-
 int main(int argc, char *argv[])
 {
     int i;
-
+	int cap_ch, cap_path, rec_track;
+	
     // * Setup logging
     setup_logging();
 
@@ -2412,8 +2367,8 @@ int main(int argc, char *argv[])
     cliArgs.record      = 0;
     cliArgs.motion      = 0;
     cliArgs.osd         = 1;
-    cliArgs.font_zoom   = 2;     // default is GM_OSD_FONT_ZOOM_NONE;
-    cliArgs.osd_bg_color= 1;
+    cliArgs.font_zoom   = 2;	// small is GM_OSD_FONT_ZOOM_NONE;
+    cliArgs.osd_bg_color= 1;	// 1 is Black
     cliArgs.osd_text[0] = '\0';
 
     if (argc > 1) {
@@ -2519,8 +2474,8 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    if ((cliArgs.height < 1) || (cliArgs.height > 1280)) {
-        log_error("A height bigger than 1280p or below 1 is not supported.");
+    if ((cliArgs.height < 1) || (cliArgs.height > 1080)) {
+        log_error("A height bigger than 1080p or below 1 is not supported.");
         return 1;
     }
 
@@ -2567,7 +2522,6 @@ int main(int argc, char *argv[])
     log_info("Bitrate Mode : %d", cliArgs.bitrateMode);
     log_info("Local IP     : %s", get_local_ip());
 
-	/* move to rtsp_start
     for (cap_ch = 0; cap_ch < CAP_CH_NUM; cap_ch++) {
         for (cap_path = 0; cap_path < CAP_PATH_NUM; cap_path++) {
             for (rec_track = 0; rec_track < ENC_TRACK_NUM; rec_track++) {
@@ -2575,7 +2529,6 @@ int main(int argc, char *argv[])
             }
         }
     }
-    */
 	
     // * Use our handler for the signals so we can do some cleanup at quit
     signal(SIGINT,  signal_handler);
