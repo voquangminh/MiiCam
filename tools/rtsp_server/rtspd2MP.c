@@ -393,12 +393,12 @@ static void rtspd_set_osd_text(void *capture_obj, const char *line1, const char 
     osd_font2.v_space = 0;
     osd_font2.font_index_len = h_words * v_words;
     osd_font2.font_index = rtspd_osd_font2_text;
-    osd_font2.font_alpha = GM_OSD_font2_ALPHA_75;
-    osd_font2.win_alpha = GM_OSD_font2_ALPHA_75;
+    osd_font2.font_alpha = GM_OSD_FONT_ALPHA_75;
+    osd_font2.win_alpha = GM_OSD_FONT_ALPHA_75;
     osd_font2.font_palette_idx = 14;   // WHITE
     osd_font2.priority = GM_OSD_PRIORITY_MARK_ON_OSD;
     osd_font2.smooth.enabled = 1;
-    osd_font2.smooth.level = GM_OSD_font2_SMOOTH_LEVEL_WEAK;
+    osd_font2.smooth.level = GM_OSD_FONT_SMOOTH_LEVEL_WEAK;
     osd_font2.marquee.mode = GM_OSD_MARQUEE_MODE_NONE;
     osd_font2.win_palette_idx  = cliArgs.osd_bg_color;  // background color
     osd_font2.border.enabled = 0;   // without border
@@ -2432,13 +2432,13 @@ int main(int argc, char *argv[])
                     case 'z':
                         /* expect a digit after -z or -zN */
                         if (argv[i][2] != '\0')
-                            cliArgs.font2_zoom = atoi(&argv[i][2]);
+                            cliArgs.font_zoom = atoi(&argv[i][2]);
                         else if ((i + 1) < argc && argv[i + 1][0] != '-')
-                            cliArgs.font2_zoom = atoi(argv[++i]);
+                            cliArgs.font_zoom = atoi(argv[++i]);
                         else
-                            cliArgs.font2_zoom = GM_OSD_font2_ZOOM_NONE;
-                        if (cliArgs.font2_zoom < 0 || cliArgs.font2_zoom > 4)
-                            cliArgs.font2_zoom = GM_OSD_font2_ZOOM_NONE;
+                            cliArgs.font_zoom = GM_OSD_FONT_ZOOM_NONE;
+                        if (cliArgs.font_zoom < 0 || cliArgs.font_zoom > 4)
+                            cliArgs.font_zoom = GM_OSD_FONT_ZOOM_NONE;
                         break;
                     case 't':
                         if (argv[i][2] != '\0') {
