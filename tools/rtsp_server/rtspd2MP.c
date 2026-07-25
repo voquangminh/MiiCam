@@ -2367,7 +2367,7 @@ int main(int argc, char *argv[])
     cliArgs.record      = 0;
     cliArgs.motion      = 0;
     cliArgs.osd         = 1;
-    cliArgs.font2_zoom   = 2;	// small is GM_OSD_font2_ZOOM_NONE;
+    cliArgs.font_zoom   = 2;	// small is GM_OSD_font2_ZOOM_NONE;
     cliArgs.osd_bg_color= 1;	// 1 is Black
     cliArgs.osd_text[0] = '\0';
 
