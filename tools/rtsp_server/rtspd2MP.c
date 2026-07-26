@@ -1646,7 +1646,7 @@ static void *audio_thread(void *arg)
     audio_encode_attr.encode_type = GM_AAC;
     audio_encode_attr.bitrate = 32000;
 	audio_encode_attr.frame_samples = 1024;
-	audio_encode_attr.block_size = 2;
+	audio_encode_attr.block_count = 2;
     gm_set_attr(audio_encode_object, &audio_encode_attr);
 
 	audio_groupfd = gm_new_groupfd();
@@ -1703,6 +1703,11 @@ static void *audio_thread(void *arg)
 		if (multi_bs[0].retval != GM_SUCCESS) 
 			continue;
 
+		gm_ss_entity entity;
+		entity.data 		= multi_bs[0].bs.bs_buf;
+		entity.size 		= multi_bs[0].bs.bs_len;
+		entity.timestamp 	= get_tick_gm(multi_bs[0].bs.timestamp);
+
 		pthread_mutex_lock(&pb->audio.priv_vbs_mutex);
 		pb->audio.offs = (uintptr_t)entity.data;
 		pb->audio.len = entity.size;
@@ -1720,12 +1725,6 @@ static void *audio_thread(void *arg)
 			strncpy(pb->audio.sdpstr,audio_sdpstr,SDPSTR_MAX - 1);
 			stream_updatesdp(pb->sr,pb->video.sdpstr,pb->audio.sdpstr);	
 		}
-		
-		gm_ss_entity entity;
-		entity.data 		= multi_bs[0].bs.bs_buf;
-		entity.size 		= multi_bs[0].bs.bs_len;
-		entity.timestamp 	= get_tick_gm(multi_bs[0].bs.timestamp);
-		
 	}
 
 thread_exit:
