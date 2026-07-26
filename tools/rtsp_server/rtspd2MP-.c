@@ -48,7 +48,13 @@
 
 #include "librtsp.h"
 #include "gmlib.h"
-#include "algorithm/capture_motion_detection2.c"
+/* QUAN TRONG: dung dung v1 (KHONG PHAI v2) - source tham chieu MiiCam da
+ * chay that tren phan cung dung "algorithm/capture_motion_detection.c"
+ * (v1), co struct/API DON GIAN HON va KHAC HOAN TOAN v2 (v1 dung mang
+ * phang mb_cell_en[] + 1 nguong alarm_th duy nhat cho toan khung hinh,
+ * khong co khai niem "sub-region" nhu v2). Chuyen sang v1 de loai bo rui
+ * ro tu viec tu suy doan API chua duoc kiem chung. */
+#include "algorithm/capture_motion_detection.c"
 
 /* =======================================================================
  * HANG SO CO DINH
@@ -170,8 +176,10 @@ static pthread_mutex_t g_rec_lock = PTHREAD_MUTEX_INITIALIZER;
 
 #define MD_CH               0
 #define MD_MB_SIZE          32
-struct mdt_alg_t    g_mdt_alg    = { sub_region: NULL };
-struct mdt_result_t g_mdt_result = { sub_region: NULL };
+/* struct v1 (capture_motion_detection.c): mdt_alg_t khong co sub_region,
+ * dung mb_cell_en[] (mang byte phang) + alarm_th (1 nguong duy nhat). */
+static struct mdt_alg_t    g_mdt_alg;
+static struct mdt_result_t g_mdt_result;
 
 /* =======================================================================
  * USAGE / CLI PARSING
@@ -601,6 +609,14 @@ static void on_motion_start(void)
         recorder_start_clip();
         pthread_mutex_unlock(&g_rec_lock);
     }
+    /* Tich hop nhe voi camctl (module IR-cut/LED rieng, xem folder
+     * camera_control/) - CHAM vao 1 file trong /dev/shm de bao hieu su
+     * kien, khong can lien ket bien dich chung giua 2 chuong trinh. Neu
+     * camctl khong chay, thao tac nay vo hai (chi tao 1 file rong). */
+    {
+        FILE *f = fopen("/dev/shm/camctl_motion_trigger", "w");
+        if (f) fclose(f);
+    }
 }
 
 static void on_motion_stop(void)
@@ -619,18 +635,15 @@ static int set_cap_motion(int cap_vch, unsigned int id, unsigned int value)
     return gm_set_cap_motion(cap_vch, &cm);
 }
 
+/* Theo dung mau set_interesting_area() trong source tham chieu MiiCam */
 static int motion_setup(void)
 {
-    int mb_w_num, mb_h_num;
+    int mb_w_num, mb_h_num, h, w;
 
-    g_mdt_alg.sub_region = (struct mdt_reg_t *) malloc(sizeof(struct mdt_reg_t));
-    if (!g_mdt_alg.sub_region) return -1;
-    memset(g_mdt_alg.sub_region, 0, sizeof(struct mdt_reg_t));
-
-    g_mdt_alg.u_width      = g_cfg.width;
-    g_mdt_alg.u_height     = g_cfg.height;
-    g_mdt_alg.u_mb_width   = MD_MB_SIZE;
-    g_mdt_alg.u_mb_height  = MD_MB_SIZE;
+    g_mdt_alg.u_width       = g_cfg.width;
+    g_mdt_alg.u_height      = g_cfg.height;
+    g_mdt_alg.u_mb_width    = MD_MB_SIZE;
+    g_mdt_alg.u_mb_height   = MD_MB_SIZE;
     g_mdt_alg.training_time = 15;
     g_mdt_alg.frame_count   = 0;
     g_mdt_alg.sensitive_th  = 80;
@@ -639,15 +652,20 @@ static int motion_setup(void)
     mb_h_num = (g_mdt_alg.u_height + (MD_MB_SIZE - 1)) / MD_MB_SIZE;
     g_mdt_alg.mb_w_num = mb_w_num;
     g_mdt_alg.mb_h_num = mb_h_num;
+    /* ~5% tong so macroblock phai "dong" moi tinh la co chuyen dong,
+     * theo dung cong thuc ghi chu trong source tham chieu:
+     * "alarm_th = mb_h_num * mb_w_num * (5/100)" */
+    g_mdt_alg.alarm_th = (unsigned int) (mb_w_num * mb_h_num * 5 / 100);
+    if (g_mdt_alg.alarm_th < 1) g_mdt_alg.alarm_th = 1;
 
-    g_mdt_alg.sub_region[0].is_enabled    = 1;
-    g_mdt_alg.sub_region[0].start_block_x = 0;
-    g_mdt_alg.sub_region[0].start_block_y = 0;
-    g_mdt_alg.sub_region[0].end_block_x   = mb_w_num - 1;
-    g_mdt_alg.sub_region[0].end_block_y   = mb_h_num - 1;
-    g_mdt_alg.sub_region[0].alarm_th      = 80;
-    g_mdt_alg.sub_region[0].alarm         = NO_MOTION;
-    g_mdt_alg.sub_region_num = 1;
+    g_mdt_alg.mb_cell_en = (unsigned char *) malloc((size_t) mb_w_num * mb_h_num);
+    if (!g_mdt_alg.mb_cell_en) return -1;
+    memset(g_mdt_alg.mb_cell_en, 0, (size_t) mb_w_num * mb_h_num);
+
+    /* Bat toan bo khung hinh lam vung quan tam (giong het reference) */
+    for (h = 0; h < mb_h_num; h++)
+        for (w = 0; w < mb_w_num; w++)
+            g_mdt_alg.mb_cell_en[h * mb_w_num + w] = 1;
 
     set_cap_motion(MD_CH, 0, 32);
     set_cap_motion(MD_CH, 1, 7371);
@@ -661,13 +679,16 @@ static int motion_setup(void)
 
     if (motion_detection_update(venc_bindfd, &g_mdt_alg) != 0) {
         fprintf(stderr, "[MD] motion_detection_update loi\n");
+        free(g_mdt_alg.mb_cell_en);
+        g_mdt_alg.mb_cell_en = NULL;
         return -1;
     }
 
-    g_mdt_result.sub_region = (struct mdt_reg_result_t *)
-                               malloc(sizeof(struct mdt_reg_result_t));
-    if (!g_mdt_result.sub_region) return -1;
-    g_mdt_result.sub_region_num = 1;
+    /* mb_cell_en khong can giu lai sau khi da update (giong het cach
+     * set_interesting_area() trong reference giai phong ngay sau do) */
+    free(g_mdt_alg.mb_cell_en);
+    g_mdt_alg.mb_cell_en = NULL;
+
     return 0;
 }
 
@@ -693,11 +714,22 @@ static void *motion_thread(void *arg)
         ret = motion_detection_handling(&cap_md, &g_mdt_result, 1);
         if (ret < 0) continue;
 
-        if (g_mdt_result.ch_result == MOTION_IS_READY) {
-            cur_motion = (g_mdt_result.sub_region[0].reg_result == MOTION_DETECTED) ? 1 : 0;
+        /* struct v1: mdt_result_t chi co 1 truong "result" duy nhat -
+         * MOTION_IS_TRAINING(0) / MOTION_DETECTED(1) / NO_MOTION(2),
+         * hoac ma loi am (MOTION_INIT_ERROR/-ALGO_ERROR/-DATA_ERROR). */
+        if (g_mdt_result.result == MOTION_DETECTED) {
+            cur_motion = 1;
             if (cur_motion && !prev_motion) on_motion_start();
-            else if (!cur_motion && prev_motion) on_motion_stop();
             prev_motion = cur_motion;
+        } else if (g_mdt_result.result == NO_MOTION) {
+            cur_motion = 0;
+            if (!cur_motion && prev_motion) on_motion_stop();
+            prev_motion = cur_motion;
+        } else if (g_mdt_result.result == MOTION_IS_TRAINING) {
+            /* dang trong giai doan hoc nen, bo qua */
+        } else if (g_mdt_result.result < 0) {
+            fprintf(stderr, "[MD] loi thuat toan motion detect (result=%d)\n",
+                    g_mdt_result.result);
         }
         usleep(200000);
     }
@@ -1047,6 +1079,13 @@ static int graph_init(void)
     audio_enc_attr.encode_type   = GM_AAC;
     audio_enc_attr.bitrate        = CFG_AUDIO_BITRATE;
     audio_enc_attr.frame_samples  = CFG_AUDIO_FRAME_SAMPLES;
+    /* gmlib.h ghi ro: "The count of audio frames received in an receive
+     * operation (fix to 2 now)" - tuc SDK yeu cau CO DINH gia tri nay la
+     * 2 (khong phai tuy chon). Truoc day khong set (mac dinh 0 tu
+     * DECLARE_ATTR) -> rat co the la nguyen nhan gay "Error parsing AU
+     * headers" phia client (mismatch so luong AU/block moi bitstream
+     * unit giua thuc te encoder tra ve va gia tri cau hinh). */
+    audio_enc_attr.block_count    = 2;
     gm_set_attr(audio_enc_object, &audio_enc_attr);
 
     audio_bindfd = gm_bind(audio_groupfd, audio_grab_object, audio_enc_object);
@@ -1099,6 +1138,14 @@ int main(int argc, char *argv[])
 
     signal(SIGINT, sig_handler);
     signal(SIGTERM, sig_handler);
+    /* QUAN TRONG cho on dinh 24/7: neu client (TinyCam/SmartRTSP/VLC...)
+     * ngat ket noi dot ngot dung luc librtsp dang ghi du lieu vao socket
+     * (TCP interleaved, hoac ca HTTP tunneling), he dieu hanh se gui
+     * SIGPIPE cho tien trinh - mac dinh SIGPIPE se GIET CHET TOAN BO
+     * TIEN TRINH ngay lap tuc! Day la nguyen nhan rat pho bien khien
+     * cac daemon mang C "tu nhien chet" ma khong co log loi gi ro rang.
+     * Bat buoc phai bo qua tin hieu nay. */
+    signal(SIGPIPE, SIG_IGN);
 
     config_set_defaults(&g_cfg);
 
@@ -1234,8 +1281,28 @@ int main(int argc, char *argv[])
     printf("RTSP san sang: rtsp://%s:%d/%s\n", get_local_ip(), RTSP_PORT, STREAM_NAME);
     printf("Nhan Ctrl+C de dung.\n");
 
-    while (g_running)
-        sleep(1);
+    /* Giam sat suc khoe thread quan trong (video_thread) - neu vi ly do
+     * nao do thread nay chet bat ngo (vd loi noi bo khong luong truoc),
+     * RTSP server van "song" nhung se khong bao gio gui frame nao nua ->
+     * client se thay stream dung im lang, rat kho chan doan tu xa. In
+     * canh bao ro rang de script giam sat ben ngoai (vd respawn trong
+     * /etc/inittab hoac 1 watchdog script don gian goi "ps"/"pgrep")
+     * co the phat hien va khoi dong lai TOAN BO tien trinh - ban than
+     * rtspd KHONG tu restart 1 thread da chet (kien truc gmlib/librtsp
+     * co the o trang thai khong nhat quan sau loi noi bo, an toan hon
+     * la de tien trinh cha/watchdog khoi dong lai tu dau). */
+    while (g_running) {
+        sleep(5);
+        if (pthread_kill(th_video, 0) != 0) {
+            fprintf(stderr, "[FATAL] video_thread da chet bat ngo! "
+                    "RTSP server van chay nhung SE KHONG CON VIDEO. "
+                    "Can watchdog ben ngoai khoi dong lai tien trinh.\n");
+        }
+        if (audio_bindfd && pthread_kill(th_audio, 0) != 0) {
+            fprintf(stderr, "[WARN] audio_thread da chet bat ngo, "
+                    "video van tiep tuc nhung se khong con audio.\n");
+        }
+    }
 
 cleanup:
     fprintf(stderr, "Dang dung RTSP daemon...\n");
@@ -1255,8 +1322,9 @@ cleanup:
 
     if (g_cfg.motion_detect) {
         motion_detection_end();
-        if (g_mdt_alg.sub_region) free(g_mdt_alg.sub_region);
-        if (g_mdt_result.sub_region) free(g_mdt_result.sub_region);
+        /* mb_cell_en da duoc giai phong ngay trong motion_setup() sau
+         * khi goi motion_detection_update() (giong reference), khong
+         * con gi de free() them o day. */
     }
     if (g_snapshot_buf) free(g_snapshot_buf);
 
