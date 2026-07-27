@@ -2080,7 +2080,7 @@ void *encode_thread(void *ptr)
                 pb = &enc[i].priv_bs[j];
                 avbs = &enc[i].bs[j];
                 if ((bs[i][j].retval < 0) && bs[i][j].bindfd)
-                    log_error("Failed to receive bitstream: ret=%d\n", i, j, bs[i][j].retval");
+                    log_error("Failed to receive bitstream.");
                 else if (bs[i][j].retval == GM_SUCCESS) {
                     if (bs[i][j].bs.keyframe == 1)
                         VideoRecorder.waiting_for_keyframe = 0;
@@ -2167,7 +2167,7 @@ void update_video_sdp(int cap_ch, int cap_path, int rec_track)
         if ( ret < 0 )
             log_error("Failed to receive bitstream (gm_recv_multi_bitstreams).");
         else if ( (bs.retval < 0) && bs.bindfd ) {
-            log_error("Failed to receive bitstream: ret=%d\n", bs.retval");
+            log_error("Failed to receive bitstream.");
 		}
         else if ( ret == 0 && bs.retval == GM_SUCCESS ) {
             if (bs.bs.keyframe == 1 ) {
