@@ -133,6 +133,7 @@ $(BUILDDIR)/rtspd: $(PREFIXDIR)/bin
 		$(RTSPDDIR)/rtspd2MP.c		\
 		$(RTSPDDIR)/log/log.c	\
 		$(RTSPDDIR)/librtsp.a	\
+		$(RTSPDDIR)/librtsp_glibc.a	\
 		-L$(GMLIBDIR)/lib		\
 		-lpthread -lm -lrt -lgm -o $(TOOLSDIR)/bin/rtspd2MP && \
 		$(TARGET)-strip $(TOOLSDIR)/bin/rtspd2MP
