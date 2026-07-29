@@ -43,7 +43,7 @@
 #define ENC_TYPE_MJPEG           2
 
 #define CAP_CH_NUM               1
-#define RTSP_NUM_PER_CAP         1
+#define RTSP_NUM_PER_CAP         4
 #define CAP_PATH_NUM             4
 #define ENC_TRACK_NUM            4
 
@@ -51,13 +51,10 @@
 #define SR_MAX                   64
 #define VQ_MAX                   (SR_MAX)
 #define VQ_LEN                   20
-#define AQ_MAX                   16            // * 1 MP2 and 1 AMR for live streaming, another 2 for file streaming.
-#define AQ_LEN                   2             // * 1 MP2 and 1 AMR for live streaming, another 2 for file streaming.
+#define AQ_MAX                   64				// * 1 MP2 and 1 AMR for live streaming, another 2 for file streaming.
+#define AQ_LEN                   2				// * 1 MP2 and 1 AMR for live streaming, another 2 for file streaming.
 #define AV_NAME_MAX              127
 #define BITSTREAM_LEN       	 (720 * 576 * 3 / 2)
-#define AUDIO_BITSTREAM_LEN 	 12800
-#define AU_BITSTREAM_LEN    	 12800
-#define MAX_BITSTREAM_NUM   	 1
 
 #define RTP_HZ                   90000
 
@@ -138,6 +135,7 @@ typedef struct {
 } gm_enc_t;
 
 void *enc_groupfd;
+void *enc_audio_groupfd;
 gm_enc_t enc_param[CAP_CH_NUM][CAP_PATH_NUM];
 
 typedef int (*open_container_fn)(int ch_num, int sub_num);
@@ -172,7 +170,6 @@ typedef struct st_bs {
     int enabled;                  // * DVR_ENC_EBST_ENABLE: enabled, DVR_ENC_EBST_DISABLE: disabled
     opt_type_t opt_type;          // * 1:rtsp_live_streaming, 2: file_avi_recording 3:file_h264_recording
     vbs_t video;                  // * VIDEO, 0: main-bitstream, 1: sub1-bitstream, 2:sub2-bitstream
-    vbs_t audio;                  // * AUDIO
 } avbs_t;
 
 typedef struct st_priv_bs {
@@ -183,28 +180,25 @@ typedef struct st_priv_bs {
     open_container_fn open;
     close_container_fn close;
     priv_vbs_t video;             // * VIDEO, 0: main-bitstream, 1: sub1-bitstream, 2:sub2-bitstream
-	priv_vbs_t audio;			  // * AUDIO
+	priv_vbs_t audio;			  // * AUDIO, 0: main-bitstream, 1: sub1-bitstream, 2:sub2-bitstream
 } priv_avbs_t;
 
 typedef struct st_av {
     // * Public data
     avbs_t bs[RTSP_NUM_PER_CAP];  // * VIDEO, 0: main-bitstream, 1: sub1-bitstream, 2:sub2-bitstream
-
     // * Update data
     pthread_mutex_t ubs_mutex;
-
     // * Private data
     int enabled;                  // * DVR_ENC_EBST_ENABLE: enabled, DVR_ENC_EBST_DISABLE: disabled
     priv_avbs_t priv_bs[RTSP_NUM_PER_CAP];
 } av_t;
 
-pthread_t enqueue_thread_id   		= 0;
-pthread_t encode_thread_id    		= 0;
-pthread_t audio_thread_id			= 0;
-
-pthread_t motion_thread_id    		= 0;
-pthread_t media_thread_id     		= 0;
-pthread_t osd_thread_id       		= 0;
+pthread_t enqueue_thread_id   		= 0;		// * Video enqueue
+pthread_t encode_thread_id    		= 0;		// * Video encode
+pthread_t audio_encode_thread_id 	= 0;		// * Audio encode
+pthread_t motion_thread_id    		= 0;		// * Motion
+pthread_t media_thread_id     		= 0;		// * Snapshot
+pthread_t osd_thread_id       		= 0;		// * OSD
 
 unsigned int sys_tick         = 0;
 struct timeval sys_sec        = {-1, -1};
@@ -231,11 +225,10 @@ void *encode_object;
 void *sub_enc_object;             // * Create encoder object (scaler)
 void *sub_bindfd;                 // * Create encoder object (scaler) bind
 
-void *audio_groupfd;			  // * Return of gm_new_groupfd(1)
 void *audio_bindfd;				  // * Return of gm_bind(1)
 void *audio_grab_object;
 void *audio_encode_object;
-char audio_sdpstr[SDPSTR_MAX];
+char *audio_data;
 
 static unsigned short rtspd_osd_font2_text[64];
 static int rtspd_osd_font2_ready = 0;
@@ -812,9 +805,12 @@ static int open_live_streaming(int ch_num, int sub_num)
     media_type = convert_gmss_media_type(b->video.enc_type);
     pb->video.qno = do_queue_alloc(media_type);
 	pb->audio.qno = do_queue_alloc(GM_SS_TYPE_AAC);
-	pb->audio.sdpstr[0] = '\0';
 	
 	sprintf(livename, "live/ch%02d_%d", ch_num, sub_num);
+	printf("%s\n", livename);
+    sprintf(pb->audio.sdpstr, "%X", (2 << 11) | (8 << 7) | (1 << 3)); // AAC LC, bitrate 16000, channel 1
+	printf("video sdpstr: %s qno: %d\n", pb->video.sdpstr, pb->video.qno);
+    printf("audio sdpstr: %s qno: %d\n", pb->audio.sdpstr, pb->audio.qno);
     pb->sr = stream_reg(livename, pb->video.qno, pb->video.sdpstr,pb->audio.qno, pb->audio.sdpstr,1,0,0,0,0,0,0);
 	
 	if (pb->sr < 0){
@@ -858,26 +854,21 @@ static int write_rtp_frame_ext(int ch_num, int sub_num, void *data, int data_len
 
     if ( ret < 0 ) {
         gettimeofday(&curr_tval, NULL );
-
         if ( ret == ERR_FULL) {
 			pb->congest = 1;
-
             if ( TIMEVAL_DIFF(err_print_tval, curr_tval) > 5000000 )
                 log_error("ext enqueue queue ch_num=%d, sub_num=%d full", ch_num, sub_num);
         }
         else if ((ret != ERR_NOTINIT)&& (ret != ERR_MUTEX) && (ret != ERR_NOTRUN)) {
-
             if (TIMEVAL_DIFF(err_print_tval, curr_tval) > 5000000)
                 log_error("ext enqueue queue ch_num=%d, sub_num=%d error %d", ch_num, sub_num, ret);
         }
-
         if ( TIMEVAL_DIFF(err_print_tval, curr_tval) > 5000000) {
             log_error("ext enqueue queue ch_num=%d, sub_num=%d error %d", ch_num, sub_num, ret);
             gettimeofday(&err_print_tval, NULL );
         }
         goto exit_free_audio_buf;
     }
-    
     return 0;
 
 exit_free_audio_buf:
@@ -896,16 +887,12 @@ static int close_live_streaming(int ch_num, int sub_num)
     CHECK_CHANNUM_AND_SUBNUM(ch_num, sub_num);
     b = &enc[ch_num].bs[sub_num];
     pb = &enc[ch_num].priv_bs[sub_num];
-
     if (pb->sr >= 0) {
         ret = stream_dereg(pb->sr, 1);
-
         if (ret < 0)
             goto err_exit;
-
         pb->sr = -1;
         pb->video.qno = -1;			// reset video
-		pb->audio.qno = -1;			// reset audio
         pb->play = 0;
     }
 
@@ -937,7 +924,6 @@ int open_bs(int ch_num, int sub_num)
         default:
             break;
     }
-
     return 0;
 }
 
@@ -951,17 +937,14 @@ int close_bs(int ch_num, int sub_num)
 
     e->bs[sub_num].video.enabled = DVR_ENC_EBST_DISABLE;
     e->bs[sub_num].enabled = DVR_ENC_EBST_DISABLE;
-
     for (sub = 0; sub < RTSP_NUM_PER_CAP; sub++) {
         if (e->bs[sub].video.enabled == DVR_ENC_EBST_ENABLE) {
             is_close_channel = 0;
             break;
         }
     }
-
     if (is_close_channel == 1)
         enc[ch_num].enabled = DVR_ENC_EBST_DISABLE;
-
     return 0;
 }
 
@@ -979,7 +962,6 @@ static int bs_check_event(void)
             }
         }
     }
-
     return ret;
 }
 
@@ -996,18 +978,15 @@ void bs_new_event(void)
 
     for (ch_num = 0; ch_num < CAP_CH_NUM; ch_num++) {
         pthread_mutex_lock(&enc[ch_num].ubs_mutex);
-
         for (sub_num = 0; sub_num < RTSP_NUM_PER_CAP; sub_num++) {
             b = &enc[ch_num].bs[sub_num];
             pb = &enc[ch_num].priv_bs[sub_num];
             switch (b->event) {
-
                 case START_BS_EVENT:
                     open_bs(ch_num, sub_num);
                     if (pb->open) pb->open(ch_num, sub_num);
                     b->event = NONE_BS_EVENT;
                     break;
-
                 case STOP_BS_EVENT:
                     pb->open = NULL;
                     if (pb->close) {
@@ -1017,7 +996,6 @@ void bs_new_event(void)
                     }
                     b->event = NONE_BS_EVENT;
                     break;
-
                 default:
                     break;
             }
@@ -1038,7 +1016,6 @@ int env_set_bs_new_event(int ch_num, int sub_num, int event)
         case START_BS_EVENT:
             if (b->opt_type == OPT_NONE)
                 goto err_exit;
-
             if (b->enabled == DVR_ENC_EBST_ENABLE) {
                 log_error("Already enabled: ch_num=%d, sub_num=%d", ch_num, sub_num);
                 ret = -1;
