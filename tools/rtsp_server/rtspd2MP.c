@@ -1593,6 +1593,13 @@ void gm_enc_init(int cap_ch, int cap_path, int rec_track, int enc_type, int mode
             h264e_attr.ratectl.min_quant     = 20;
             h264e_attr.ratectl.max_quant     = 51;
             gm_set_attr(param->enc[rec_track].obj, &h264e_attr);
+/* H264 advanced */
+			DECLARE_ATTR(h264_adv, gm_h264_advanced_attr_t);
+			h264_adv.multi_slice = 4;
+			h264_adv.field_coding = 0;
+			h264_adv.gray_scale = 0;
+			gm_set_attr(param->enc[rec_track].obj, &h264_adv);
+
             memcpy(&param->enc[rec_track].codec.h264e_attr, &h264e_attr, sizeof(gm_h264e_attr_t));
             break;
         case ENC_TYPE_MPEG4:
@@ -2053,12 +2060,13 @@ static void *audio_encode_thread(void *arg)
                 }
                 entity.data = aac_data + adts_header - 4;
                 entity.size = aac_data_len - adts_header + 4;
-                entity.timestamp = multi_bs.bs.timestamp * (16000 / 1000);
+                entity.timestamp = get_tick_gm(multi_bs.bs.timestamp);		 		// * SDK default timestamp
+				//entity.timestamp = multi_bs.bs.timestamp * (16000 / 1000); 		// * our config timestamp
                 // AU Headers
                 entity.data[0] = 0;
                 entity.data[1] = 0x10;
-                entity.data[2] = (aac_data_len - adts_header) >> 5;
-                entity.data[3] = (aac_data_len - adts_header) << 3;
+                entity.data[2] = ((aac_data_len - adts_header) >> 5) & 0xff;		// entity.data[2] = (aac_data_len - adts_header) >> 5;
+                entity.data[3] = ((aac_data_len - adts_header) & 0x1f) << 3;		// entity.data[3] = (aac_data_len - adts_header) << 3;
                 pthread_mutex_lock(&stream_queue_mutex);
                 ret = stream_media_enqueue(GM_SS_TYPE_AAC, pb->audio.qno, &entity);
                 pthread_mutex_unlock(&stream_queue_mutex);
