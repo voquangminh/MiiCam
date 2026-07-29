@@ -1238,7 +1238,7 @@ static int cmd_cb(char *name, int sno, int cmd, void *p)
             break;
         case GM_STREAM_CMD_PLAY:
             if ( strncmp(name, "live/", 5) == 0 ) {
-                if ((pb = find_file_sr(name, sno)) == NULL){
+                if ((pb = find_file_sr(name, sno)) == NULL)
                     ERR_GOTO(-1, cmd_cb_err);
                 if (pb->video.qno >= 0)
                     pb->play = 1;
