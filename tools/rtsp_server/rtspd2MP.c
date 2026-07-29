@@ -50,7 +50,7 @@
 #define SDPSTR_MAX               128
 #define SR_MAX                   64
 #define VQ_MAX                   (SR_MAX)
-#define VQ_LEN                   20
+#define VQ_LEN                   100
 #define AQ_MAX                   64				// * 1 MP2 and 1 AMR for live streaming, another 2 for file streaming.
 #define AQ_LEN                   2				// * 1 MP2 and 1 AMR for live streaming, another 2 for file streaming.
 #define AV_NAME_MAX              127
@@ -1253,8 +1253,7 @@ static int cmd_cb(char *name, int sno, int cmd, void *p)
             if ( strncmp(name, "live/", 5) == 0 ) {
                 if ((pb = find_file_sr(name, sno)) == NULL)
                     ERR_GOTO(-1, cmd_cb_err);
-                if (pb->video.qno >= 0)
-	                pb->play = 1;
+	            pb->play = 0;
             }
             ret = 0;
             break;
@@ -1754,9 +1753,9 @@ static void audio_init() {
 
     audio_bindfd = gm_bind(enc_audio_groupfd, audio_grab_object, audio_encode_object);
 
-    printf("enc_audio_groupfd:%p audio_bindfd:%p\n", enc_audio_groupfd, audio_bindfd);
+    log_info("enc_audio_groupfd:%p audio_bindfd:%p\n", enc_audio_groupfd, audio_bindfd);
     if (gm_apply(enc_audio_groupfd) < 0) {
-        printf("Error! gm_apply fail");
+        log_error("Error! gm_apply fail");
         exit(-1);
     }
 }
@@ -1845,6 +1844,7 @@ void *encode_thread(void *ptr)
     static int timeval_init = 0;
     int diff;
 
+	memset(first_play, -1,sizeof(first_play));	/*debug*/
     memset(poll_fds, 0, sizeof(poll_fds));
 
     for (cap_ch = 0; cap_ch < CAP_CH_NUM; cap_ch++) {
@@ -1982,7 +1982,6 @@ void *encode_thread(void *ptr)
 }
 
 #define BITSTREAM_LEN       12800
-
 static void *audio_encode_thread(void *arg)
 {
     int ret;
@@ -2011,7 +2010,7 @@ static void *audio_encode_thread(void *arg)
         }
         ret = gm_poll(&poll_fds, 1, 2000);
         if (ret == GM_TIMEOUT) {
-            printf("audio poll timeout!!\n");
+            log_error("audio poll timeout!!\n");
             continue;
         }
 
@@ -2020,7 +2019,7 @@ static void *audio_encode_thread(void *arg)
             continue;
         }
         if (poll_fds.revent.bs_len > BITSTREAM_LEN) {
-            printf("buffer length is not enough! %d, %d\n",
+            log_error("buffer length is not enough! %d, %d\n",
                     poll_fds.revent.bs_len, BITSTREAM_LEN);
             continue;
         }
@@ -2031,14 +2030,14 @@ static void *audio_encode_thread(void *arg)
         multi_bs.bs.mv_buf_len = 0;
 
         if ((ret = gm_recv_multi_bitstreams(&multi_bs, 1)) < 0)
-            printf("audio error return value %d\n", ret);
+            log_error("audio error return value %d\n", ret);
         else {
             if (!multi_bs.bindfd)
                 continue;
             if (multi_bs.retval < 0) {
-                printf("get bitstreame error! ret = %d\n", ret);
+                log_error("get bitstreame error! ret = %d\n", ret);
             } else if (multi_bs.retval == GM_SUCCESS) {
-                //printf("received audio %d %d %d\n", multi_bs.bs.bs_buf_len, poll_fds.revent.bs_len, multi_bs.bs.timestamp);
+                log_info("received audio %d %d %d\n", multi_bs.bs.bs_buf_len, poll_fds.revent.bs_len, multi_bs.bs.timestamp);
                 char *aac_data = multi_bs.bs.bs_buf;
                 int aac_data_len = multi_bs.bs.bs_len;
                 if (audio_file == NULL) {
@@ -2064,7 +2063,7 @@ static void *audio_encode_thread(void *arg)
                 ret = stream_media_enqueue(GM_SS_TYPE_AAC, pb->audio.qno, &entity);
                 pthread_mutex_unlock(&stream_queue_mutex);
                 if (ret < 0) {
-                    printf("audio enqueue failed! ret = %d\n", ret);
+                    log_error("audio enqueue failed! ret = %d\n", ret);
                 }
             }
         }
