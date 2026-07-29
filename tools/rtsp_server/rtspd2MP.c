@@ -43,16 +43,16 @@
 #define ENC_TYPE_MJPEG           2
 
 #define CAP_CH_NUM               1
-#define RTSP_NUM_PER_CAP         4
+#define RTSP_NUM_PER_CAP         1				// * default is 4
 #define CAP_PATH_NUM             4
 #define ENC_TRACK_NUM            4
 
-#define SDPSTR_MAX               128
+#define SDPSTR_MAX               512 			// * default is 128
 #define SR_MAX                   64
 #define VQ_MAX                   (SR_MAX)
 #define VQ_LEN                   100
 #define AQ_MAX                   64				// * 1 MP2 and 1 AMR for live streaming, another 2 for file streaming.
-#define AQ_LEN                   2				// * 1 MP2 and 1 AMR for live streaming, another 2 for file streaming.
+#define AQ_LEN                   64				// * 1 MP2 and 1 AMR for live streaming, another 2 for file streaming.
 #define AV_NAME_MAX              127
 #define BITSTREAM_LEN       	 (720 * 576 * 3 / 2)
 
@@ -808,7 +808,7 @@ static int open_live_streaming(int ch_num, int sub_num)
 	
 	sprintf(livename, "live/ch%02d_%d", ch_num, sub_num);
 	printf("%s", livename);
-    log_info(pb->audio.sdpstr, "%X", (2 << 11) | (8 << 7) | (1 << 3)); // AAC LC, bitrate 16000, channel 1
+    log_info(pb->audio.sdpstr, SDPSTR_MAX, "%04X", (2 << 11) | (8 << 7) | (1 << 3)); // AAC LC, bitrate 16000, channel 1
 	//log_info("video sdpstr: %s qno: %d", pb->video.sdpstr, pb->video.qno);
     //log_info("audio sdpstr: %s qno: %d", pb->audio.sdpstr, pb->audio.qno);
     pb->sr = stream_reg(livename, pb->video.qno, pb->video.sdpstr,pb->audio.qno, pb->audio.sdpstr,1,0,0,0,0,0,0);
