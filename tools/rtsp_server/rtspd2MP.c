@@ -1753,7 +1753,7 @@ static void audio_init() {
 
     audio_bindfd = gm_bind(enc_audio_groupfd, audio_grab_object, audio_encode_object);
 
-    log_info("enc_audio_groupfd:%p audio_bindfd:%p\n", enc_audio_groupfd, audio_bindfd);
+    log_info("enc_audio_groupfd:%p audio_bindfd:%p", enc_audio_groupfd, audio_bindfd);
     if (gm_apply(enc_audio_groupfd) < 0) {
         log_error("Error! gm_apply fail");
         exit(-1);
@@ -2010,7 +2010,7 @@ static void *audio_encode_thread(void *arg)
         }
         ret = gm_poll(&poll_fds, 1, 2000);
         if (ret == GM_TIMEOUT) {
-            log_error("audio poll timeout!!\n");
+            log_error("audio poll timeout!!");
             continue;
         }
 
@@ -2019,7 +2019,7 @@ static void *audio_encode_thread(void *arg)
             continue;
         }
         if (poll_fds.revent.bs_len > BITSTREAM_LEN) {
-            log_error("buffer length is not enough! %d, %d\n",
+            log_error("buffer length is not enough! %d, %d",
                     poll_fds.revent.bs_len, BITSTREAM_LEN);
             continue;
         }
@@ -2030,14 +2030,14 @@ static void *audio_encode_thread(void *arg)
         multi_bs.bs.mv_buf_len = 0;
 
         if ((ret = gm_recv_multi_bitstreams(&multi_bs, 1)) < 0)
-            log_error("audio error return value %d\n", ret);
+            log_error("audio error return value %d", ret);
         else {
             if (!multi_bs.bindfd)
                 continue;
             if (multi_bs.retval < 0) {
-                log_error("get bitstreame error! ret = %d\n", ret);
+                log_error("get bitstreame error! ret = %d", ret);
             } else if (multi_bs.retval == GM_SUCCESS) {
-                log_info("received audio %d %d %d\n", multi_bs.bs.bs_buf_len, poll_fds.revent.bs_len, multi_bs.bs.timestamp);
+                log_info("received audio %d %d %d", multi_bs.bs.bs_buf_len, poll_fds.revent.bs_len, multi_bs.bs.timestamp);
                 char *aac_data = multi_bs.bs.bs_buf;
                 int aac_data_len = multi_bs.bs.bs_len;
                 if (audio_file == NULL) {
@@ -2063,7 +2063,7 @@ static void *audio_encode_thread(void *arg)
                 ret = stream_media_enqueue(GM_SS_TYPE_AAC, pb->audio.qno, &entity);
                 pthread_mutex_unlock(&stream_queue_mutex);
                 if (ret < 0) {
-                    log_error("audio enqueue failed! ret = %d\n", ret);
+                    log_error("audio enqueue failed! ret = %d", ret);
                 }
             }
         }
