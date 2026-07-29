@@ -807,10 +807,10 @@ static int open_live_streaming(int ch_num, int sub_num)
 	pb->audio.qno = do_queue_alloc(GM_SS_TYPE_AAC);
 	
 	sprintf(livename, "live/ch%02d_%d", ch_num, sub_num);
-	printf("%s\n", livename);
-    sprintf(pb->audio.sdpstr, "%X", (2 << 11) | (8 << 7) | (1 << 3)); // AAC LC, bitrate 16000, channel 1
-	printf("video sdpstr: %s qno: %d\n", pb->video.sdpstr, pb->video.qno);
-    printf("audio sdpstr: %s qno: %d\n", pb->audio.sdpstr, pb->audio.qno);
+	printf("%s", livename);
+    log_info(pb->audio.sdpstr, "%X", (2 << 11) | (8 << 7) | (1 << 3)); // AAC LC, bitrate 16000, channel 1
+	log_info("video sdpstr: %s qno: %d", pb->video.sdpstr, pb->video.qno);
+    log_info("audio sdpstr: %s qno: %d", pb->audio.sdpstr, pb->audio.qno);
     pb->sr = stream_reg(livename, pb->video.qno, pb->video.sdpstr,pb->audio.qno, pb->audio.sdpstr,1,0,0,0,0,0,0);
 	
 	if (pb->sr < 0){
@@ -2037,7 +2037,7 @@ static void *audio_encode_thread(void *arg)
             if (multi_bs.retval < 0) {
                 log_error("get bitstreame error! ret = %d", ret);
             } else if (multi_bs.retval == GM_SUCCESS) {
-                log_info("received audio %d %d %d", multi_bs.bs.bs_buf_len, poll_fds.revent.bs_len, multi_bs.bs.timestamp);
+                //log_info("received audio %d %d %d", multi_bs.bs.bs_buf_len, poll_fds.revent.bs_len, multi_bs.bs.timestamp);
                 char *aac_data = multi_bs.bs.bs_buf;
                 int aac_data_len = multi_bs.bs.bs_len;
                 if (audio_file == NULL) {
