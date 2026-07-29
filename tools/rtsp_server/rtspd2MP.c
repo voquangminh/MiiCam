@@ -807,7 +807,7 @@ static int open_live_streaming(int ch_num, int sub_num)
 	pb->audio.qno = do_queue_alloc(GM_SS_TYPE_AAC);
 	
 	sprintf(livename, "live/ch%02d_%d", ch_num, sub_num);
-	printf("%s", livename);
+	//printf("%s", livename);
     log_info(pb->audio.sdpstr, SDPSTR_MAX, "%04X", (2 << 11) | (8 << 7) | (1 << 3)); // AAC LC, bitrate 16000, channel 1
 	//log_info("video sdpstr: %s qno: %d", pb->video.sdpstr, pb->video.qno);
     //log_info("audio sdpstr: %s qno: %d", pb->audio.sdpstr, pb->audio.qno);
@@ -1164,7 +1164,7 @@ static void print_enc_average(int ch_num, int sub_num, int bs_len, struct timeva
     last_timeval.tv_usec = cur_timeval->tv_usec;
 }
 
-#define POLL_WAIT_TIME 15000
+#define POLL_WAIT_TIME 30000
 static unsigned int poll_wait_time = 0;
 static void env_release_resources(void)
 {
@@ -2060,13 +2060,13 @@ static void *audio_encode_thread(void *arg)
                 }
                 entity.data = aac_data + adts_header - 4;
                 entity.size = aac_data_len - adts_header + 4;
-                entity.timestamp = get_tick_gm(multi_bs.bs.timestamp);		 		// * SDK default timestamp
-				//entity.timestamp = multi_bs.bs.timestamp * (16000 / 1000); 		// * our config timestamp
+                //entity.timestamp = get_tick_gm(multi_bs.bs.timestamp);		 		// * SDK default timestamp
+				entity.timestamp = multi_bs.bs.timestamp * (16000 / 1000); 				// * our config timestamp
                 // AU Headers
                 entity.data[0] = 0;
                 entity.data[1] = 0x10;
-                entity.data[2] = ((aac_data_len - adts_header) >> 5) & 0xff;		// entity.data[2] = (aac_data_len - adts_header) >> 5;
-                entity.data[3] = ((aac_data_len - adts_header) & 0x1f) << 3;		// entity.data[3] = (aac_data_len - adts_header) << 3;
+                entity.data[2] = (aac_data_len - adts_header) >> 5;			//entity.data[2] = ((aac_data_len - adts_header) >> 5) & 0xff;
+                entity.data[3] = (aac_data_len - adts_header) << 3;			//entity.data[3] = ((aac_data_len - adts_header) & 0x1f) << 3;		
                 pthread_mutex_lock(&stream_queue_mutex);
                 ret = stream_media_enqueue(GM_SS_TYPE_AAC, pb->audio.qno, &entity);
                 pthread_mutex_unlock(&stream_queue_mutex);
@@ -2142,7 +2142,7 @@ void update_video_sdp(int cap_ch, int cap_path, int rec_track)
 					case 2:
                     	stream_sdp_parameter_encoder("H264", (unsigned char *) bs.bs.bs_buf, bs.bs.bs_len, pb->video.sdpstr, SDPSTR_MAX);
 				}
-				log_info("Video sdpstr: %s", pb->video.sdpstr);
+				//log_info("Video sdpstr: %s", pb->video.sdpstr);
                 break;
             }
             else {
