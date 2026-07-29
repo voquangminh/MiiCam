@@ -1149,13 +1149,10 @@ static void print_enc_average(int ch_num, int sub_num, int bs_len, struct timeva
                         (frame_counts[i][j] * 100000 / total_ms) % 100,
                         (rec_bs_len[i][j] * 8 / 1024) * 1000 / total_ms,
                         VideoRecorder.recording,
-                        motion_detected
-                );
-
+                        motion_detected);
                 if (VideoRecorder.recording == 1) {
                     log_info("Recording to %s", VideoRecorder.file_path);
                 }
-
                 frame_counts[i][j] = 0;
                 rec_bs_len[i][j] = 0;
             }
@@ -1196,12 +1193,6 @@ static int frm_cb(int type, int qno, gm_ss_entity *entity)
                 pb->video.len = 0;
                 pthread_mutex_unlock(&pb->video.priv_vbs_mutex);
             }
-			if (pb->audio.offs == (int)(entity->data) && pb->audio.len == entity->size && pb->audio.qno==qno) {
-                pthread_mutex_lock(&pb->audio.priv_vbs_mutex);
-                pb->audio.offs = 0;
-                pb->audio.len = 0;
-                pthread_mutex_unlock(&pb->audio.priv_vbs_mutex);
-        	}
     	}
 	}
     return 0;
@@ -1235,38 +1226,29 @@ static int cmd_cb(char *name, int sno, int cmd, void *p)
         case GM_STREAM_CMD_OPTION:
             ret = 0;
             break;
-
         case GM_STREAM_CMD_DESCRIBE:
             ret = 0;
             break;
-
         case GM_STREAM_CMD_OPEN:
             log_error("%s:%d <GM_STREAM_CMD_OPEN>", __FUNCTION__, __LINE__);
             ERR_GOTO(-10, cmd_cb_err);
             break;
-
         case GM_STREAM_CMD_SETUP:
             ret = 0;
             break;
-
         case GM_STREAM_CMD_PLAY:
             if ( strncmp(name, "live/", 5) == 0 ) {
-
                 if ((pb = find_file_sr(name, sno)) == NULL){
                     ERR_GOTO(-1, cmd_cb_err);
-                }
-                if (pb->video.qno >= 0){
+                if (pb->video.qno >= 0)
                     pb->play = 1;
-                }
             }
             ret = 0;
             break;
-		
         case GM_STREAM_CMD_PAUSE:
             log_info("%s:%d <GM_STREAM_CMD_PAUSE>", __FUNCTION__, __LINE__);
             ret = 0;
             break;
-
         case GM_STREAM_CMD_TEARDOWN:
             if ( strncmp(name, "live/", 5) == 0 ) {
                 if ((pb = find_file_sr(name, sno)) == NULL)
@@ -1541,25 +1523,17 @@ int env_init(void)
             b->event          = NONE_BS_EVENT;
             b->enabled        = DVR_ENC_EBST_DISABLE;
             b->video.enabled  = DVR_ENC_EBST_DISABLE;
-			b->audio.enabled  = DVR_ENC_EBST_ENABLE;			// đefault enable audio
 
             pb                = &e->priv_bs[sub_num];
             pb->video.qno     = -1;
             pb->video.offs    = 0;
             pb->video.len     = 0;
-			pb->audio.qno     = -1;
-            pb->audio.offs    = 0;
-            pb->audio.len     = 0;
             pb->sr            = -1;
 
             if (pthread_mutex_init(&pb->video.priv_vbs_mutex, NULL)) {
                 log_error("env_enc_init: priv_vbs mutex init failed");
                 exit(-1);
             }
-        	if (pthread_mutex_init(&pb->audio.priv_vbs_mutex, NULL)) {
-                log_error("env_audio_init: priv_vbs mutex init failed");
-                exit(-1);
-			}
 		}
     }
     // * Update bs info from decoder
@@ -1572,131 +1546,6 @@ int env_init(void)
         log_error("stream_server_start, ret %d", ret);
     return ret;
 }
-
-static void *audio_thread(void *arg)
-{
-	int i, ret, sdp_ready = 0;
-	priv_avbs_t *pb;
-	char *bitstream_data = NULL;
-	gm_pollfd_t poll_fds[1];
-    gm_enc_multi_bitstream_t multi_bs[1];
-
-	audio_grab_object = gm_new_obj(GM_AUDIO_GRAB_OBJECT);
-    audio_encode_object = gm_new_obj(GM_AUDIO_ENCODER_OBJECT);
-
-	DECLARE_ATTR(audio_grab_attr, gm_audio_grab_attr_t);
-    DECLARE_ATTR(audio_encode_attr, gm_audio_enc_attr_t);
-
-	bitstream_data = (char *)malloc(AUDIO_BITSTREAM_LEN);
-    if (bitstream_data == 0)
-    	return 0;
-    memset(bitstream_data, 0, AUDIO_BITSTREAM_LEN);
-
-	audio_grab_attr.vch = 0;
-	audio_grab_attr.sample_rate = 8000;
-    audio_grab_attr.sample_size = 16;
-    audio_grab_attr.channel_type = GM_MONO;
-	gm_set_attr(audio_grab_object, &audio_grab_attr);
-
-    audio_encode_attr.encode_type = GM_AAC;
-    audio_encode_attr.bitrate = 32000;
-	audio_encode_attr.frame_samples = 1024;
-	audio_encode_attr.block_count = 2;
-    gm_set_attr(audio_encode_object, &audio_encode_attr);
-
-	audio_groupfd = gm_new_groupfd();
-	if (!audio_groupfd) {
-		log_error("audio_groupfd create failed");
-    	goto thread_exit;
-	}
-
-	audio_bindfd = gm_bind(audio_groupfd, audio_grab_object, audio_encode_object);
-	if (!audio_bindfd){
-		log_error("gm_audio_bind failed");
-		 goto thread_exit;
-	}
-
-	if (gm_apply(audio_groupfd) < 0) {
-		log_error("audio_thread: gm_apply failed");
-		goto thread_exit;
-	}
-
-	memset(poll_fds, 0, sizeof(poll_fds));
-    poll_fds[0].bindfd = audio_bindfd;
-    poll_fds[0].event = GM_POLL_READ;
-	
-	pb = &enc[0].priv_bs[0];
-	
-	while (rtspd_sysinit) {
-        ret = gm_poll(poll_fds, 1, 1000);
-        if (ret == GM_TIMEOUT) {
-            log_error("Poll timeout!!\n");
-            continue;
-        }
-
-		memset(multi_bs, 0, sizeof(multi_bs));
-		for (i = 0; i < MAX_BITSTREAM_NUM; i++) {
-	        if (poll_fds[0].revent.event != GM_POLL_READ) {
-	        	continue;
-	        }
-	        if (poll_fds[0].revent.bs_len > AUDIO_BITSTREAM_LEN) {
-	        	printf("buffer length is not enough! %d, %d\n",
-	        		poll_fds[0].revent.bs_len, AUDIO_BITSTREAM_LEN);
-	            continue;
-	        }
-			multi_bs[0].bindfd = audio_bindfd;
-	        multi_bs[0].bs.bs_buf = bitstream_data;
-	        multi_bs[0].bs.bs_buf_len = AUDIO_BITSTREAM_LEN;
-	        multi_bs[0].bs.mv_buf = NULL;
-	        multi_bs[0].bs.mv_buf_len = 0;
-
-			if ((ret = gm_recv_multi_bitstreams(multi_bs, 1)) < 0) {
-            	log_error("audio_thread: gm_recv_multi_bitstreams failed %d", ret);
-            	continue;
-        	}
-		}
-		if (multi_bs[0].retval != GM_SUCCESS) 
-			continue;
-
-		gm_ss_entity entity;
-		entity.data 		= multi_bs[0].bs.bs_buf;
-		entity.size 		= multi_bs[0].bs.bs_len;
-		entity.timestamp 	= get_tick_gm(multi_bs[0].bs.timestamp);
-
-		pthread_mutex_lock(&pb->audio.priv_vbs_mutex);
-		pb->audio.offs = (int)entity.data;
-		pb->audio.len = entity.size;
-		pthread_mutex_unlock(&pb->audio.priv_vbs_mutex);
-
-		if (pb->play == 0)
-    		continue;
-
-		if (!sdp_ready) {
-            stream_sdp_parameter_encoder("AAC", (unsigned char *) multi_bs[0].bs.bs_buf, multi_bs[0].bs.bs_len,audio_sdpstr, SDPSTR_MAX);
-            sdp_ready = 1;
-			log_info("Audio sdp: %s",audio_sdpstr);
-			continue;
-			stream_media_enqueue(GM_SS_TYPE_AAC,pb->audio.qno,&entity);
-			strncpy(pb->audio.sdpstr,audio_sdpstr,SDPSTR_MAX - 1);
-			stream_updatesdp(pb->sr,pb->video.sdpstr,pb->audio.sdpstr);	
-		}
-	}
-
-thread_exit:
-    if (bitstream_data)
-        free(bitstream_data);
-    if (audio_bindfd)
-        gm_unbind(audio_bindfd);
-    if (audio_grab_object)
-        gm_delete_obj(audio_grab_object);
-    if (audio_encode_object)
-        gm_delete_obj(audio_encode_object);
-    if (audio_groupfd) {
-        gm_delete_groupfd(audio_groupfd);
-    }
-    return NULL;
-}
-
 
 static unsigned chipid;
 void gm_enc_init(int cap_ch, int cap_path, int rec_track, int enc_type, int mode, int framerate, int bitrate, int width, int height)
@@ -1788,7 +1637,7 @@ void gm_enc_init(int cap_ch, int cap_path, int rec_track, int enc_type, int mode
         }
     }
 
-    // * Enable Scaler Encoder if downscaling is required (only for H264)
+/* 	Enable Scaler Encoder if downscaling is required (only for H264)
     if (enc_type == ENC_TYPE_H264 && (width < gm_system.cap[cap_ch].dim.width || height < gm_system.cap[cap_ch].dim.height)) {
 		h264e_attr.ratectl.bitrate      = bitrate;
         h264e_attr.frame_info.framerate = framerate;
@@ -1797,7 +1646,7 @@ void gm_enc_init(int cap_ch, int cap_path, int rec_track, int enc_type, int mode
         gm_set_attr(sub_enc_object, &h264e_attr);
         sub_bindfd                      = gm_bind(enc_groupfd, param->cap.obj, sub_enc_object);
     }
-
+*/
     rtspd_avail_ch++;
 }
 
@@ -1883,6 +1732,35 @@ int gm_get_bandwidth_info(void)
         return 0;
 }
 
+static void audio_init() {
+    DECLARE_ATTR(audio_grab_attr, gm_audio_grab_attr_t);
+    DECLARE_ATTR(audio_encode_attr, gm_audio_enc_attr_t);
+
+    enc_audio_groupfd = gm_new_groupfd();
+
+    audio_grab_object = gm_new_obj(GM_AUDIO_GRAB_OBJECT);
+    audio_encode_object = gm_new_obj(GM_AUDIO_ENCODER_OBJECT);
+
+    audio_grab_attr.vch = 0;
+    audio_grab_attr.sample_rate = 16000;
+    audio_grab_attr.sample_size = 16;
+    audio_grab_attr.channel_type = GM_MONO;
+    gm_set_attr(audio_grab_object, &audio_grab_attr);
+
+    audio_encode_attr.encode_type = GM_AAC;
+    audio_encode_attr.bitrate = 16000;
+    audio_encode_attr.frame_samples = 1024;
+    gm_set_attr(audio_encode_object, &audio_encode_attr);
+
+    audio_bindfd = gm_bind(enc_audio_groupfd, audio_grab_object, audio_encode_object);
+
+    printf("enc_audio_groupfd:%p audio_bindfd:%p\n", enc_audio_groupfd, audio_bindfd);
+    if (gm_apply(enc_audio_groupfd) < 0) {
+        printf("Error! gm_apply fail");
+        exit(-1);
+    }
+}
+
 void gm_graph_init(void)
 {
     int cap_fps;
@@ -1912,7 +1790,9 @@ void gm_graph_init(void)
 
     rtspd_avail_ch = 0;
     gm_enc_init(0, 0, 0, cliArgs.encoderType, cliArgs.bitrateMode, cliArgs.framerate, cliArgs.bitrate, cliArgs.width, cliArgs.height);
-    gm_apply(enc_groupfd); // * Activate settings
+    gm_apply(enc_groupfd); 	// * Activate settings
+	
+	audio_init();			// * Activate audio
 }
 
 void gm_graph_release(void)
@@ -1929,7 +1809,9 @@ void gm_graph_release(void)
             }
         }
     }
+    gm_unbind(audio_bindfd);
     gm_apply(enc_groupfd);
+    gm_apply(enc_audio_groupfd);
 
     for (cap_ch = 0; cap_ch < CAP_CH_NUM; cap_ch++) {
         for (cap_path = 0; cap_path < CAP_PATH_NUM; cap_path++) {
@@ -1942,7 +1824,10 @@ void gm_graph_release(void)
                 gm_delete_obj(param->cap.obj);
         }
     }
+    gm_delete_obj(audio_grab_object);
+    gm_delete_obj(audio_encode_object);
     gm_delete_groupfd(enc_groupfd);
+    gm_delete_groupfd(enc_audio_groupfd);
     gm_release();
 }
 
@@ -2096,6 +1981,100 @@ void *encode_thread(void *ptr)
     return NULL;
 }
 
+#define BITSTREAM_LEN       12800
+
+static void *audio_encode_thread(void *arg)
+{
+    int ret;
+    gm_pollfd_t poll_fds;
+    gm_enc_multi_bitstream_t multi_bs;
+    char *bitstream_data;
+    priv_avbs_t *pb;
+    gm_ss_entity entity;
+    FILE *audio_file = NULL;
+
+    bitstream_data = (char *)malloc(BITSTREAM_LEN + 4);
+    if (bitstream_data == 0)
+        return 0;
+    memset(bitstream_data, 0, BITSTREAM_LEN + 4);
+
+    memset(&poll_fds, 0, sizeof(poll_fds));
+    poll_fds.bindfd = audio_bindfd;
+    poll_fds.event = GM_POLL_READ;
+
+    pb = &enc[0].priv_bs[0];
+
+    while (rtspd_sysinit) {
+        if (pb->play == 0) {
+            usleep(2000);
+            continue;
+        }
+        ret = gm_poll(&poll_fds, 1, 2000);
+        if (ret == GM_TIMEOUT) {
+            printf("audio poll timeout!!\n");
+            continue;
+        }
+
+        memset(&multi_bs, 0, sizeof(multi_bs));
+        if (poll_fds.revent.event != GM_POLL_READ) {
+            continue;
+        }
+        if (poll_fds.revent.bs_len > BITSTREAM_LEN) {
+            printf("buffer length is not enough! %d, %d\n",
+                    poll_fds.revent.bs_len, BITSTREAM_LEN);
+            continue;
+        }
+        multi_bs.bindfd = audio_bindfd;
+        multi_bs.bs.bs_buf = bitstream_data + 4;
+        multi_bs.bs.bs_buf_len = BITSTREAM_LEN;
+        multi_bs.bs.mv_buf = NULL;
+        multi_bs.bs.mv_buf_len = 0;
+
+        if ((ret = gm_recv_multi_bitstreams(&multi_bs, 1)) < 0)
+            printf("audio error return value %d\n", ret);
+        else {
+            if (!multi_bs.bindfd)
+                continue;
+            if (multi_bs.retval < 0) {
+                printf("get bitstreame error! ret = %d\n", ret);
+            } else if (multi_bs.retval == GM_SUCCESS) {
+                //printf("received audio %d %d %d\n", multi_bs.bs.bs_buf_len, poll_fds.revent.bs_len, multi_bs.bs.timestamp);
+                char *aac_data = multi_bs.bs.bs_buf;
+                int aac_data_len = multi_bs.bs.bs_len;
+                if (audio_file == NULL) {
+                    audio_file = fopen("/tmp/test.aac", "wb");
+                    fwrite(aac_data, 1, aac_data_len, audio_file);
+                    fclose(audio_file);
+                }
+                int adts_header = 0;
+                if (aac_data[1] & 1) {
+                    adts_header = 7;
+                } else {
+                    adts_header = 9;
+                }
+                entity.data = aac_data + adts_header - 4;
+                entity.size = aac_data_len - adts_header + 4;
+                entity.timestamp = multi_bs.bs.timestamp * (16000 / 1000);
+                // AU Headers
+                entity.data[0] = 0;
+                entity.data[1] = 0x10;
+                entity.data[2] = (aac_data_len - adts_header) >> 5;
+                entity.data[3] = (aac_data_len - adts_header) << 3;
+                pthread_mutex_lock(&stream_queue_mutex);
+                ret = stream_media_enqueue(GM_SS_TYPE_AAC, pb->audio.qno, &entity);
+                pthread_mutex_unlock(&stream_queue_mutex);
+                if (ret < 0) {
+                    printf("audio enqueue failed! ret = %d\n", ret);
+                }
+            }
+        }
+    }
+    pthread_exit(NULL);
+    audio_encode_thread_id = (pthread_t)NULL;
+
+    return 0;
+}
+
 void update_video_sdp(int cap_ch, int cap_path, int rec_track)
 {
     char *bitstream_data = NULL;
@@ -2156,6 +2135,7 @@ void update_video_sdp(int cap_ch, int cap_path, int rec_track)
 					case 2:
                     	stream_sdp_parameter_encoder("H264", (unsigned char *) bs.bs.bs_buf, bs.bs.bs_len, pb->video.sdpstr, SDPSTR_MAX);
 				}
+				log_info("Video sdpstr: %s", pb->video.sdpstr);
                 break;
             }
             else {
@@ -2173,7 +2153,6 @@ void update_video_sdp(int cap_ch, int cap_path, int rec_track)
 static int rtspd_start(int port)
 {
     int ret, ch_num, stream;
-	//int cap_ch, cap_path, rec_track;
     pthread_attr_t attr;
 
     if (rtspd_sysinit == 1)
@@ -2182,28 +2161,6 @@ static int rtspd_start(int port)
         sys_port = port;
     if ((ret = env_init()) < 0)
         return ret;
-
-	/* debug
-	for (cap_ch = 0; cap_ch < CAP_CH_NUM; cap_ch++) {
-        for (cap_path = 0; cap_path < CAP_PATH_NUM; cap_path++) {
-			for (rec_track = 0; rec_track < ENC_TRACK_NUM; rec_track++) {
-                if (enc_param[cap_ch][cap_path].bindfd[rec_track] != NULL) {
-                    update_video_sdp(cap_ch,cap_path,rec_track);
-                }
-            }
-        }
-    }
-	
-	for (ch_num = 0; ch_num < CAP_CH_NUM; ch_num++) {
-        for (stream = 0;stream < RTSP_NUM_PER_CAP;stream++) {
-            priv_avbs_t *pb = &enc[ch_num].priv_bs[stream];
-            if (pb->video.sdpstr[0] == '\0') {
-                log_error("Video SDP unavailable ch=%d sub=%d",ch_num,stream);
-                return -1;
-            }
-        }
-    }
-	end of debug */
 	
     if (pthread_mutex_init(&stream_queue_mutex, NULL)) {
         log_error("rtspd_start: mutex init failed");
@@ -2238,14 +2195,6 @@ static int rtspd_start(int port)
         }
     }
 
-    // * Enqueue Thread
-    if (enqueue_thread_id == (pthread_t)NULL) {
-        pthread_attr_init(&attr);
-        pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
-        ret = pthread_create(&enqueue_thread_id, &attr, &enqueue_thread, NULL);
-        pthread_attr_destroy(&attr);
-    }
-
 	// * OSD Thread
     if (cliArgs.osd && osd_thread_id == (pthread_t)NULL) {
         pthread_attr_init(&attr);
@@ -2255,13 +2204,21 @@ static int rtspd_start(int port)
     }
 	
     // * Audio thread: capture, encode and enqueue audio frames to stream */
-    if (audio_thread_id == (pthread_t)NULL) {
+    if (audio_encode_thread_id == (pthread_t)NULL) {
         pthread_attr_init(&attr);
         pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
-        ret = pthread_create(&audio_thread_id, &attr, &audio_thread, NULL);
+        ret = pthread_create(&audio_encode_thread_id, &attr, &audio_encode_thread, NULL);
         pthread_attr_destroy(&attr);
-    } 
+    }
 
+	// * Enqueue Thread
+    if (enqueue_thread_id == (pthread_t)NULL) {
+        pthread_attr_init(&attr);
+        pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+        ret = pthread_create(&enqueue_thread_id, &attr, &enqueue_thread, NULL);
+        pthread_attr_destroy(&attr);
+    }
+	
 	for (ch_num = 0; ch_num < CAP_CH_NUM; ch_num++) {
         pthread_mutex_lock(&enc[ch_num].ubs_mutex);
         for (stream = 0;stream < RTSP_NUM_PER_CAP;stream++)
@@ -2371,23 +2328,22 @@ int main(int argc, char *argv[])
     int i;
 	int cap_ch, cap_path, rec_track;
 	
-    // * Setup logging
-    setup_logging();
+    setup_logging();						// * Setup logging
 
-    cliArgs.bitrate     = 4096;     // for smooth moving object
-    cliArgs.framerate   = 20;
-    cliArgs.width       = 1920;
-    cliArgs.height      = 1080;
-    cliArgs.bitrateMode = GM_CBR;
-    cliArgs.encoderType = ENC_TYPE_H264;
+    cliArgs.bitrate     = 4096;     		// * for smooth moving object
+    cliArgs.framerate   = 20;				// * Maximum support fps
+    cliArgs.width       = 1920;				// * Maximum support width
+    cliArgs.height      = 1080;				// * Maximum support height
+    cliArgs.bitrateMode = GM_CBR;			// * Bitrate mode from 1-4
+    cliArgs.encoderType = ENC_TYPE_H264;	// * Encode type 
 
-    cliArgs.snapshot    = 0;
-    cliArgs.record      = 0;
-    cliArgs.motion      = 0;
-    cliArgs.osd         = 1;
-    cliArgs.font_zoom   = 2;	// small is GM_OSD_FONT_ZOOM_NONE, 2 is normal;
-    cliArgs.osd_bg_color= 1;	// 1 is Black
-    cliArgs.osd_text[0] = '\0';
+    cliArgs.snapshot    = 0;				// * Disable snapshot 
+    cliArgs.record      = 0;				// * Disable record
+    cliArgs.motion      = 0;				// * Disable motion
+    cliArgs.osd         = 1;				// * Enable OSD
+    cliArgs.font_zoom   = 2;				// * small is GM_OSD_FONT_ZOOM_NONE, 2 is normal;
+    cliArgs.osd_bg_color= 1;				// * Background osd 1 is Black
+    cliArgs.osd_text[0] = '\0';				// * Text on line 1
 
     if (argc > 1) {
         for (i = 1; i < argc; i++) {
