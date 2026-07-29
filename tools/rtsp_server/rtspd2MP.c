@@ -809,8 +809,8 @@ static int open_live_streaming(int ch_num, int sub_num)
 	sprintf(livename, "live/ch%02d_%d", ch_num, sub_num);
 	printf("%s", livename);
     log_info(pb->audio.sdpstr, "%X", (2 << 11) | (8 << 7) | (1 << 3)); // AAC LC, bitrate 16000, channel 1
-	log_info("video sdpstr: %s qno: %d", pb->video.sdpstr, pb->video.qno);
-    log_info("audio sdpstr: %s qno: %d", pb->audio.sdpstr, pb->audio.qno);
+	//log_info("video sdpstr: %s qno: %d", pb->video.sdpstr, pb->video.qno);
+    //log_info("audio sdpstr: %s qno: %d", pb->audio.sdpstr, pb->audio.qno);
     pb->sr = stream_reg(livename, pb->video.qno, pb->video.sdpstr,pb->audio.qno, pb->audio.sdpstr,1,0,0,0,0,0,0);
 	
 	if (pb->sr < 0){
@@ -1753,7 +1753,7 @@ static void audio_init() {
 
     audio_bindfd = gm_bind(enc_audio_groupfd, audio_grab_object, audio_encode_object);
 
-    log_info("enc_audio_groupfd:%p audio_bindfd:%p", enc_audio_groupfd, audio_bindfd);
+    //log_info("enc_audio_groupfd:%p audio_bindfd:%p", enc_audio_groupfd, audio_bindfd);
     if (gm_apply(enc_audio_groupfd) < 0) {
         log_error("Error! gm_apply fail");
         exit(-1);
