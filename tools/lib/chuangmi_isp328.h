@@ -119,6 +119,16 @@ int sharpness_reset(void);
 int sharpness_get(void);
 int sharpness_print(void);
 
+int gamma_type_set(int value);
+int gamma_type_reset(void);
+int gamma_type_get(void);
+int gamma_type_print(void);
+
+int dr_mode_set(int value);
+int dr_mode_reset(void);
+int dr_mode_get(void);
+int dr_mode_print(void);
+
 int print_camera_info_json(void);
 int print_camera_info_shell(void);
 int print_camera_info(void);
