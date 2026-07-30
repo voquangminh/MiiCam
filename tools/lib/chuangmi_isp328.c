@@ -688,6 +688,123 @@ int sharpness_print(void)
     return 0;
 }
 
+// ************************************************************************** //
+// ** Gamma_type                                                           ** //
+// ************************************************************************** //
+
+int gamma_type_set(int value)
+{
+    if (isp328_is_initialized() < 0)
+        return -1;
+
+    if (value < 0 && value > 255) {
+        fprintf(stderr, "*** Error: Cannot set gamma_type to %d: Use: (0-255)\n", value);
+        return -1;
+    }
+
+    fprintf(stderr, "*** Setting gamma_type to %d\n", value);
+
+    int ret = ioctl(isp_fd, ISP_IOC_SET_GAMMA_TYPE, &value);
+    if (ret < 0) {
+        fprintf(stderr, "*** Error: Cannot set value for gamma_type!\n");
+        return -1;
+    }
+
+    return 0;
+}
+
+int gamma_type_reset(void)
+{
+    if (gamma_type_set(128) < 0 ) {
+        fprintf(stderr, "*** Error: Failed to reset gamma_type to it's default value!\n");
+        return -1;
+    } else {
+        fprintf(stderr, "*** Setting gamma_type has been reset to it's default value (128)\n");
+        return 0;
+    }
+}
+
+int gamma_type_get(void)
+{
+    int value;
+
+    if (isp328_is_initialized() < 0)
+        return -1;
+
+    int ret = ioctl(isp_fd, ISP_IOC_GET_GAMME_TYPE, &value);
+    if (ret < 0) {
+        return -1;
+    }
+
+    return value;
+}
+
+int gamma_type_print(void)
+{
+    int value = gamma_type_get();
+
+    if (value < 0) {
+        fprintf(stderr, "*** Error: Cannot get value for gamma_type!\n");
+        return -1;
+    }
+
+    fprintf(stdout, "* Value for gamma_type is %d\n", value);
+    return 0;
+}
+
+// ************************************************************************** //
+// ** DR_MODE Set dr_mode to a value (Valid: 1/0)                          ** //
+// ************************************************************************** //
+
+int dr_mode_set(int value)
+{
+    if (isp328_is_initialized() < 0)
+        return -1;
+
+    if (value <= 1) {
+        fprintf(stderr, "*** Setting dr_mode to %d\n", value);
+        ioctl(isp_fd, ISP_IOC_SET_DR_MODE, &value);
+        return 0;
+    } else {
+        fprintf(stderr, "*** Error: Cannot set dr_mode to %d\n", value);
+        return -1;
+    }
+}
+
+/*
+ * Turn dr_mode on
+ */
+int dr_mode_on(void)
+{
+    return dr_mode_set(1);
+}
+
+/*
+ * Turn dr_mode off
+ */
+int dr_mode_off(void)
+{
+    return dr_mode_set(0);
+}
+
+/*
+ * Get the status for dr_mode
+ */
+int dr_mode_status(void)
+{
+    int mode;
+
+    int ret = ioctl(isp_fd, ISP_IOC_GET_DR_MODE, &mode);
+    if (ret < 0) {
+        fprintf(stdout, "*** Errror: Retrieving dr_mode values failed");
+        return -1;
+    }
+
+    fprintf(stdout, "*** dr_mode is: %s\n", (mode == 1) ? "WDR" : "LINEAR");
+
+    return 0;
+}
+
 
 // ************************************************************************** //
 // ** Status                                                               ** //
@@ -702,6 +819,8 @@ int print_camera_info_json(void)
         fprintf(stdout, "\"saturation\":%d,", saturation_get());
         fprintf(stdout, "\"denoise\":%d,", denoise_get());
         fprintf(stdout, "\"sharpness\":%d", sharpness_get());
+        fprintf(stdout, "\"gamma_type\":%d", gamma_type_get());
+        fprintf(stdout, "\"dr_mode\":%d", dr_mode_get());
         fprintf(stdout, "}");
 
         return 0;
@@ -716,6 +835,8 @@ int print_camera_info_shell(void)
         fprintf(stdout, "SATURATION=\"%d\"\n", saturation_get());
         fprintf(stdout, "DENOISE=\"%d\"\n",    denoise_get());
         fprintf(stdout, "SHARPNESS=\"%d\"\n",   sharpness_get());
+        fprintf(stdout, "GAMMA=\"%d\"\n",   gamma_type_get());
+        fprintf(stdout, "DR_MODE=\"%d\"\n",   dr_mode_get());
         return 0;
 }
 
@@ -729,6 +850,8 @@ int print_camera_info(void)
         fprintf(stdout, "- Saturation: %d\n", saturation_get());
         fprintf(stdout, "- Denoise:    %d\n", denoise_get());
         fprintf(stdout, "- Sharpness:  %d\n", sharpness_get());
+        fprintf(stdout, "- Gamma:  %d\n", gamma_type_get());
+        fprintf(stdout, "- DR_MODE:  %d\n", dr_mode_get());
         fprintf(stdout, "\n");
 
         return 0;
