@@ -55,7 +55,7 @@
 #define AQ_LEN                   64            // * 1 MP2 and 1 AMR for live streaming, another 2 for file streaming.
 #define AV_NAME_MAX              127
 
-#define RTP_HZ                   90000
+#define RTP_HZ                   90000		   // * timestamp HW clock
 
 #define ERR_GOTO(x, y)           do { ret = x; goto y; } while(0)
 #define MUTEX_FAILED(x)          (x == ERR_MUTEX)
@@ -269,40 +269,25 @@ static void read_hostname(char *out, size_t outlen)
 {
     FILE *f;
     char line[256];
-
     out[0] = '\0';
-
     f = fopen("/tmp/sd/config.cfg", "r");
+	
     if (!f)
         return;
-
     while (fgets(line, sizeof(line), f)) {
-
         if (strncmp(line, "HOSTNAME=", 9) != 0)
             continue;
-
         char *v = line + 9;
-
         if (*v == '"')
             v++;
-
         char *end = v + strlen(v);
-
-        while (end > v &&
-              (end[-1] == '\n' ||
-               end[-1] == '\r' ||
-               end[-1] == '"'  ||
-               end[-1] == ' '))
-        {
+        while (end > v && (end[-1] == '\n' || end[-1] == '\r' || end[-1] == '"'  || end[-1] == ' ')) {
             *--end = '\0';
         }
-
         strncpy(out, v, outlen - 1);
         out[outlen - 1] = '\0';
-
         break;
     }
-
     fclose(f);
 }
 
@@ -340,7 +325,6 @@ static void rtspd_enable_osd_font(void *capture_obj, const char *text)
         snprintf(line1, sizeof(line1), "chuangmi");
     else
         snprintf(line1, sizeof(line1), "%s", text);
-
     if (capture_obj != NULL) {
         now = time(NULL);
         localtime_r(&now, &tm);
@@ -404,13 +388,13 @@ static void rtspd_set_osd_text(void *capture_obj, const char *line1, const char 
     osd_font2.font_index = rtspd_osd_font2_text;
     osd_font2.font_alpha = GM_OSD_FONT_ALPHA_75;
     osd_font2.win_alpha = GM_OSD_FONT_ALPHA_75;
-    osd_font2.font_palette_idx = 14;   // WHITE
+    osd_font2.font_palette_idx = 14;   							// WHITE
     osd_font2.priority = GM_OSD_PRIORITY_MARK_ON_OSD;
     osd_font2.smooth.enabled = 1;
     osd_font2.smooth.level = GM_OSD_FONT_SMOOTH_LEVEL_WEAK;
     osd_font2.marquee.mode = GM_OSD_MARQUEE_MODE_NONE;
-    osd_font2.win_palette_idx  = cliArgs.osd_bg_color;  // background color
-    osd_font2.border.enabled = 0;   // without border
+    osd_font2.win_palette_idx  = cliArgs.osd_bg_color;  		// background color
+    osd_font2.border.enabled = 0;   							// without border
     osd_font2.border.width = 1;
     osd_font2.border.type = GM_OSD_BORDER_TYPE_WIN;
     osd_font2.border.palette_idx = 1;
@@ -545,22 +529,18 @@ int stop_recording(void)
     gettimeofday(&now, NULL);
 
     log_info("Stopping video recording after %ld seconds", now.tv_sec - VideoRecorder.record_start.tv_sec);
-
     // * Close video file
     if (VideoRecorder.fh)
         fclose(VideoRecorder.fh);
     VideoRecorder.fh = NULL;
-
     if (VideoRecorder.fh_aac)
         fclose(VideoRecorder.fh_aac);
     VideoRecorder.fh_aac = NULL;
-
     // * Reset all Recorder settings to zero
     VideoRecorder.waiting_for_keyframe = 1;
     VideoRecorder.recording = 0;
     VideoRecorder.file_path[0] = '\0';
     VideoRecorder.audio_file_path[0] = '\0';
-
     return 0;
 }
 
@@ -585,7 +565,6 @@ static int set_cap_motion(int cap_vch, unsigned int id, unsigned int value)
 
     cap_motion.id = id; //alpha
     cap_motion.value = value;
-
     ret = gm_set_cap_motion(cap_vch, &cap_motion);
     if (ret < 0) {
         log_error("Failed to run gm_set_cap_motion");
@@ -594,6 +573,7 @@ static int set_cap_motion(int cap_vch, unsigned int id, unsigned int value)
     return 0;
 }
 
+// * Training motion
 static int set_interesting_area(int ch)
 {
     int ret = 0;
@@ -621,9 +601,7 @@ static int set_interesting_area(int ch)
         ret = -1;
         goto err_ext;
     }
-
     memset(mdt_alg.mb_cell_en, 0, (sizeof(unsigned char) * mb_w_num * mb_h_num));
-
     // * Set Area
     for (h = 0; h < mb_h_num; h++) {
         for (w = 0; w < mb_w_num; w++) {
@@ -643,7 +621,6 @@ static int set_interesting_area(int ch)
 
     param = &enc_param[0][0];
     ret = motion_detection_update(param->bindfd[0], &mdt_alg);
-
     if (ret != 0) {
         log_error("Failed to execute motion_detection_update");
         ret = -1;
@@ -669,7 +646,6 @@ int init_snapshot(void)
         fputs("unknown", fd);
         fclose(fd);
     }
-
     return 0;
 }
 
@@ -710,17 +686,13 @@ void take_snapshot(void)
 
     if (snapshot_len > 0) {
         strftime(dirstring, sizeof(dirstring), "/tmp/sd/RECORDED_IMAGES/%Y/%m/%d", sTm);
-
         struct stat st = {0};
         if (stat(dirstring, &st) != 0) {
             create_directory(dirstring);
         }
-
         strftime(filestring, sizeof(filestring), "snapshot_%H%M%S.jpg", sTm);
         sprintf(full_file_path, "%s/%s%c", dirstring, filestring, '\0');
-
         log_info("Image %s size %d bytes", full_file_path, snapshot_len);
-
         // * Write image to file
         snapshot_fd = fopen(full_file_path, "wb");
         if (snapshot_fd == NULL) {
@@ -729,7 +701,6 @@ void take_snapshot(void)
         }
         fwrite(snapshot_buf, 1, snapshot_len, snapshot_fd);
         fclose(snapshot_fd);
-
         // * Write filename to /dev/shm
         snapshot_name_fd = fopen(LAST_SNAPSHOT_PATH, "wb");
         if (snapshot_name_fd == NULL) {
@@ -762,7 +733,6 @@ static int do_queue_alloc(int type)
     do {
         rc = stream_queue_alloc(type);
     } while MUTEX_FAILED(rc);
-
     return rc;
 }
 
@@ -1340,7 +1310,6 @@ static void *motion_thread(void *arg)
         log_fatal("Failed to allocate capture motion info!");
         goto thread_exit;
     }
-
     memset((void *) cap_md, 0, (sizeof(gm_multi_cap_md_t) * 1));
 
     cap_md[0].bindfd = param->bindfd[0];
@@ -1356,31 +1325,24 @@ static void *motion_thread(void *arg)
 
     while (rtspd_sysinit) {
         ret = gm_recv_multi_cap_md(cap_md, 1);
-
         if (ret < 0) {                  // * -1: Error, 0: Success
             log_error("Failed to retrieve motion data (gm_recv_multi_cap_md)");
             continue;
         }
-
         ret = motion_detection_handling(cap_md, &mdt_result[0], 1);
         if (ret < 0) {                  // * -1: Error, 0: Success
             log_fatal("Failed to handle motion data (motion_detection_handling)");
             goto thread_exit;
         }
-
         for (ch = 0; ch < 1; ch++) {
             if (mdt_result[ch].result == MOTION_PARSING_ERROR)
                 log_error("Failed parsing motion data.");
-
             else if (mdt_result[ch].result == MOTION_INIT_ERROR)
                 log_error("Motion init error.");
-
             else if (mdt_result[ch].result == MOTION_ALGO_ERROR)
                 log_error("Motion algorithm failed.");
-
             else if (mdt_result[ch].result == MOTION_DATA_ERROR)
                 log_error("Motion data retrieval failed.");
-
             // * Motion Training
             else if (mdt_result[ch].result == MOTION_IS_TRAINING) {
                 if (training_detected == 0) {
@@ -1394,13 +1356,10 @@ static void *motion_thread(void *arg)
                 if (motion_detected == 0) {
                     gettimeofday(&last_motion, NULL);
                     motion_detected = 1;
-
                     if (cliArgs.snapshot == 1)
                         snapshot_create = 1;
-
                     if (cliArgs.record == 1)
                         video_create = 1;
-
                     log_info("Motion ON - executing motion on script");
                     system(MOTION_ON_SCRIPT);
                 }
@@ -1410,11 +1369,9 @@ static void *motion_thread(void *arg)
             else if (mdt_result[ch].result == NO_MOTION) {
                 if (motion_detected == 1) {
                     motion_detected = 0;
-
                     // * Turn recording off after 20 seconds
                     if (VideoRecorder.recording == 1) {
                         gettimeofday(&now, NULL);
-
                         if (now.tv_sec - last_motion.tv_sec >= (long)RECORDING_DURATION) {
                             if (stop_recording() < 0)
                                 log_error("Failed to stop recording in motion thread");
@@ -1440,14 +1397,12 @@ thread_exit:
                 free(cap_md[ch].cap_md_info.md_buf);
         }
     }
-
     if (cap_md)
         free(cap_md);
 
     motion_detection_end();
     pthread_exit(NULL);
     motion_thread_id = (pthread_t)NULL;
-
     return 0;
 }
 
@@ -1471,8 +1426,8 @@ void gm_update_bs_info(void)
 {
     int cap_ch,cap_path,rec_track;
     int ch=0;
-     avbs_t *avbs;
-     gm_enc_t *param;
+    avbs_t *avbs;
+    gm_enc_t *param;
 
     for (cap_ch = 0; cap_ch < CAP_CH_NUM; cap_ch++) {
         for (cap_path = 0; cap_path < CAP_PATH_NUM; cap_path++) {
@@ -1556,13 +1511,19 @@ void gm_enc_init(int cap_ch, int cap_path, int rec_track, int enc_type, int mode
         cap_attr.enable_mv_data = 1;
         gm_set_attr(param->cap.obj, &cap_attr);                // * Set capture attribute
 
+		//enable 3dnr if resolution > capture dim / 2 
+        if ((width >= (gm_system.cap[0].dim.width / 2)) &&
+            (height >= (gm_system.cap[0].dim.height / 2))) {
+            dnr_attr.enabled = 1;
+            gm_set_attr(param->cap.obj, &dnr_attr);
+        }
+
         memcpy(&param->cap.cap_attr, &cap_attr, sizeof(gm_cap_attr_t));
         memcpy(&param->cap.dnr_attr, &dnr_attr, sizeof(gm_3dnr_attr_t));
     }
-
+	
     param->enc[rec_track].obj = gm_new_obj(GM_ENCODER_OBJECT); // * New encoder object
     param->enc[rec_track].enc_type = enc_type;
-
     switch (enc_type) {
         case ENC_TYPE_H264:
             h264e_attr.dim.width             = width;
@@ -1606,8 +1567,8 @@ void gm_enc_init(int cap_ch, int cap_path, int rec_track, int enc_type, int mode
     // * Bind channel recording
     param->bindfd[rec_track] = gm_bind(enc_groupfd, param->cap.obj, param->enc[rec_track].obj);
     if (cliArgs.osd) {
-                rtspd_enable_osd_font(param->cap.obj, cliArgs.osd_text[0] != '\0' ? cliArgs.osd_text : "chuangmi");
-            }
+    	rtspd_enable_osd_font(param->cap.obj, cliArgs.osd_text[0] != '\0' ? cliArgs.osd_text : "chuangmi");
+    }
     // * Set motion detection
     if (cliArgs.motion == 1) {
         motion_detection_init();				// * Enable motion detection
@@ -1734,7 +1695,7 @@ static void audio_init() {
 
     audio_bindfd = gm_bind(enc_audio_groupfd, audio_grab_object, audio_encode_object);
 
-    printf("enc_audio_groupfd:%p audio_bindfd:%p\n", enc_audio_groupfd, audio_bindfd);
+    //log_info("enc_audio_groupfd:%p audio_bindfd:%p\n", enc_audio_groupfd, audio_bindfd);
     if (gm_apply(enc_audio_groupfd) < 0) {
         printf("Error! gm_apply fail");
         exit(-1);
@@ -1837,7 +1798,6 @@ void *encode_thread(void *ptr)
 
                     avbs = &enc[cap_ch].bs[ch];
                     get_enc_res(&param->enc[rec_track], NULL, &w, &h);
-
                     pb = &enc[cap_ch].priv_bs[ch];
                     pb->video.bs_buf_len = w * h * 3 / 2;
                     pb->video.bs_buf     = malloc(pb->video.bs_buf_len);
@@ -2083,11 +2043,11 @@ void update_video_sdp(int cap_ch, int cap_path, int rec_track)
             log_error("bitstream buffer length is too small! %d, %d", poll_fds.revent.bs_len, bitstream_data_len);
             continue;
         }
-        bs.bindfd = poll_fds.bindfd;        // * Set buffer point
-        bs.bs.bs_buf = bitstream_data;
-        bs.bs.bs_buf_len = bitstream_data_len;        // * Set buffer lengt
-        bs.bs.mv_buf = 0;        // * Turn off receiving motion data
-        bs.bs.mv_buf_len = 0;// * Not to receive MV data
+        bs.bindfd = poll_fds.bindfd;        		
+        bs.bs.bs_buf = bitstream_data;				// * Set buffer point
+        bs.bs.bs_buf_len = bitstream_data_len;      // * Set buffer lengt
+        bs.bs.mv_buf = 0;        					// * Turn off receiving motion data
+        bs.bs.mv_buf_len = 0;						// * Not to receive MV data
         ret = gm_recv_multi_bitstreams(&bs, 1);     // * -1: Fail 0: Success
         if ( ret < 0 )
             log_error("Failed to receive bitstream (gm_recv_multi_bitstreams).");
@@ -2098,15 +2058,12 @@ void update_video_sdp(int cap_ch, int cap_path, int rec_track)
                 switch (cliArgs.encoderType) {
                     case 0:
                         stream_sdp_parameter_encoder("H264", (unsigned char *) bs.bs.bs_buf, bs.bs.bs_len, pb->video.sdpstr, SDPSTR_MAX);
-						break;
                     case 1:
                         stream_sdp_parameter_encoder("MPEG4", (unsigned char *) bs.bs.bs_buf, bs.bs.bs_len, pb->video.sdpstr, SDPSTR_MAX);
-                        break;
                     case 2:
                         stream_sdp_parameter_encoder("MJPEG", (unsigned char *) bs.bs.bs_buf, bs.bs.bs_len, pb->video.sdpstr, SDPSTR_MAX);
-                        break;
                     }
-                break;
+                	break;
             }
             else {
                 if (++cnt > 100) {
@@ -2146,7 +2103,7 @@ static int rtspd_start(int port)
         pthread_attr_destroy(&attr);
     }
 
-    // * Audio thread: capture, encode and enqueue audio frames to stream */
+    // * Audio Thread
     if (audio_encode_thread_id == (pthread_t)NULL) {
         pthread_attr_init(&attr);
         pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
@@ -2255,16 +2212,16 @@ static void print_usage(void)
         "-w [1-1280]    - Set the image width     (default: 1280 pixels)\n"
         "-h [1-720]     - Set the image height    (default: 720 pixels)\n"
         "-m [1-4]       - Set the bitrate mode    (default: 1, CBR)\n"
-        "-o (1 or 0)    - Enable OSD overlay      (default: on, timestamp updated every second)\n"
+        "-o [1 or 0]    - Enable OSD overlay      (default: on, timestamp updated every second)\n"
         "-t [text]      - Set OSD overlay text    (default: 'hostname')\n"
-        "-z [0-4]       - Set OSD font zoom (0=none,1=2x,2=3x,3=4x,4=1/2) (default: 0)\n\n"
+        "-z [0-4]       - Set OSD font zoom (0=none,1=2x,2=3x,3=4x,4=1/2) (default: 1)\n"
+		"-B [0-15]      - Set OSD background palette index (default: 1=Black)\n\n"
         
         "-j (optional)  - Use MJPEG encoding      (default: off)\n"
         "-4 (optional)  - Use MPEG4 encoding      (default: off)\n"
         "-d (optional)  - Enable motion detection (default: off)\n"
         "-s (optional)  - Take a snapshot when motion detected (default: off)\n"
         "-r (optional)  - Record a 10 second clip on motion    (default: off)\n"
-        "-B [0-15]      - Set OSD background palette index (default: 1)\n"
     );
 
 	exit(EXIT_FAILURE);
@@ -2316,28 +2273,28 @@ int main(int argc, char *argv[])
             } else {
                 switch (argv[i][1]) {
                     case 'd':
-                        cliArgs.motion      = 1;    // * Enable motion detection
+                        cliArgs.motion      = 1;    				// * Enable motion detection
                         break;
                     case 's':
-                        cliArgs.snapshot    = 1;    // * Enable snapshot when motion detected
+                        cliArgs.snapshot    = 1;    				// * Enable snapshot when motion detected
                         break;
                     case 'r':
-                        cliArgs.record      = 1;    // * Enable record stream when motion detected
+                        cliArgs.record      = 1;    				// * Enable record stream when motion detected
                         break;
                     case 'b':
-                        cliArgs.bitrate     = atoi(&argv[i][2]);
+                        cliArgs.bitrate     = atoi(&argv[i][2]);	// * Set bitrate higher for smooth
                         break;
                     case 'f':
-                        cliArgs.framerate   = atoi(&argv[i][2]);
+                        cliArgs.framerate   = atoi(&argv[i][2]);	// * Set framerate only accept scaling down
                         break;
                     case 'w':
-                        cliArgs.width       = atoi(&argv[i][2]);
+                        cliArgs.width       = atoi(&argv[i][2]);	// * Set width
                         break;
                     case 'h':
-                        cliArgs.height      = atoi(&argv[i][2]);
+                        cliArgs.height      = atoi(&argv[i][2]);	// * Set height
                         break;
                     case 'm':
-                        cliArgs.bitrateMode = atoi(&argv[i][2]);
+                        cliArgs.bitrateMode = atoi(&argv[i][2]);	// * Set biterateMode 
                         break;
                     case 'j':
                         cliArgs.encoderType = ENC_TYPE_MJPEG;
@@ -2346,7 +2303,7 @@ int main(int argc, char *argv[])
                         cliArgs.encoderType = ENC_TYPE_MPEG4;
                         break;
                     case 'o':
-                        cliArgs.osd = 1;
+                        cliArgs.osd = 1;							// Set OSD costumize
                         if (argv[i][2] != '\0') {
                             strncpy(cliArgs.osd_text, &argv[i][2], sizeof(cliArgs.osd_text) - 1);
                             cliArgs.osd_text[sizeof(cliArgs.osd_text) - 1] = '\0';
@@ -2356,7 +2313,7 @@ int main(int argc, char *argv[])
                         }
                         break;
                     case 'B':
-                        cliArgs.osd = 1;
+                        cliArgs.osd = 1;							// * Set background color osd
                         if (argv[i][2] != '\0') {
                             cliArgs.osd_bg_color = atoi(&argv[i][2]);
                         } else if ((i + 1) < argc && argv[i + 1][0] != '-') {
@@ -2365,7 +2322,7 @@ int main(int argc, char *argv[])
                         if (cliArgs.osd_bg_color < 0 || cliArgs.osd_bg_color > 15)
                             cliArgs.osd_bg_color = 1;
                         break;
-                    case 'z':
+                    case 'z':										// * Set zoom font osd
                         /* expect a digit after -z or -zN */
                         if (argv[i][2] != '\0')
                             cliArgs.font_zoom = atoi(&argv[i][2]);
@@ -2456,26 +2413,25 @@ int main(int argc, char *argv[])
     log_info("Framerate    : %d", cliArgs.framerate);
     log_info("Bitrate      : %d", cliArgs.bitrate);
     log_info("Bitrate Mode : %d", cliArgs.bitrateMode);
+	log_info("IP Local 	   : %s", get_local_ip());	
 
     // * Use our handler for the signals so we can do some cleanup at quit
     signal(SIGINT,  signal_handler);
     signal(SIGHUP,  signal_handler);
     signal(SIGTERM, signal_handler);
 
-    // * Start the rtsp threads
-    rtspd_start(554);
-
     for (cap_ch = 0; cap_ch < CAP_CH_NUM; cap_ch++) {
         for (cap_path = 0; cap_path < CAP_PATH_NUM; cap_path++) {
             for (rec_track = 0; rec_track < ENC_TRACK_NUM; rec_track++) {
-                update_video_sdp(cap_ch, cap_path, rec_track);                
+                update_video_sdp(cap_ch, cap_path, rec_track);
             }
         }
     }
-
-    while(1) {
+	// * Start the rtsp threads
+    rtspd_start(554);
+    
+	while(1) {
         usleep(10000);
     }
-
     return 0;
 }
