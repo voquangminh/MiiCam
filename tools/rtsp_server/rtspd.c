@@ -1694,7 +1694,7 @@ static void audio_init() {
     gm_set_attr(audio_grab_object, &audio_grab_attr);
 
     audio_encode_attr.encode_type = GM_AAC;
-    audio_encode_attr.bitrate = 16000;
+    audio_encode_attr.bitrate = 32000;
     audio_encode_attr.frame_samples = 1024;
     gm_set_attr(audio_encode_object, &audio_encode_attr);
 
