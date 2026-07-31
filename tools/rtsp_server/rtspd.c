@@ -767,7 +767,6 @@ static int convert_gmss_media_type(int type)
 static int open_live_streaming(int ch_num, int sub_num)
 {
     int media_type;
-    int ret;
     avbs_t *b;
     priv_avbs_t *pb;
     char livename[64];
