@@ -1481,7 +1481,7 @@ int env_init(void)
     gm_update_bs_info();
 
     srand((unsigned int)time(NULL));					//	MTU
-    if ((ret = stream_server_init(ipptr, (int) sys_port, 0, 1444, 256, SR_MAX, VQ_MAX, VQ_LEN, AQ_MAX, AQ_LEN, frm_cb, cmd_cb)) < 0)
+    if ((ret = stream_server_init(ipptr, (int) sys_port, 0, 1200, 256, SR_MAX, VQ_MAX, VQ_LEN, AQ_MAX, AQ_LEN, frm_cb, cmd_cb)) < 0)
         log_error("stream_server_init, ret %d", ret);
     if ((ret = stream_server_start()) < 0)
         log_error("stream_server_start, ret %d", ret);
@@ -2405,13 +2405,13 @@ int main(int argc, char *argv[])
     // * Initializing gmlib
     gm_graph_init();
 
-    log_info("Width        : %d", cliArgs.width);
-    log_info("Height       : %d", cliArgs.height);
-    log_info("Encoder      : %s", cliArgs.encoderType == ENC_TYPE_H264 ? "H264" : cliArgs.encoderType == ENC_TYPE_MJPEG ? "MJPEG" : "MPEG4");
-    log_info("Framerate    : %d", cliArgs.framerate);
-    log_info("Bitrate      : %d", cliArgs.bitrate);
-    log_info("Bitrate Mode : %d", cliArgs.bitrateMode);
-	log_info("IP Local	   : %s", get_local_ip());	
+    log_info("Width        	: %d", cliArgs.width);
+    log_info("Height       	: %d", cliArgs.height);
+    log_info("Encoder      	: %s", cliArgs.encoderType == ENC_TYPE_H264 ? "H264" : cliArgs.encoderType == ENC_TYPE_MJPEG ? "MJPEG" : "MPEG4");
+    log_info("Framerate    	: %d", cliArgs.framerate);
+    log_info("Bitrate      	: %d", cliArgs.bitrate);
+    log_info("Bitrate Mode 	: %d", cliArgs.bitrateMode);
+	log_info("IP Local		: %s", get_local_ip());	
 
     // * Use our handler for the signals so we can do some cleanup at quit
     signal(SIGINT,  signal_handler);
