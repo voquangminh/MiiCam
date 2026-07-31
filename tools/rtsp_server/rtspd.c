@@ -52,7 +52,7 @@
 #define VQ_MAX                   (SR_MAX)
 #define VQ_LEN                   100
 #define AQ_MAX                   64	           	// * 1 MP2 and 1 AMR for live streaming, another 2 for file streaming.
-#define AQ_LEN                   4				// * 1 MP2 and 1 AMR for live streaming, another 2 for file streaming.
+#define AQ_LEN                   4				// * Higher value will increase latency
 #define AV_NAME_MAX              127
 
 #define RTP_HZ                   90000		   // * timestamp HW clock
@@ -1480,8 +1480,9 @@ int env_init(void)
     // * Update bs info from decoder
     gm_update_bs_info();
 
-    srand((unsigned int)time(NULL));					//	MTU
+    srand((unsigned int)time(NULL));						
     if ((ret = stream_server_init(ipptr, (int) sys_port, 0, 1200, 256, SR_MAX, VQ_MAX, VQ_LEN, AQ_MAX, AQ_LEN, frm_cb, cmd_cb)) < 0)
+								//socket, 	port, 		QoS, MTU, clients
         log_error("stream_server_init, ret %d", ret);
     if ((ret = stream_server_start()) < 0)
         log_error("stream_server_start, ret %d", ret);
