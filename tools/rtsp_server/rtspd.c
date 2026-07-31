@@ -43,7 +43,7 @@
 #define ENC_TYPE_MJPEG           2
 
 #define CAP_CH_NUM               1
-#define RTSP_NUM_PER_CAP         1			   // * default is 4
+#define RTSP_NUM_PER_CAP         1			   // * default is 4 - fix to 1 for stable stream
 #define CAP_PATH_NUM             4
 #define ENC_TRACK_NUM            4
 
@@ -1481,7 +1481,7 @@ int env_init(void)
     gm_update_bs_info();
 
     srand((unsigned int)time(NULL));					//	MTU
-    if ((ret = stream_server_init(ipptr, (int) sys_port, 0, 1200, 256, SR_MAX, VQ_MAX, VQ_LEN, AQ_MAX, AQ_LEN, frm_cb, cmd_cb)) < 0)
+    if ((ret = stream_server_init(ipptr, (int) sys_port, 0, 1444, 256, SR_MAX, VQ_MAX, VQ_LEN, AQ_MAX, AQ_LEN, frm_cb, cmd_cb)) < 0)
         log_error("stream_server_init, ret %d", ret);
     if ((ret = stream_server_start()) < 0)
         log_error("stream_server_start, ret %d", ret);
