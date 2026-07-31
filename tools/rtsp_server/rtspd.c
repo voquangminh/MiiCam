@@ -47,7 +47,7 @@
 #define CAP_PATH_NUM             4
 #define ENC_TRACK_NUM            4
 
-#define SDPSTR_MAX               128
+#define SDPSTR_MAX               512		   // * default is 128
 #define SR_MAX                   64
 #define VQ_MAX                   (SR_MAX)
 #define VQ_LEN                   100
