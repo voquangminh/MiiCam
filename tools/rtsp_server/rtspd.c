@@ -1481,7 +1481,7 @@ int env_init(void)
     gm_update_bs_info();
 
     srand((unsigned int)time(NULL));					//	MTU
-    if ((ret = stream_server_init(ipptr, (int) sys_port, 0, 1444, 256, SR_MAX, VQ_MAX, VQ_LEN, AQ_MAX, AQ_LEN, frm_cb, cmd_cb)) < 0)
+    if ((ret = stream_server_init(ipptr, (int) sys_port, 0, 1200, 256, SR_MAX, VQ_MAX, VQ_LEN, AQ_MAX, AQ_LEN, frm_cb, cmd_cb)) < 0)
         log_error("stream_server_init, ret %d", ret);
     if ((ret = stream_server_start()) < 0)
         log_error("stream_server_start, ret %d", ret);
