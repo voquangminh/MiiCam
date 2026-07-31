@@ -1481,7 +1481,7 @@ int env_init(void)
     gm_update_bs_info();
 
     srand((unsigned int)time(NULL));					//	MTU
-    if ((ret = stream_server_init(ipptr, (int) sys_port, 0, 1200, 256, SR_MAX, VQ_MAX, VQ_LEN, AQ_MAX, AQ_LEN, frm_cb, cmd_cb)) < 0)
+    if ((ret = stream_server_init(ipptr, (int) sys_port, 0, 1444, 256, SR_MAX, VQ_MAX, VQ_LEN, AQ_MAX, AQ_LEN, frm_cb, cmd_cb)) < 0)
         log_error("stream_server_init, ret %d", ret);
     if ((ret = stream_server_start()) < 0)
         log_error("stream_server_start, ret %d", ret);
@@ -1528,7 +1528,7 @@ void gm_enc_init(int cap_ch, int cap_path, int rec_track, int enc_type, int mode
             h264e_attr.dim.height            = height;
             h264e_attr.frame_info.framerate  = framerate;
             h264e_attr.ratectl.mode          = mode;
-            h264e_attr.ratectl.gop           = 60;
+            h264e_attr.ratectl.gop           = 20;			   // * I frame per second, default is 60
             h264e_attr.ratectl.bitrate       = bitrate;
             h264e_attr.ratectl.bitrate_max   = bitrate;
             h264e_attr.b_frame_num           = 0;              // * B-frames per GOP (H.264 high profile)
