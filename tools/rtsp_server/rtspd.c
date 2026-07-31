@@ -774,13 +774,12 @@ static int open_live_streaming(int ch_num, int sub_num)
     CHECK_CHANNUM_AND_SUBNUM(ch_num, sub_num);
     b = &enc[ch_num].bs[sub_num];
     pb = &enc[ch_num].priv_bs[sub_num];
-    log_info("OPEN STREAM sub=%d pb=%p vsdp='%s'",sub_num,pb,pb->video.sdpstr);
+    //log_info("OPEN STREAM sub=%d pb=%p vsdp='%s'",sub_num,pb,pb->video.sdpstr);
     media_type = convert_gmss_media_type(b->video.enc_type);
     pb->video.qno = do_queue_alloc(media_type);
 	pb->audio.qno = do_queue_alloc(GM_SS_TYPE_AAC);
 
     sprintf(livename, "live/ch%02d_%d", ch_num, sub_num);
-
     sprintf(pb->audio.sdpstr, "%X", (2 << 11) | (8 << 7) | (1 << 3)); // AAC LC, bitrate 16000, channel 1
     pb->sr = stream_reg(livename, pb->video.qno, pb->video.sdpstr,pb->audio.qno, pb->audio.sdpstr, 1, 0, 0, 0, 0, 0, 0);
 
@@ -2191,7 +2190,7 @@ char *get_local_ip(void)
 
     fd = socket(AF_INET, SOCK_DGRAM, 0);
     ifr.ifr_addr.sa_family = AF_INET;
-    strncpy(ifr.ifr_name, "mlan0", IFNAMSIZ-1);
+    strncpy(ifr.ifr_name, "wlan0", IFNAMSIZ-1);
     ioctl(fd, SIOCGIFADDR, &ifr);
     close(fd);
     //return inet_ntoa(((struct sockaddr_in *)&ifr.ifr_addr)->sin_addr);
@@ -2412,7 +2411,7 @@ int main(int argc, char *argv[])
     log_info("Framerate    : %d", cliArgs.framerate);
     log_info("Bitrate      : %d", cliArgs.bitrate);
     log_info("Bitrate Mode : %d", cliArgs.bitrateMode);
-	log_info("IP Local 	   : %s", get_local_ip());	
+	log_info("IP Local	   : %s", get_local_ip());	
 
     // * Use our handler for the signals so we can do some cleanup at quit
     signal(SIGINT,  signal_handler);
