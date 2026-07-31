@@ -52,7 +52,7 @@
 #define VQ_MAX                   (SR_MAX)
 #define VQ_LEN                   100
 #define AQ_MAX                   64	           	// * 1 MP2 and 1 AMR for live streaming, another 2 for file streaming.
-#define AQ_LEN                   8				// * 1 MP2 and 1 AMR for live streaming, another 2 for file streaming.
+#define AQ_LEN                   4				// * 1 MP2 and 1 AMR for live streaming, another 2 for file streaming.
 #define AV_NAME_MAX              127
 
 #define RTP_HZ                   90000		   // * timestamp HW clock
