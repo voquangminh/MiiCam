@@ -54,8 +54,7 @@ jobs:
           git add -f tools/bin/rtspd
           
           # 3. Tiến hành commit file chạy
-          git commit -m "Automated build: update camera binary rtspd2MP" || echo "No changes to commit"
-          git commit -m "Automated build: update camera binary rtspd" || echo "No changes to commit"
+          git commit -m "Automated build: update camera binary rtspd2MP/rtspd" || echo "No changes to commit"
           
           # 4. Kéo code mới nhất từ GitHub về gộp tự động trước khi đẩy (Tránh lỗi fetch first)
           git pull origin HEAD --no-rebase || true
