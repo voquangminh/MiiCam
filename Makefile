@@ -29,6 +29,7 @@ TOOLSDIR       := $(TOPDIR)/tools
 PATCHESDIR     := $(TOOLSDIR)/patches
 GMLIBDIR       := $(TOOLSDIR)/gm_lib
 RTSPDDIR       := $(TOOLSDIR)/rtsp_server
+ONVIFDIR	   := $(TOOLSDIR)/onvif_server
 UTILSDIR       := $(TOOLSDIR)/utils
 
 BINARIESDIR    := $(TOPDIR)/sdcard/firmware/bin
@@ -75,6 +76,7 @@ all:                                 \
 	sdcard/config.cfg                \
 	sdcard/manufacture.bin           \
 	$(BUILDDIR)/rtspd                \
+	$(BUILDDIR)/onvif_server         \
 	$(BUILDDIR)/zlib                 \
 	$(BUILDDIR)/libxml2              \
 	$(BUILDDIR)/libjpeg-turbo        \
@@ -159,6 +161,27 @@ build/rtspd: $(BUILDDIR)/rtspd
 
 build/aac_play: $(BUILDDIR)/aac_play
 	@:
+
+
+#################################################################
+## ONVIF													   ##
+#################################################################
+
+$(BUILDDIR)/onvif_server: $(PREFIXDIR)/bin
+	@mkdir -p $(BUILDDIR) $(TOOLSDIR)/bin
+	cd $(ONVIFDDIR) 				&& \
+	$(TARGET)-gcc 				\
+		-Os 					\
+		-DLOG_USE_COLOR			\
+		-Wall					\
+		$(RTSPDDIR)/onvif_server.c		\
+		-lpthread -lm -lrt -lgm -o $(TOOLSDIR)/bin/onvif_server && \
+		$(TARGET)-strip $(TOOLSDIR)/bin/onvif_server
+	@touch $@
+
+build/onvif_server: $(BUILDDIR)/onvif_server
+	@:
+
 
 #################################################################
 ## UTILS                                                       ##
