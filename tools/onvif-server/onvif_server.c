@@ -1,16 +1,22 @@
 /*
- * onvif_server.c - compact ONVIF server for Chuangmi/GM8136
- * Direct motor access: /dev/motor (no mijiactrl dependency)
+ * onvif_server_full.c - Chuangmi/GM8136 ONVIF server
+ * Direct /dev/motor ioctl + ISP328 imaging + GPIO LED/IR-cut.
+ * No mijiactrl, ledctl, system(), popen(), or shell dependency.
  *
  * Build:
- *   arm-linux-gcc -std=gnu99 -Os -Wall -Wextra -pthread onvif_server.c -o onvif_server
- * Run:
- *   ./onvif_server
+ *   arm-linux-gcc -std=gnu99 -Os -Wall -Wextra -pthread \
+ *       onvif_server_full.c -o onvif_server
  *
- * Services:
- *   WS-Discovery UDP 239.255.255.250:3702
- *   Device/Media/PTZ/Imaging SOAP HTTP :8899
- *   RTSP URI: rtsp://<camera>:554/live/ch00_0
+ * Endpoints:
+ *   UDP 239.255.255.250:3702                 WS-Discovery
+ *   http://CAMERA:8899/onvif/device_service  Device
+ *   http://CAMERA:8899/onvif/media_service   Media
+ *   http://CAMERA:8899/onvif/ptz_service     PTZ
+ *   http://CAMERA:8899/onvif/imaging_service Imaging
+ *   http://CAMERA:8899/onvif/deviceio_service custom LED operations
+ *
+ * This is an embedded interoperability implementation, not a claim of ONVIF
+ * conformance. Run the official Device Test Tool before making such a claim.
  */
 #define _GNU_SOURCE
 #include <arpa/inet.h>
@@ -36,15 +42,17 @@
 #define RTSP_PORT 554
 #define WSD_PORT 3702
 #define WSD_GROUP "239.255.255.250"
-#define MOTOR_DEV "/dev/motor"
-#define MAX_REQ 65536
-#define MAX_XML 49152
+#define MOTOR_DEVICE "/dev/motor"
+#define ISP_COMMAND "/proc/isp328/command"
+#define IRCUT_STATE "/var/run/ircut"
+#define MAX_REQUEST 65536
+#define MAX_RESPONSE 65536
 #define X_MAX 31
 #define Y_MAX 15
 #define PRESET_MAX 16
 #define STATE_FILE "/tmp/onvif_ptz.state"
 
-/* Exact ioctl ABI recovered from the vendor motor.ko. */
+/* Recovered exactly from vendor motor.ko::motor_ioctl(). */
 #define MOTOR_MAGIC 'M'
 #define H_DIR_SET   _IOW(MOTOR_MAGIC,  3, int)
 #define H_DIST_SET  _IOW(MOTOR_MAGIC,  4, int)
@@ -55,81 +63,124 @@
 #define V_COORD_GET _IOW(MOTOR_MAGIC, 25, int)
 #define V_COORD_SET _IOW(MOTOR_MAGIC, 26, int)
 
-static volatile sig_atomic_t alive=1;
-static char ipaddr[64]="127.0.0.1";
-static char uuid[96]="urn:uuid:81360000-0000-4000-8000-000000000001";
-static int motor_fd=-1;
-static pthread_mutex_t motor_lock=PTHREAD_MUTEX_INITIALIZER;
+static volatile sig_atomic_t running = 1;
+static char local_ip[64] = "127.0.0.1";
+static char endpoint_uuid[96] = "urn:uuid:81360000-0000-4000-8000-000000000001";
+static int motor_fd = -1;
+static pthread_mutex_t motor_mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_mutex_t isp_mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_mutex_t gpio_mutex = PTHREAD_MUTEX_INITIALIZER;
 
-typedef struct { int valid,x,y; char token[32],name[64]; } preset_t;
+typedef struct { int used, x, y; char token[32], name[64]; } preset_t;
 typedef struct {
- int x,y,home_x,home_y,moving,dx,dy,worker_active;
- pthread_t worker;
- preset_t preset[PRESET_MAX];
-} ptz_t;
-static ptz_t ptz={.x=15,.y=7,.home_x=15,.home_y=7};
+    int x, y, home_x, home_y;
+    int moving, dx, dy, worker_active;
+    pthread_t worker;
+    preset_t presets[PRESET_MAX];
+} ptz_state_t;
+static ptz_state_t ptz = { .x=15, .y=7, .home_x=15, .home_y=7 };
+
+typedef struct {
+    int brightness, contrast, hue, saturation, denoise, sharpness;
+    int drc_strength, dr_mode, daynight;
+    int ae_en, awb_en, af_en;
+    int sensor_exposure, sensor_gain, sensor_fps;
+    int mirror, flip, iris_ratio, ircut;
+} image_state_t;
 
 static int clampi(int v,int lo,int hi){return v<lo?lo:(v>hi?hi:v);}
 static float clampf(float v,float lo,float hi){return v<lo?lo:(v>hi?hi:v);}
-static float x2pan(int x){return ((float)x*2.0f/X_MAX)-1.0f;}
-static float y2tilt(int y){return ((float)y*2.0f/Y_MAX)-1.0f;}
-static int pan2x(float p){p=clampf(p,-1,1);return (int)((p+1)*X_MAX/2+0.5f);}
-static int tilt2y(float p){p=clampf(p,-1,1);return (int)((p+1)*Y_MAX/2+0.5f);}
-static void sigfn(int s){(void)s;alive=0;}
-static void logx(const char*l,const char*f,...){va_list a;fprintf(stderr,"%s onvif: ",l);va_start(a,f);vfprintf(stderr,f,a);va_end(a);fputc('\n',stderr);}
+static float x_to_pan(int x){return ((float)x*2.0f/X_MAX)-1.0f;}
+static float y_to_tilt(int y){return ((float)y*2.0f/Y_MAX)-1.0f;}
+static int pan_to_x(float p){p=clampf(p,-1,1);return (int)((p+1)*X_MAX/2+0.5f);}
+static int tilt_to_y(float p){p=clampf(p,-1,1);return (int)((p+1)*Y_MAX/2+0.5f);}
+static void signal_handler(int sig){(void)sig;running=0;}
+static void log_message(const char *level,const char *fmt,...){va_list ap;fprintf(stderr,"%s onvif: ",level);va_start(ap,fmt);vfprintf(stderr,fmt,ap);va_end(ap);fputc('\n',stderr);}
 
-static int getip(const char*n,char*out,size_t z){int s=socket(AF_INET,SOCK_DGRAM,0);struct ifreq q;if(s<0)return-1;memset(&q,0,sizeof(q));q.ifr_addr.sa_family=AF_INET;strncpy(q.ifr_name,n,IFNAMSIZ-1);if(ioctl(s,SIOCGIFADDR,&q)<0){close(s);return-1;}snprintf(out,z,"%s",inet_ntoa(((struct sockaddr_in*)&q.ifr_addr)->sin_addr));close(s);return 0;}
-static void make_uuid(void){FILE*f=fopen("/sys/class/net/mlan0/address","r");char m[32]={0},h[20]={0};int j=0;if(!f)f=fopen("/sys/class/net/wlan0/address","r");if(!f)return;fgets(m,sizeof(m),f);fclose(f);for(int i=0;m[i]&&j<12;i++)if(isxdigit((unsigned char)m[i]))h[j++]=(char)tolower((unsigned char)m[i]);if(j==12)snprintf(uuid,sizeof(uuid),"urn:uuid:81360000-0000-4000-8000-%s",h);}
-static void save_state(void){FILE*f=fopen(STATE_FILE,"w");if(!f)return;fprintf(f,"%d %d %d %d\n",ptz.x,ptz.y,ptz.home_x,ptz.home_y);for(int i=0;i<PRESET_MAX;i++)if(ptz.preset[i].valid)fprintf(f,"P %s %d %d %s\n",ptz.preset[i].token,ptz.preset[i].x,ptz.preset[i].y,ptz.preset[i].name);fclose(f);}
-static void load_state(void){FILE*f=fopen(STATE_FILE,"r");char b[256];if(!f)return;if(fgets(b,sizeof(b),f))sscanf(b,"%d %d %d %d",&ptz.x,&ptz.y,&ptz.home_x,&ptz.home_y);while(fgets(b,sizeof(b),f)){char t[32],n[64];int x,y;if(sscanf(b,"P %31s %d %d %63s",t,&x,&y,n)==4)for(int i=0;i<PRESET_MAX;i++)if(!ptz.preset[i].valid){ptz.preset[i].valid=1;ptz.preset[i].x=x;ptz.preset[i].y=y;strncpy(ptz.preset[i].token,t,31);strncpy(ptz.preset[i].name,n,63);break;}}fclose(f);}
+static int write_all_file(const char *path,const char *text){int fd,rc=0;size_t off=0,len=strlen(text);fd=open(path,O_WRONLY|O_CLOEXEC);if(fd<0)return-1;while(off<len){ssize_t n=write(fd,text+off,len-off);if(n<0){if(errno==EINTR)continue;rc=-1;break;}off+=(size_t)n;}if(close(fd)<0&&rc==0)rc=-1;return rc;}
+static int read_file(const char *path,char *buf,size_t size){int fd;ssize_t n;if(!buf||size<2){errno=EINVAL;return-1;}fd=open(path,O_RDONLY|O_CLOEXEC);if(fd<0)return-1;do n=read(fd,buf,size-1);while(n<0&&errno==EINTR);close(fd);if(n<0)return-1;buf[n]=0;return 0;}
+static int last_integer(const char *s,int *value){const char*p=s;char*e;long found=0;int have=0;while(*p){if(*p=='-'||isdigit((unsigned char)*p)){errno=0;long v=strtol(p,&e,0);if(e!=p&&errno==0){found=v;have=1;p=e;continue;}}p++;}if(!have){errno=EPROTO;return-1;}*value=(int)found;return 0;}
+static int valid_isp_name(const char *s){if(!s||!*s)return 0;for(;*s;s++)if(!(isalnum((unsigned char)*s)||*s=='_'))return 0;return 1;}
 
-static int mioc(unsigned long cmd,int*v){int r;if(motor_fd<0){errno=ENODEV;return-1;}do r=ioctl(motor_fd,cmd,v);while(r<0&&errno==EINTR);return r;}
-static int motor_open(void){motor_fd=open(MOTOR_DEV,O_RDWR|O_CLOEXEC);return motor_fd<0?-1:0;}
-static int motor_pos(int*x,int*y){int a=0,b=0;if(mioc(H_COORD_GET,&a)<0||mioc(V_COORD_GET,&b)<0)return-1;*x=clampi(a,0,X_MAX);*y=clampi(b,0,Y_MAX);return 0;}
-static int axis(unsigned long dc,unsigned long sc,int d){int dir,n;if(!d)return 0;dir=d>0?1:0;n=d>0?d:-d;if(mioc(dc,&dir)<0)return-1;return mioc(sc,&n);}
-static int motor_goto_locked(int tx,int ty){int x,y;tx=clampi(tx,0,X_MAX);ty=clampi(ty,0,Y_MAX);if(motor_pos(&x,&y)<0){x=ptz.x;y=ptz.y;}if(axis(H_DIR_SET,H_DIST_SET,tx-x)<0)return-1;if(axis(V_DIR_SET,V_DIST_SET,ty-y)<0)return-1;if(motor_pos(&ptz.x,&ptz.y)<0){ptz.x=tx;ptz.y=ty;}save_state();return 0;}
-static int motor_goto(int x,int y){int r;pthread_mutex_lock(&motor_lock);r=motor_goto_locked(x,y);pthread_mutex_unlock(&motor_lock);return r;}
-static void motor_refresh(void){pthread_mutex_lock(&motor_lock);if(motor_pos(&ptz.x,&ptz.y)==0)save_state();pthread_mutex_unlock(&motor_lock);}
-static void stop_move(void){pthread_mutex_lock(&motor_lock);ptz.moving=0;pthread_mutex_unlock(&motor_lock);}
-static void *move_worker(void*a){(void)a;for(;;){int run,dx,dy,tx,ty;pthread_mutex_lock(&motor_lock);run=alive&&ptz.moving;dx=ptz.dx;dy=ptz.dy;tx=clampi(ptz.x+dx,0,X_MAX);ty=clampi(ptz.y+dy,0,Y_MAX);pthread_mutex_unlock(&motor_lock);if(!run)break;if(motor_goto(tx,ty)<0)break;usleep(100000);}pthread_mutex_lock(&motor_lock);ptz.moving=0;ptz.worker_active=0;pthread_mutex_unlock(&motor_lock);return NULL;}
-static void continual(int dx,int dy){stop_move();usleep(200000);pthread_mutex_lock(&motor_lock);ptz.dx=dx;ptz.dy=dy;ptz.moving=(dx||dy);if(ptz.moving&&!ptz.worker_active){ptz.worker_active=1;pthread_create(&ptz.worker,NULL,move_worker,NULL);pthread_detach(ptz.worker);}pthread_mutex_unlock(&motor_lock);}
+static int isp_get(const char *name,int *value){char cmd[128],reply[512];int rc=-1;if(!valid_isp_name(name)||!value){errno=EINVAL;return-1;}snprintf(cmd,sizeof(cmd),"r %s\n",name);pthread_mutex_lock(&isp_mutex);if(write_all_file(ISP_COMMAND,cmd)==0&&read_file(ISP_COMMAND,reply,sizeof(reply))==0)rc=last_integer(reply,value);pthread_mutex_unlock(&isp_mutex);return rc;}
+static int isp_set(const char *name,int value){char cmd[128];int rc;if(!valid_isp_name(name)){errno=EINVAL;return-1;}snprintf(cmd,sizeof(cmd),"w %s %d\n",name,value);pthread_mutex_lock(&isp_mutex);rc=write_all_file(ISP_COMMAND,cmd);pthread_mutex_unlock(&isp_mutex);return rc;}
 
-static int tag(const char*x,const char*n,char*out,size_t z){char a[96],b[96];const char*p,*q;snprintf(a,sizeof(a),"<%s",n);p=strstr(x,a);if(!p){const char*c=strchr(n,':');if(c){snprintf(a,sizeof(a),"<%s",c+1);p=strstr(x,a);}}if(!p)return-1;p=strchr(p,'>');if(!p)return-1;p++;snprintf(b,sizeof(b),"</%s>",n);q=strstr(p,b);if(!q){const char*c=strchr(n,':');if(c){snprintf(b,sizeof(b),"</%s>",c+1);q=strstr(p,b);}}if(!q)return-1;size_t l=(size_t)(q-p);if(l>=z)l=z-1;memcpy(out,p,l);out[l]=0;return 0;}
-static int attrf(const char*x,const char*n,const char*a,float*v){const char*p=strstr(x,n);char k[32];if(!p)return-1;snprintf(k,sizeof(k),"%s=\"",a);p=strstr(p,k);if(!p)return-1;*v=(float)atof(p+strlen(k));return 0;}
-static void add(char*o,size_t z,const char*f,...){size_t l=strlen(o);va_list a;if(l>=z-1)return;va_start(a,f);vsnprintf(o+l,z-l,f,a);va_end(a);}
-static const char*H="<?xml version=\"1.0\"?><s:Envelope xmlns:s=\"http://www.w3.org/2003/05/soap-envelope\" xmlns:tds=\"http://www.onvif.org/ver10/device/wsdl\" xmlns:trt=\"http://www.onvif.org/ver10/media/wsdl\" xmlns:tptz=\"http://www.onvif.org/ver20/ptz/wsdl\" xmlns:timg=\"http://www.onvif.org/ver20/imaging/wsdl\" xmlns:tt=\"http://www.onvif.org/ver10/schema\"><s:Body>";
-static const char*T="</s:Body></s:Envelope>";
-static void fault(char*o,size_t z,const char*m){snprintf(o,z,"%s<s:Fault><s:Code><s:Value>s:Sender</s:Value></s:Code><s:Reason><s:Text xml:lang=\"en\">%s</s:Text></s:Reason></s:Fault>%s",H,m,T);}
+static int gpio_set(int pin,int value){char path[128],text[8];snprintf(path,sizeof(path),"/sys/class/gpio/gpio%d/value",pin);snprintf(text,sizeof(text),"%d\n",value?1:0);return write_all_file(path,text);}
+static int gpio_get(int pin,int *value){char path[128],text[32];snprintf(path,sizeof(path),"/sys/class/gpio/gpio%d/value",pin);if(read_file(path,text,sizeof(text))<0)return-1;*value=atoi(text)?1:0;return 0;}
+static int led_set(const char *name,int on){char path[160],text[8];const char*roots[]={"/sys/class/leds","/sys/devices/platform/leds-gpio/leds"};snprintf(text,sizeof(text),"%d\n",on?1:0);for(unsigned i=0;i<sizeof(roots)/sizeof(roots[0]);i++){snprintf(path,sizeof(path),"%s/%s/brightness",roots[i],name);if(write_all_file(path,text)==0)return 0;}return-1;}
+static int blue_led_set(int on){return led_set("BLUE",on);}
+static int yellow_led_set(int on){return led_set("RED",on);}
+static int ircut_set(int enabled){int rc;char state[8];enabled=enabled?1:0;pthread_mutex_lock(&gpio_mutex);if(enabled){rc=gpio_set(14,1);if(rc==0)rc=gpio_set(15,0);}else{rc=gpio_set(14,0);if(rc==0)rc=gpio_set(15,1);}if(rc==0){snprintf(state,sizeof(state),"%d\n",enabled);rc=write_all_file(IRCUT_STATE,state);}pthread_mutex_unlock(&gpio_mutex);return rc;}
+static int ircut_get(int *enabled){char state[16];int rc=0;pthread_mutex_lock(&gpio_mutex);if(read_file(IRCUT_STATE,state,sizeof(state))==0)*enabled=atoi(state)?1:0;else rc=gpio_get(14,enabled);pthread_mutex_unlock(&gpio_mutex);return rc;}
 
-static void soap(const char*r,char*o,size_t z){o[0]=0;add(o,z,"%s",H);
- if(strstr(r,"GetDeviceInformation"))add(o,z,"<tds:GetDeviceInformationResponse><tds:Manufacturer>Xiaomi/Chuangmi</tds:Manufacturer><tds:Model>Mijia 1080p GM8136</tds:Model><tds:FirmwareVersion>ONVIF-direct-motor-1.0</tds:FirmwareVersion><tds:SerialNumber>%s</tds:SerialNumber><tds:HardwareId>GM8136</tds:HardwareId></tds:GetDeviceInformationResponse>",uuid);
- else if(strstr(r,"GetCapabilities"))add(o,z,"<tds:GetCapabilitiesResponse><tds:Capabilities><tt:Device><tt:XAddr>http://%s:%d/onvif/device_service</tt:XAddr></tt:Device><tt:Media><tt:XAddr>http://%s:%d/onvif/media_service</tt:XAddr><tt:StreamingCapabilities><tt:RTP_TCP>true</tt:RTP_TCP><tt:RTP_RTSP_TCP>true</tt:RTP_RTSP_TCP></tt:StreamingCapabilities></tt:Media><tt:PTZ><tt:XAddr>http://%s:%d/onvif/ptz_service</tt:XAddr></tt:PTZ><tt:Imaging><tt:XAddr>http://%s:%d/onvif/imaging_service</tt:XAddr></tt:Imaging></tds:Capabilities></tds:GetCapabilitiesResponse>",ipaddr,HTTP_PORT,ipaddr,HTTP_PORT,ipaddr,HTTP_PORT,ipaddr,HTTP_PORT);
- else if(strstr(r,"GetServices"))add(o,z,"<tds:GetServicesResponse><tds:Service><tds:Namespace>http://www.onvif.org/ver10/device/wsdl</tds:Namespace><tds:XAddr>http://%s:%d/onvif/device_service</tds:XAddr><tds:Version><tt:Major>2</tt:Major><tt:Minor>6</tt:Minor></tds:Version></tds:Service><tds:Service><tds:Namespace>http://www.onvif.org/ver10/media/wsdl</tds:Namespace><tds:XAddr>http://%s:%d/onvif/media_service</tds:XAddr><tds:Version><tt:Major>2</tt:Major><tt:Minor>6</tt:Minor></tds:Version></tds:Service><tds:Service><tds:Namespace>http://www.onvif.org/ver20/ptz/wsdl</tds:Namespace><tds:XAddr>http://%s:%d/onvif/ptz_service</tds:XAddr><tds:Version><tt:Major>2</tt:Major><tt:Minor>6</tt:Minor></tds:Version></tds:Service><tds:Service><tds:Namespace>http://www.onvif.org/ver20/imaging/wsdl</tds:Namespace><tds:XAddr>http://%s:%d/onvif/imaging_service</tds:XAddr><tds:Version><tt:Major>2</tt:Major><tt:Minor>6</tt:Minor></tds:Version></tds:Service></tds:GetServicesResponse>",ipaddr,HTTP_PORT,ipaddr,HTTP_PORT,ipaddr,HTTP_PORT,ipaddr,HTTP_PORT);
- else if(strstr(r,"GetSystemDateAndTime")){time_t q=time(NULL);struct tm u;gmtime_r(&q,&u);add(o,z,"<tds:GetSystemDateAndTimeResponse><tds:SystemDateAndTime><tt:DateTimeType>NTP</tt:DateTimeType><tt:DaylightSavings>false</tt:DaylightSavings><tt:UTCDateTime><tt:Time><tt:Hour>%d</tt:Hour><tt:Minute>%d</tt:Minute><tt:Second>%d</tt:Second></tt:Time><tt:Date><tt:Year>%d</tt:Year><tt:Month>%d</tt:Month><tt:Day>%d</tt:Day></tt:Date></tt:UTCDateTime></tds:SystemDateAndTime></tds:GetSystemDateAndTimeResponse>",u.tm_hour,u.tm_min,u.tm_sec,u.tm_year+1900,u.tm_mon+1,u.tm_mday);}
- else if(strstr(r,"GetProfiles"))add(o,z,"<trt:GetProfilesResponse><trt:Profiles token=\"profile_0\" fixed=\"true\"><tt:Name>MainStream</tt:Name><tt:VideoSourceConfiguration token=\"vsrc_0\"><tt:Name>VideoSource</tt:Name><tt:UseCount>1</tt:UseCount><tt:SourceToken>source_0</tt:SourceToken><tt:Bounds x=\"0\" y=\"0\" width=\"1920\" height=\"1080\"/></tt:VideoSourceConfiguration><tt:VideoEncoderConfiguration token=\"venc_0\"><tt:Name>H264</tt:Name><tt:UseCount>1</tt:UseCount><tt:Encoding>H264</tt:Encoding><tt:Resolution><tt:Width>1920</tt:Width><tt:Height>1080</tt:Height></tt:Resolution><tt:Quality>5</tt:Quality><tt:RateControl><tt:FrameRateLimit>20</tt:FrameRateLimit><tt:EncodingInterval>1</tt:EncodingInterval><tt:BitrateLimit>2048</tt:BitrateLimit></tt:RateControl><tt:H264><tt:GovLength>20</tt:GovLength><tt:H264Profile>High</tt:H264Profile></tt:H264></tt:VideoEncoderConfiguration><tt:PTZConfiguration token=\"ptz_0\"><tt:Name>PTZ</tt:Name><tt:UseCount>1</tt:UseCount><tt:NodeToken>node_0</tt:NodeToken></tt:PTZConfiguration></trt:Profiles></trt:GetProfilesResponse>");
- else if(strstr(r,"GetVideoSources"))add(o,z,"<trt:GetVideoSourcesResponse><trt:VideoSources token=\"source_0\"><tt:Framerate>20</tt:Framerate><tt:Resolution><tt:Width>1920</tt:Width><tt:Height>1080</tt:Height></tt:Resolution></trt:VideoSources></trt:GetVideoSourcesResponse>");
- else if(strstr(r,"GetStreamUri"))add(o,z,"<trt:GetStreamUriResponse><trt:MediaUri><tt:Uri>rtsp://%s:%d/live/ch00_0</tt:Uri><tt:InvalidAfterConnect>false</tt:InvalidAfterConnect><tt:InvalidAfterReboot>false</tt:InvalidAfterReboot><tt:Timeout>PT60S</tt:Timeout></trt:MediaUri></trt:GetStreamUriResponse>",ipaddr,RTSP_PORT);
- else if(strstr(r,"GetNodes"))add(o,z,"<tptz:GetNodesResponse><tptz:PTZNode token=\"node_0\"><tt:Name>Chuangmi PanTilt</tt:Name><tt:SupportedPTZSpaces><tt:AbsolutePanTiltPositionSpace><tt:URI>http://www.onvif.org/ver10/tptz/PanTiltSpaces/PositionGenericSpace</tt:URI><tt:XRange><tt:Min>-1</tt:Min><tt:Max>1</tt:Max></tt:XRange><tt:YRange><tt:Min>-1</tt:Min><tt:Max>1</tt:Max></tt:YRange></tt:AbsolutePanTiltPositionSpace><tt:RelativePanTiltTranslationSpace><tt:URI>http://www.onvif.org/ver10/tptz/PanTiltSpaces/TranslationGenericSpace</tt:URI><tt:XRange><tt:Min>-1</tt:Min><tt:Max>1</tt:Max></tt:XRange><tt:YRange><tt:Min>-1</tt:Min><tt:Max>1</tt:Max></tt:YRange></tt:RelativePanTiltTranslationSpace><tt:ContinuousPanTiltVelocitySpace><tt:URI>http://www.onvif.org/ver10/tptz/PanTiltSpaces/VelocityGenericSpace</tt:URI><tt:XRange><tt:Min>-1</tt:Min><tt:Max>1</tt:Max></tt:XRange><tt:YRange><tt:Min>-1</tt:Min><tt:Max>1</tt:Max></tt:YRange></tt:ContinuousPanTiltVelocitySpace></tt:SupportedPTZSpaces><tt:MaximumNumberOfPresets>%d</tt:MaximumNumberOfPresets><tt:HomeSupported>true</tt:HomeSupported></tptz:PTZNode></tptz:GetNodesResponse>",PRESET_MAX);
- else if(strstr(r,"GetConfigurations"))add(o,z,"<tptz:GetConfigurationsResponse><tptz:PTZConfiguration token=\"ptz_0\"><tt:Name>PTZ</tt:Name><tt:UseCount>1</tt:UseCount><tt:NodeToken>node_0</tt:NodeToken></tptz:PTZConfiguration></tptz:GetConfigurationsResponse>");
- else if(strstr(r,"GetStatus")){motor_refresh();pthread_mutex_lock(&motor_lock);add(o,z,"<tptz:GetStatusResponse><tptz:PTZStatus><tt:Position><tt:PanTilt x=\"%.4f\" y=\"%.4f\"/></tt:Position><tt:MoveStatus><tt:PanTilt>%s</tt:PanTilt><tt:Zoom>IDLE</tt:Zoom></tt:MoveStatus><tt:UtcTime>2026-01-01T00:00:00Z</tt:UtcTime></tptz:PTZStatus></tptz:GetStatusResponse>",x2pan(ptz.x),y2tilt(ptz.y),ptz.moving?"MOVING":"IDLE");pthread_mutex_unlock(&motor_lock);}
- else if(strstr(r,"AbsoluteMove")){float x,y;if(attrf(r,"PanTilt","x",&x)<0||attrf(r,"PanTilt","y",&y)<0){fault(o,z,"Invalid PanTilt");return;}stop_move();if(motor_goto(pan2x(x),tilt2y(y))<0){fault(o,z,"Motor failure");return;}add(o,z,"<tptz:AbsoluteMoveResponse/>");}
- else if(strstr(r,"RelativeMove")){float x,y;if(attrf(r,"PanTilt","x",&x)<0||attrf(r,"PanTilt","y",&y)<0){fault(o,z,"Invalid translation");return;}motor_refresh();pthread_mutex_lock(&motor_lock);int tx=clampi(ptz.x+(int)(x*X_MAX),0,X_MAX),ty=clampi(ptz.y+(int)(y*Y_MAX),0,Y_MAX);pthread_mutex_unlock(&motor_lock);stop_move();if(motor_goto(tx,ty)<0){fault(o,z,"Motor failure");return;}add(o,z,"<tptz:RelativeMoveResponse/>");}
- else if(strstr(r,"ContinuousMove")){float x=0,y=0;attrf(r,"PanTilt","x",&x);attrf(r,"PanTilt","y",&y);continual(x>0.05?1:(x<-0.05?-1:0),y>0.05?1:(y<-0.05?-1:0));add(o,z,"<tptz:ContinuousMoveResponse/>");}
- else if(strstr(r,"<tptz:Stop")||strstr(r,"<Stop")){stop_move();add(o,z,"<tptz:StopResponse/>");}
- else if(strstr(r,"SetHomePosition")){motor_refresh();pthread_mutex_lock(&motor_lock);ptz.home_x=ptz.x;ptz.home_y=ptz.y;save_state();pthread_mutex_unlock(&motor_lock);add(o,z,"<tptz:SetHomePositionResponse/>");}
- else if(strstr(r,"GotoHomePosition")){pthread_mutex_lock(&motor_lock);int x=ptz.home_x,y=ptz.home_y;pthread_mutex_unlock(&motor_lock);if(motor_goto(x,y)<0){fault(o,z,"Motor failure");return;}add(o,z,"<tptz:GotoHomePositionResponse/>");}
- else if(strstr(r,"GetPresets")){add(o,z,"<tptz:GetPresetsResponse>");pthread_mutex_lock(&motor_lock);for(int i=0;i<PRESET_MAX;i++)if(ptz.preset[i].valid)add(o,z,"<tptz:Preset token=\"%s\"><tt:Name>%s</tt:Name><tt:PTZPosition><tt:PanTilt x=\"%.4f\" y=\"%.4f\"/></tt:PTZPosition></tptz:Preset>",ptz.preset[i].token,ptz.preset[i].name,x2pan(ptz.preset[i].x),y2tilt(ptz.preset[i].y));pthread_mutex_unlock(&motor_lock);add(o,z,"</tptz:GetPresetsResponse>");}
- else if(strstr(r,"SetPreset")){char n[64]="Preset",t[32]="";tag(r,"tptz:PresetName",n,sizeof(n));tag(r,"tptz:PresetToken",t,sizeof(t));motor_refresh();pthread_mutex_lock(&motor_lock);int k=-1;for(int i=0;i<PRESET_MAX;i++)if((t[0]&&ptz.preset[i].valid&&!strcmp(t,ptz.preset[i].token))||(!t[0]&&!ptz.preset[i].valid)){k=i;break;}if(k>=0){if(!t[0])snprintf(t,sizeof(t),"preset_%d",k);ptz.preset[k].valid=1;ptz.preset[k].x=ptz.x;ptz.preset[k].y=ptz.y;snprintf(ptz.preset[k].token,32,"%s",t);snprintf(ptz.preset[k].name,64,"%s",n);save_state();}pthread_mutex_unlock(&motor_lock);if(k<0){fault(o,z,"Preset full");return;}add(o,z,"<tptz:SetPresetResponse><tptz:PresetToken>%s</tptz:PresetToken></tptz:SetPresetResponse>",t);}
- else if(strstr(r,"GotoPreset")){char t[32];if(tag(r,"tptz:PresetToken",t,sizeof(t))<0){fault(o,z,"Missing preset");return;}int x=-1,y=-1;pthread_mutex_lock(&motor_lock);for(int i=0;i<PRESET_MAX;i++)if(ptz.preset[i].valid&&!strcmp(t,ptz.preset[i].token)){x=ptz.preset[i].x;y=ptz.preset[i].y;break;}pthread_mutex_unlock(&motor_lock);if(x<0||motor_goto(x,y)<0){fault(o,z,"Preset unavailable");return;}add(o,z,"<tptz:GotoPresetResponse/>");}
- else if(strstr(r,"RemovePreset")){char t[32];if(tag(r,"tptz:PresetToken",t,sizeof(t))<0){fault(o,z,"Missing preset");return;}pthread_mutex_lock(&motor_lock);for(int i=0;i<PRESET_MAX;i++)if(ptz.preset[i].valid&&!strcmp(t,ptz.preset[i].token))ptz.preset[i].valid=0;save_state();pthread_mutex_unlock(&motor_lock);add(o,z,"<tptz:RemovePresetResponse/>");}
- else if(strstr(r,"GetImagingSettings"))add(o,z,"<timg:GetImagingSettingsResponse><timg:ImagingSettings><tt:Brightness>50</tt:Brightness><tt:ColorSaturation>50</tt:ColorSaturation><tt:Contrast>50</tt:Contrast><tt:Sharpness>50</tt:Sharpness><tt:Exposure><tt:Mode>AUTO</tt:Mode></tt:Exposure><tt:WhiteBalance><tt:Mode>AUTO</tt:Mode></tt:WhiteBalance><tt:Focus><tt:AutoFocusMode>MANUAL</tt:AutoFocusMode></tt:Focus></timg:ImagingSettings></timg:GetImagingSettingsResponse>");
- else if(strstr(r,"GetOptions"))add(o,z,"<timg:GetOptionsResponse><timg:ImagingOptions><tt:Brightness><tt:Min>0</tt:Min><tt:Max>100</tt:Max></tt:Brightness><tt:ColorSaturation><tt:Min>0</tt:Min><tt:Max>100</tt:Max></tt:ColorSaturation><tt:Contrast><tt:Min>0</tt:Min><tt:Max>100</tt:Max></tt:Contrast><tt:Sharpness><tt:Min>0</tt:Min><tt:Max>100</tt:Max></tt:Sharpness></timg:ImagingOptions></timg:GetOptionsResponse>");
- else if(strstr(r,"SetImagingSettings"))add(o,z,"<timg:SetImagingSettingsResponse/>");
- else {fault(o,z,"Action not supported");return;} add(o,z,"%s",T);
+static void image_defaults(image_state_t *s){memset(s,0,sizeof(*s));s->brightness=s->contrast=s->saturation=s->sharpness=128;s->denoise=128;s->sensor_fps=20;s->ae_en=s->awb_en=1;}
+static int image_get(image_state_t *s){int rc=0;image_defaults(s);
+#define GET_FIELD(name,field) do{if(isp_get(name,&s->field)<0)rc=-1;}while(0)
+    GET_FIELD("brightness",brightness);GET_FIELD("contrast",contrast);GET_FIELD("hue",hue);GET_FIELD("saturation",saturation);GET_FIELD("denoise",denoise);GET_FIELD("sharpness",sharpness);GET_FIELD("drc_strength",drc_strength);GET_FIELD("dr_mode",dr_mode);GET_FIELD("daynight",daynight);GET_FIELD("ae_en",ae_en);GET_FIELD("awb_en",awb_en);GET_FIELD("af_en",af_en);GET_FIELD("sen_exp",sensor_exposure);GET_FIELD("sen_gain",sensor_gain);GET_FIELD("sen_fps",sensor_fps);GET_FIELD("mirror",mirror);GET_FIELD("flip",flip);GET_FIELD("iris_drv_ratio",iris_ratio);if(ircut_get(&s->ircut)<0)rc=-1;
+#undef GET_FIELD
+    return rc;
+}
+static int set_checked(const char*n,int v,int lo,int hi){return isp_set(n,clampi(v,lo,hi));}
+
+static int get_ip(const char *name,char *out,size_t size){int fd=socket(AF_INET,SOCK_DGRAM,0);struct ifreq q;if(fd<0)return-1;memset(&q,0,sizeof(q));q.ifr_addr.sa_family=AF_INET;strncpy(q.ifr_name,name,IFNAMSIZ-1);if(ioctl(fd,SIOCGIFADDR,&q)<0){close(fd);return-1;}snprintf(out,size,"%s",inet_ntoa(((struct sockaddr_in*)&q.ifr_addr)->sin_addr));close(fd);return 0;}
+static void make_uuid(void){FILE*f=fopen("/sys/class/net/mlan0/address","r");char mac[32]={0},hex[20]={0};int j=0;if(!f)f=fopen("/sys/class/net/wlan0/address","r");if(!f)return;fgets(mac,sizeof(mac),f);fclose(f);for(int i=0;mac[i]&&j<12;i++)if(isxdigit((unsigned char)mac[i]))hex[j++]=(char)tolower((unsigned char)mac[i]);if(j==12)snprintf(endpoint_uuid,sizeof(endpoint_uuid),"urn:uuid:81360000-0000-4000-8000-%s",hex);}
+static void save_ptz(void){FILE*f=fopen(STATE_FILE,"w");if(!f)return;fprintf(f,"%d %d %d %d\n",ptz.x,ptz.y,ptz.home_x,ptz.home_y);for(int i=0;i<PRESET_MAX;i++)if(ptz.presets[i].used)fprintf(f,"P %s %d %d %s\n",ptz.presets[i].token,ptz.presets[i].x,ptz.presets[i].y,ptz.presets[i].name);fclose(f);}
+static void load_ptz(void){FILE*f=fopen(STATE_FILE,"r");char line[256];if(!f)return;if(fgets(line,sizeof(line),f))sscanf(line,"%d %d %d %d",&ptz.x,&ptz.y,&ptz.home_x,&ptz.home_y);while(fgets(line,sizeof(line),f)){char token[32],name[64];int x,y;if(sscanf(line,"P %31s %d %d %63s",token,&x,&y,name)==4)for(int i=0;i<PRESET_MAX;i++)if(!ptz.presets[i].used){ptz.presets[i].used=1;ptz.presets[i].x=x;ptz.presets[i].y=y;snprintf(ptz.presets[i].token,32,"%s",token);snprintf(ptz.presets[i].name,64,"%s",name);break;}}fclose(f);}
+
+static int motor_ioctl_int(unsigned long cmd,int *value){int rc;if(motor_fd<0){errno=ENODEV;return-1;}do rc=ioctl(motor_fd,cmd,value);while(rc<0&&errno==EINTR);return rc;}
+static int motor_position(int*x,int*y){int a=0,b=0;if(motor_ioctl_int(H_COORD_GET,&a)<0||motor_ioctl_int(V_COORD_GET,&b)<0)return-1;*x=clampi(a,0,X_MAX);*y=clampi(b,0,Y_MAX);return 0;}
+static int motor_axis(unsigned long dir_cmd,unsigned long dist_cmd,int delta){int dir,dist;if(!delta)return 0;dir=delta>0?1:0;dist=delta>0?delta:-delta;if(motor_ioctl_int(dir_cmd,&dir)<0)return-1;return motor_ioctl_int(dist_cmd,&dist);}
+static int motor_goto_locked(int tx,int ty){int x,y;tx=clampi(tx,0,X_MAX);ty=clampi(ty,0,Y_MAX);if(motor_position(&x,&y)<0){x=ptz.x;y=ptz.y;}if(motor_axis(H_DIR_SET,H_DIST_SET,tx-x)<0)return-1;if(motor_axis(V_DIR_SET,V_DIST_SET,ty-y)<0)return-1;if(motor_position(&ptz.x,&ptz.y)<0){ptz.x=tx;ptz.y=ty;}save_ptz();return 0;}
+static int motor_goto(int x,int y){int rc;pthread_mutex_lock(&motor_mutex);rc=motor_goto_locked(x,y);pthread_mutex_unlock(&motor_mutex);return rc;}
+static void motor_refresh(void){pthread_mutex_lock(&motor_mutex);if(motor_position(&ptz.x,&ptz.y)==0)save_ptz();pthread_mutex_unlock(&motor_mutex);}
+static void motor_stop(void){pthread_mutex_lock(&motor_mutex);ptz.moving=0;pthread_mutex_unlock(&motor_mutex);}
+static void *motor_worker(void *unused){(void)unused;for(;;){int active,tx,ty;pthread_mutex_lock(&motor_mutex);active=running&&ptz.moving;tx=clampi(ptz.x+ptz.dx,0,X_MAX);ty=clampi(ptz.y+ptz.dy,0,Y_MAX);pthread_mutex_unlock(&motor_mutex);if(!active)break;if(motor_goto(tx,ty)<0)break;usleep(100000);}pthread_mutex_lock(&motor_mutex);ptz.moving=0;ptz.worker_active=0;pthread_mutex_unlock(&motor_mutex);return NULL;}
+static void motor_continuous(int dx,int dy){motor_stop();usleep(200000);pthread_mutex_lock(&motor_mutex);ptz.dx=dx;ptz.dy=dy;ptz.moving=(dx||dy);if(ptz.moving&&!ptz.worker_active){ptz.worker_active=1;pthread_create(&ptz.worker,NULL,motor_worker,NULL);pthread_detach(ptz.worker);}pthread_mutex_unlock(&motor_mutex);}
+
+static int xml_tag(const char *xml,const char *name,char *out,size_t size){char a[96],b[96];const char*p,*q;snprintf(a,sizeof(a),"<%s",name);p=strstr(xml,a);if(!p){const char*c=strchr(name,':');if(c){snprintf(a,sizeof(a),"<%s",c+1);p=strstr(xml,a);}}if(!p)return-1;p=strchr(p,'>');if(!p)return-1;p++;snprintf(b,sizeof(b),"</%s>",name);q=strstr(p,b);if(!q){const char*c=strchr(name,':');if(c){snprintf(b,sizeof(b),"</%s>",c+1);q=strstr(p,b);}}if(!q)return-1;size_t n=(size_t)(q-p);if(n>=size)n=size-1;memcpy(out,p,n);out[n]=0;return 0;}
+static int xml_attr_float(const char *xml,const char *element,const char *attr,float *value){const char*p=strstr(xml,element);char key[32];if(!p)return-1;snprintf(key,sizeof(key),"%s=\"",attr);p=strstr(p,key);if(!p)return-1;*value=(float)atof(p+strlen(key));return 0;}
+static void append(char*out,size_t size,const char*fmt,...){size_t used=strlen(out);va_list ap;if(used>=size-1)return;va_start(ap,fmt);vsnprintf(out+used,size-used,fmt,ap);va_end(ap);}
+static const char *SOAP_HEAD="<?xml version=\"1.0\"?><s:Envelope xmlns:s=\"http://www.w3.org/2003/05/soap-envelope\" xmlns:tds=\"http://www.onvif.org/ver10/device/wsdl\" xmlns:trt=\"http://www.onvif.org/ver10/media/wsdl\" xmlns:tptz=\"http://www.onvif.org/ver20/ptz/wsdl\" xmlns:timg=\"http://www.onvif.org/ver20/imaging/wsdl\" xmlns:tmd=\"http://www.onvif.org/ver10/deviceIO/wsdl\" xmlns:tt=\"http://www.onvif.org/ver10/schema\"><s:Body>";
+static const char *SOAP_TAIL="</s:Body></s:Envelope>";
+static void soap_fault(char*out,size_t size,const char*reason){snprintf(out,size,"%s<s:Fault><s:Code><s:Value>s:Sender</s:Value></s:Code><s:Reason><s:Text xml:lang=\"en\">%s</s:Text></s:Reason></s:Fault>%s",SOAP_HEAD,reason,SOAP_TAIL);}
+static int get_int_tag(const char*r,const char*n,int*v){char b[64];if(xml_tag(r,n,b,sizeof(b))<0)return-1;*v=atoi(b);return 0;}
+static int set_optional(const char*r,const char*tag,const char*isp,int lo,int hi){int v;if(get_int_tag(r,tag,&v)<0)return 0;return set_checked(isp,v,lo,hi)==0?1:-1;}
+
+static void handle_soap(const char*r,char*out,size_t size){out[0]=0;append(out,size,"%s",SOAP_HEAD);
+ if(strstr(r,"GetDeviceInformation"))append(out,size,"<tds:GetDeviceInformationResponse><tds:Manufacturer>Xiaomi/Chuangmi</tds:Manufacturer><tds:Model>Mijia 1080p GM8136</tds:Model><tds:FirmwareVersion>ONVIF-full-1.0</tds:FirmwareVersion><tds:SerialNumber>%s</tds:SerialNumber><tds:HardwareId>GM8136</tds:HardwareId></tds:GetDeviceInformationResponse>",endpoint_uuid);
+ else if(strstr(r,"GetCapabilities"))append(out,size,"<tds:GetCapabilitiesResponse><tds:Capabilities><tt:Device><tt:XAddr>http://%s:%d/onvif/device_service</tt:XAddr></tt:Device><tt:Media><tt:XAddr>http://%s:%d/onvif/media_service</tt:XAddr><tt:StreamingCapabilities><tt:RTP_TCP>true</tt:RTP_TCP><tt:RTP_RTSP_TCP>true</tt:RTP_RTSP_TCP></tt:StreamingCapabilities></tt:Media><tt:PTZ><tt:XAddr>http://%s:%d/onvif/ptz_service</tt:XAddr></tt:PTZ><tt:Imaging><tt:XAddr>http://%s:%d/onvif/imaging_service</tt:XAddr></tt:Imaging><tt:DeviceIO><tt:XAddr>http://%s:%d/onvif/deviceio_service</tt:XAddr></tt:DeviceIO></tds:Capabilities></tds:GetCapabilitiesResponse>",local_ip,HTTP_PORT,local_ip,HTTP_PORT,local_ip,HTTP_PORT,local_ip,HTTP_PORT,local_ip,HTTP_PORT);
+ else if(strstr(r,"GetServices"))append(out,size,"<tds:GetServicesResponse><tds:Service><tds:Namespace>http://www.onvif.org/ver10/device/wsdl</tds:Namespace><tds:XAddr>http://%s:%d/onvif/device_service</tds:XAddr></tds:Service><tds:Service><tds:Namespace>http://www.onvif.org/ver10/media/wsdl</tds:Namespace><tds:XAddr>http://%s:%d/onvif/media_service</tds:XAddr></tds:Service><tds:Service><tds:Namespace>http://www.onvif.org/ver20/ptz/wsdl</tds:Namespace><tds:XAddr>http://%s:%d/onvif/ptz_service</tds:XAddr></tds:Service><tds:Service><tds:Namespace>http://www.onvif.org/ver20/imaging/wsdl</tds:Namespace><tds:XAddr>http://%s:%d/onvif/imaging_service</tds:XAddr></tds:Service></tds:GetServicesResponse>",local_ip,HTTP_PORT,local_ip,HTTP_PORT,local_ip,HTTP_PORT,local_ip,HTTP_PORT);
+ else if(strstr(r,"GetProfiles"))append(out,size,"<trt:GetProfilesResponse><trt:Profiles token=\"profile_0\" fixed=\"true\"><tt:Name>MainStream</tt:Name><tt:VideoSourceConfiguration token=\"vsrc_0\"><tt:Name>VideoSource</tt:Name><tt:UseCount>1</tt:UseCount><tt:SourceToken>source_0</tt:SourceToken><tt:Bounds x=\"0\" y=\"0\" width=\"1920\" height=\"1080\"/></tt:VideoSourceConfiguration><tt:PTZConfiguration token=\"ptz_0\"><tt:Name>PTZ</tt:Name><tt:UseCount>1</tt:UseCount><tt:NodeToken>node_0</tt:NodeToken></tt:PTZConfiguration></trt:Profiles></trt:GetProfilesResponse>");
+ else if(strstr(r,"GetVideoSources"))append(out,size,"<trt:GetVideoSourcesResponse><trt:VideoSources token=\"source_0\"><tt:Framerate>20</tt:Framerate><tt:Resolution><tt:Width>1920</tt:Width><tt:Height>1080</tt:Height></tt:Resolution></trt:VideoSources></trt:GetVideoSourcesResponse>");
+ else if(strstr(r,"GetStreamUri"))append(out,size,"<trt:GetStreamUriResponse><trt:MediaUri><tt:Uri>rtsp://%s:%d/live/ch00_0</tt:Uri><tt:InvalidAfterConnect>false</tt:InvalidAfterConnect><tt:InvalidAfterReboot>false</tt:InvalidAfterReboot><tt:Timeout>PT60S</tt:Timeout></trt:MediaUri></trt:GetStreamUriResponse>",local_ip,RTSP_PORT);
+ else if(strstr(r,"GetNodes"))append(out,size,"<tptz:GetNodesResponse><tptz:PTZNode token=\"node_0\"><tt:Name>PanTilt</tt:Name><tt:MaximumNumberOfPresets>%d</tt:MaximumNumberOfPresets><tt:HomeSupported>true</tt:HomeSupported></tptz:PTZNode></tptz:GetNodesResponse>",PRESET_MAX);
+ else if(strstr(r,"GetStatus")&&!strstr(r,"Imaging")){motor_refresh();pthread_mutex_lock(&motor_mutex);append(out,size,"<tptz:GetStatusResponse><tptz:PTZStatus><tt:Position><tt:PanTilt x=\"%.4f\" y=\"%.4f\"/></tt:Position><tt:MoveStatus><tt:PanTilt>%s</tt:PanTilt><tt:Zoom>IDLE</tt:Zoom></tt:MoveStatus><tt:UtcTime>2026-01-01T00:00:00Z</tt:UtcTime></tptz:PTZStatus></tptz:GetStatusResponse>",x_to_pan(ptz.x),y_to_tilt(ptz.y),ptz.moving?"MOVING":"IDLE");pthread_mutex_unlock(&motor_mutex);}
+ else if(strstr(r,"AbsoluteMove")){float x,y;if(xml_attr_float(r,"PanTilt","x",&x)<0||xml_attr_float(r,"PanTilt","y",&y)<0){soap_fault(out,size,"Invalid PanTilt");return;}motor_stop();if(motor_goto(pan_to_x(x),tilt_to_y(y))<0){soap_fault(out,size,"Motor failure");return;}append(out,size,"<tptz:AbsoluteMoveResponse/>");}
+ else if(strstr(r,"RelativeMove")){float x,y;if(xml_attr_float(r,"PanTilt","x",&x)<0||xml_attr_float(r,"PanTilt","y",&y)<0){soap_fault(out,size,"Invalid translation");return;}motor_refresh();pthread_mutex_lock(&motor_mutex);int tx=clampi(ptz.x+(int)(x*X_MAX),0,X_MAX),ty=clampi(ptz.y+(int)(y*Y_MAX),0,Y_MAX);pthread_mutex_unlock(&motor_mutex);motor_stop();if(motor_goto(tx,ty)<0){soap_fault(out,size,"Motor failure");return;}append(out,size,"<tptz:RelativeMoveResponse/>");}
+ else if(strstr(r,"ContinuousMove")){float x=0,y=0;xml_attr_float(r,"PanTilt","x",&x);xml_attr_float(r,"PanTilt","y",&y);motor_continuous(x>0.05?1:(x<-0.05?-1:0),y>0.05?1:(y<-0.05?-1:0));append(out,size,"<tptz:ContinuousMoveResponse/>");}
+ else if(strstr(r,"<tptz:Stop")||strstr(r,"<Stop")){motor_stop();append(out,size,"<tptz:StopResponse/>");}
+ else if(strstr(r,"GetImagingSettings")){image_state_t s;image_get(&s);append(out,size,"<timg:GetImagingSettingsResponse><timg:ImagingSettings><tt:Brightness>%d</tt:Brightness><tt:ColorSaturation>%d</tt:ColorSaturation><tt:Contrast>%d</tt:Contrast><tt:Sharpness>%d</tt:Sharpness><tt:Exposure><tt:Mode>%s</tt:Mode><tt:ExposureTime>%d</tt:ExposureTime><tt:Gain>%d</tt:Gain><tt:Iris>%d</tt:Iris></tt:Exposure><tt:WhiteBalance><tt:Mode>%s</tt:Mode></tt:WhiteBalance><tt:WideDynamicRange><tt:Mode>%s</tt:Mode><tt:Level>%d</tt:Level></tt:WideDynamicRange><tt:IrCutFilter>%s</tt:IrCutFilter><tt:Focus><tt:AutoFocusMode>%s</tt:AutoFocusMode></tt:Focus><tt:Extension><tt:Chuangmi><tt:Hue>%d</tt:Hue><tt:Denoise>%d</tt:Denoise><tt:DayNight>%d</tt:DayNight><tt:Mirror>%d</tt:Mirror><tt:Flip>%d</tt:Flip><tt:SensorFPS>%d</tt:SensorFPS></tt:Chuangmi></tt:Extension></timg:ImagingSettings></timg:GetImagingSettingsResponse>",s.brightness,s.saturation,s.contrast,s.sharpness,s.ae_en?"AUTO":"MANUAL",s.sensor_exposure,s.sensor_gain,s.iris_ratio,s.awb_en?"AUTO":"MANUAL",s.dr_mode?"ON":"OFF",s.drc_strength,s.ircut?"ON":"OFF",s.af_en?"AUTO":"MANUAL",s.hue,s.denoise,s.daynight,s.mirror,s.flip,s.sensor_fps);}
+ else if(strstr(r,"GetOptions")){append(out,size,"<timg:GetOptionsResponse><timg:ImagingOptions><tt:Brightness><tt:Min>0</tt:Min><tt:Max>255</tt:Max></tt:Brightness><tt:ColorSaturation><tt:Min>0</tt:Min><tt:Max>255</tt:Max></tt:ColorSaturation><tt:Contrast><tt:Min>0</tt:Min><tt:Max>255</tt:Max></tt:Contrast><tt:Sharpness><tt:Min>0</tt:Min><tt:Max>255</tt:Max></tt:Sharpness><tt:Exposure><tt:Mode>AUTO</tt:Mode><tt:Mode>MANUAL</tt:Mode><tt:MinExposureTime>1</tt:MinExposureTime><tt:MaxExposureTime>10000</tt:MaxExposureTime><tt:MinGain>0</tt:MinGain><tt:MaxGain>8191</tt:MaxGain><tt:MinIris>0</tt:MinIris><tt:MaxIris>1024</tt:MaxIris></tt:Exposure><tt:WhiteBalance><tt:Mode>AUTO</tt:Mode><tt:Mode>MANUAL</tt:Mode></tt:WhiteBalance><tt:WideDynamicRange><tt:Mode>OFF</tt:Mode><tt:Mode>ON</tt:Mode><tt:Level><tt:Min>0</tt:Min><tt:Max>255</tt:Max></tt:Level></tt:WideDynamicRange><tt:IrCutFilterModes>ON</tt:IrCutFilterModes><tt:IrCutFilterModes>OFF</tt:IrCutFilterModes></timg:ImagingOptions></timg:GetOptionsResponse>");}
+ else if(strstr(r,"SetImagingSettings")){int status=0,x;char b[64];int q; q=set_optional(r,"tt:Brightness","brightness",0,255);if(q<0)status=-1;q=set_optional(r,"tt:Contrast","contrast",0,255);if(q<0)status=-1;q=set_optional(r,"tt:ColorSaturation","saturation",0,255);if(q<0)status=-1;q=set_optional(r,"tt:Sharpness","sharpness",0,255);if(q<0)status=-1;
+   if(xml_tag(r,"tt:Mode",b,sizeof(b))==0&&strstr(r,"Exposure"))if(isp_set("ae_en",!strcmp(b,"AUTO"))<0)status=-1;
+   if(get_int_tag(r,"tt:ExposureTime",&x)==0&&set_checked("sen_exp",x,1,10000)<0)status=-1;
+   if(get_int_tag(r,"tt:Gain",&x)==0&&set_checked("sen_gain",x,0,8191)<0)status=-1;
+   if(get_int_tag(r,"tt:Iris",&x)==0&&set_checked("iris_drv_ratio",x,0,1024)<0)status=-1;
+   if(strstr(r,"WhiteBalance")&&xml_tag(strstr(r,"WhiteBalance"),"tt:Mode",b,sizeof(b))==0)if(isp_set("awb_en",!strcmp(b,"AUTO"))<0)status=-1;
+   if(strstr(r,"WideDynamicRange")&&xml_tag(strstr(r,"WideDynamicRange"),"tt:Mode",b,sizeof(b))==0)if(isp_set("dr_mode",!strcmp(b,"ON"))<0)status=-1;
+   if(strstr(r,"WideDynamicRange")&&get_int_tag(strstr(r,"WideDynamicRange"),"tt:Level",&x)==0&&set_checked("drc_strength",x,0,255)<0)status=-1;
+   if(xml_tag(r,"tt:IrCutFilter",b,sizeof(b))==0&&ircut_set(!strcmp(b,"ON"))<0)status=-1;
+   q=set_optional(r,"tt:Hue","hue",-255,255);if(q<0)status=-1;q=set_optional(r,"tt:Denoise","denoise",0,255);if(q<0)status=-1;q=set_optional(r,"tt:DayNight","daynight",0,1);if(q<0)status=-1;q=set_optional(r,"tt:Mirror","mirror",0,1);if(q<0)status=-1;q=set_optional(r,"tt:Flip","flip",0,1);if(q<0)status=-1;q=set_optional(r,"tt:SensorFPS","sen_fps",1,30);if(q<0)status=-1;
+   if(status<0){soap_fault(out,size,"Failed to apply imaging settings");return;}append(out,size,"<timg:SetImagingSettingsResponse/>");}
+ else if(strstr(r,"SetBlueLED")){int v;if(get_int_tag(r,"Enabled",&v)<0||blue_led_set(v)<0){soap_fault(out,size,"Blue LED failed");return;}append(out,size,"<tmd:SetBlueLEDResponse/>");}
+ else if(strstr(r,"SetYellowLED")){int v;if(get_int_tag(r,"Enabled",&v)<0||yellow_led_set(v)<0){soap_fault(out,size,"Yellow LED failed");return;}append(out,size,"<tmd:SetYellowLEDResponse/>");}
+ else if(strstr(r,"SetIrCut")){int v;if(get_int_tag(r,"Enabled",&v)<0||ircut_set(v)<0){soap_fault(out,size,"IR-cut failed");return;}append(out,size,"<tmd:SetIrCutResponse/>");}
+ else {soap_fault(out,size,"Action not supported");return;}append(out,size,"%s",SOAP_TAIL);
 }
 
-static void reply(int f,int c,const char*t,const char*b){char h[512];size_t n=b?strlen(b):0;int l=snprintf(h,sizeof(h),"HTTP/1.1 %d %s\r\nContent-Type: %s\r\nContent-Length: %lu\r\nConnection: close\r\n\r\n",c,c==200?"OK":"Error",t,(unsigned long)n);send(f,h,l,0);if(n)send(f,b,n,0);}
-static void *client(void*a){int f=(int)(intptr_t)a,u=0,n;char*r=calloc(1,MAX_REQ),*o=calloc(1,MAX_XML);if(!r||!o){close(f);free(r);free(o);return NULL;}while(u<MAX_REQ-1&&(n=recv(f,r+u,MAX_REQ-1-u,0))>0){u+=n;r[u]=0;char*e=strstr(r,"\r\n\r\n");if(e){char*c=strcasestr(r,"Content-Length:");int z=c?atoi(c+15):0;if(u>=(int)(e+4-r)+z)break;}}if(strstr(r,"POST /onvif/")){char*b=strstr(r,"\r\n\r\n");soap(b?b+4:r,o,MAX_XML);reply(f,200,"application/soap+xml; charset=utf-8",o);}else reply(f,404,"text/plain","Not found\n");free(r);free(o);close(f);return NULL;}
-static void *httpd(void*a){(void)a;int s=socket(AF_INET,SOCK_STREAM,0),one=1;struct sockaddr_in q;setsockopt(s,SOL_SOCKET,SO_REUSEADDR,&one,sizeof(one));memset(&q,0,sizeof(q));q.sin_family=AF_INET;q.sin_port=htons(HTTP_PORT);q.sin_addr.s_addr=INADDR_ANY;if(bind(s,(void*)&q,sizeof(q))<0||listen(s,16)<0){logx("ERROR","HTTP: %s",strerror(errno));return NULL;}while(alive){int f=accept(s,NULL,NULL);if(f<0)continue;pthread_t t;if(!pthread_create(&t,NULL,client,(void*)(intptr_t)f))pthread_detach(t);else close(f);}close(s);return NULL;}
-static void *wsdd(void*a){(void)a;int s=socket(AF_INET,SOCK_DGRAM,0),one=1;struct sockaddr_in q;struct ip_mreq m;char b[8192];setsockopt(s,SOL_SOCKET,SO_REUSEADDR,&one,sizeof(one));memset(&q,0,sizeof(q));q.sin_family=AF_INET;q.sin_port=htons(WSD_PORT);q.sin_addr.s_addr=INADDR_ANY;if(bind(s,(void*)&q,sizeof(q))<0)return NULL;m.imr_multiaddr.s_addr=inet_addr(WSD_GROUP);m.imr_interface.s_addr=INADDR_ANY;setsockopt(s,IPPROTO_IP,IP_ADD_MEMBERSHIP,&m,sizeof(m));while(alive){struct sockaddr_in f;socklen_t z=sizeof(f);int n=recvfrom(s,b,sizeof(b)-1,0,(void*)&f,&z);if(n<=0)continue;b[n]=0;if(!strstr(b,"Probe"))continue;char id[256]="urn:uuid:unknown";tag(b,"a:MessageID",id,sizeof(id));char x[4096];int l=snprintf(x,sizeof(x),"<?xml version=\"1.0\"?><e:Envelope xmlns:e=\"http://www.w3.org/2003/05/soap-envelope\" xmlns:a=\"http://www.w3.org/2005/08/addressing\" xmlns:d=\"http://schemas.xmlsoap.org/ws/2005/04/discovery\" xmlns:dn=\"http://www.onvif.org/ver10/network/wsdl\"><e:Header><a:MessageID>urn:uuid:%ld</a:MessageID><a:RelatesTo>%s</a:RelatesTo><a:Action>http://schemas.xmlsoap.org/ws/2005/04/discovery/ProbeMatches</a:Action></e:Header><e:Body><d:ProbeMatches><d:ProbeMatch><a:EndpointReference><a:Address>%s</a:Address></a:EndpointReference><d:Types>dn:NetworkVideoTransmitter</d:Types><d:Scopes>onvif://www.onvif.org/type/video_encoder onvif://www.onvif.org/type/ptz onvif://www.onvif.org/name/chuangmi-v2</d:Scopes><d:XAddrs>http://%s:%d/onvif/device_service</d:XAddrs><d:MetadataVersion>1</d:MetadataVersion></d:ProbeMatch></d:ProbeMatches></e:Body></e:Envelope>",(long)time(NULL),id,uuid,ipaddr,HTTP_PORT);sendto(s,x,l,0,(void*)&f,z);}close(s);return NULL;}
-int main(void){pthread_t h,w;signal(SIGINT,sigfn);signal(SIGTERM,sigfn);signal(SIGPIPE,SIG_IGN);getip("mlan0",ipaddr,sizeof(ipaddr));if(!strcmp(ipaddr,"127.0.0.1"))getip("wlan0",ipaddr,sizeof(ipaddr));make_uuid();load_state();if(motor_open()<0)logx("WARN","open %s: %s",MOTOR_DEV,strerror(errno));else{motor_refresh();logx("INFO","motor X=%d Y=%d",ptz.x,ptz.y);}pthread_create(&h,NULL,httpd,NULL);pthread_create(&w,NULL,wsdd,NULL);logx("INFO","device=%s http=%s:%d",uuid,ipaddr,HTTP_PORT);while(alive)sleep(1);stop_move();pthread_cancel(h);pthread_cancel(w);pthread_join(h,NULL);pthread_join(w,NULL);if(motor_fd>=0)close(motor_fd);return 0;}
+static void http_reply(int fd,int code,const char*type,const char*body){char h[512];size_t n=body?strlen(body):0;int l=snprintf(h,sizeof(h),"HTTP/1.1 %d %s\r\nContent-Type: %s\r\nContent-Length: %lu\r\nConnection: close\r\nServer: GM8136-ONVIF\r\n\r\n",code,code==200?"OK":"Error",type,(unsigned long)n);send(fd,h,l,0);if(n)send(fd,body,n,0);}
+static void *client_thread(void*arg){int fd=(int)(intptr_t)arg,used=0,n;char*req=calloc(1,MAX_REQUEST),*out=calloc(1,MAX_RESPONSE);if(!req||!out){close(fd);free(req);free(out);return NULL;}while(used<MAX_REQUEST-1&&(n=recv(fd,req+used,MAX_REQUEST-1-used,0))>0){used+=n;req[used]=0;char*end=strstr(req,"\r\n\r\n");if(end){char*c=strcasestr(req,"Content-Length:");int len=c?atoi(c+15):0;if(used>=(int)(end+4-req)+len)break;}}if(strstr(req,"POST /onvif/")){char*body=strstr(req,"\r\n\r\n");handle_soap(body?body+4:req,out,MAX_RESPONSE);http_reply(fd,200,"application/soap+xml; charset=utf-8",out);}else http_reply(fd,404,"text/plain","Not found\n");free(req);free(out);close(fd);return NULL;}
+static void *http_server(void*arg){(void)arg;int s=socket(AF_INET,SOCK_STREAM,0),one=1;struct sockaddr_in a;setsockopt(s,SOL_SOCKET,SO_REUSEADDR,&one,sizeof(one));memset(&a,0,sizeof(a));a.sin_family=AF_INET;a.sin_port=htons(HTTP_PORT);a.sin_addr.s_addr=INADDR_ANY;if(bind(s,(void*)&a,sizeof(a))<0||listen(s,16)<0){log_message("ERROR","HTTP %s",strerror(errno));return NULL;}while(running){int fd=accept(s,NULL,NULL);if(fd<0)continue;pthread_t t;if(!pthread_create(&t,NULL,client_thread,(void*)(intptr_t)fd))pthread_detach(t);else close(fd);}close(s);return NULL;}
+static void *discovery_server(void*arg){(void)arg;int s=socket(AF_INET,SOCK_DGRAM,0),one=1;struct sockaddr_in a;struct ip_mreq m;char b[8192];setsockopt(s,SOL_SOCKET,SO_REUSEADDR,&one,sizeof(one));memset(&a,0,sizeof(a));a.sin_family=AF_INET;a.sin_port=htons(WSD_PORT);a.sin_addr.s_addr=INADDR_ANY;if(bind(s,(void*)&a,sizeof(a))<0)return NULL;m.imr_multiaddr.s_addr=inet_addr(WSD_GROUP);m.imr_interface.s_addr=INADDR_ANY;setsockopt(s,IPPROTO_IP,IP_ADD_MEMBERSHIP,&m,sizeof(m));while(running){struct sockaddr_in from;socklen_t fl=sizeof(from);int n=recvfrom(s,b,sizeof(b)-1,0,(void*)&from,&fl);if(n<=0)continue;b[n]=0;if(!strstr(b,"Probe"))continue;char id[256]="urn:uuid:probe";xml_tag(b,"a:MessageID",id,sizeof(id));char x[4096];int l=snprintf(x,sizeof(x),"<?xml version=\"1.0\"?><e:Envelope xmlns:e=\"http://www.w3.org/2003/05/soap-envelope\" xmlns:a=\"http://www.w3.org/2005/08/addressing\" xmlns:d=\"http://schemas.xmlsoap.org/ws/2005/04/discovery\" xmlns:dn=\"http://www.onvif.org/ver10/network/wsdl\"><e:Header><a:MessageID>urn:uuid:%ld</a:MessageID><a:RelatesTo>%s</a:RelatesTo><a:Action>http://schemas.xmlsoap.org/ws/2005/04/discovery/ProbeMatches</a:Action></e:Header><e:Body><d:ProbeMatches><d:ProbeMatch><a:EndpointReference><a:Address>%s</a:Address></a:EndpointReference><d:Types>dn:NetworkVideoTransmitter</d:Types><d:Scopes>onvif://www.onvif.org/type/video_encoder onvif://www.onvif.org/type/ptz onvif://www.onvif.org/name/chuangmi-v2</d:Scopes><d:XAddrs>http://%s:%d/onvif/device_service</d:XAddrs><d:MetadataVersion>1</d:MetadataVersion></d:ProbeMatch></d:ProbeMatches></e:Body></e:Envelope>",(long)time(NULL),id,endpoint_uuid,local_ip,HTTP_PORT);sendto(s,x,l,0,(void*)&from,fl);}close(s);return NULL;}
+
+int main(void){pthread_t http,wsd;signal(SIGINT,signal_handler);signal(SIGTERM,signal_handler);signal(SIGPIPE,SIG_IGN);if(get_ip("mlan0",local_ip,sizeof(local_ip))<0)get_ip("wlan0",local_ip,sizeof(local_ip));make_uuid();load_ptz();motor_fd=open(MOTOR_DEVICE,O_RDWR|O_CLOEXEC);if(motor_fd<0)log_message("WARN","open %s: %s",MOTOR_DEVICE,strerror(errno));else{motor_refresh();log_message("INFO","motor X=%d Y=%d",ptz.x,ptz.y);}pthread_create(&http,NULL,http_server,NULL);pthread_create(&wsd,NULL,discovery_server,NULL);log_message("INFO","device=%s http=%s:%d",endpoint_uuid,local_ip,HTTP_PORT);while(running)sleep(1);motor_stop();pthread_cancel(http);pthread_cancel(wsd);pthread_join(http,NULL);pthread_join(wsd,NULL);if(motor_fd>=0)close(motor_fd);return 0;}
