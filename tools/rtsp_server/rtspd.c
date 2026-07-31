@@ -50,8 +50,8 @@
 #define SDPSTR_MAX               128
 #define SR_MAX                   64
 #define VQ_MAX                   (SR_MAX)
-#define VQ_LEN                   5
-#define AQ_MAX                   64            // * 1 MP2 and 1 AMR for live streaming, another 2 for file streaming.
+#define VQ_LEN                   100
+#define AQ_MAX                   64	           // * 1 MP2 and 1 AMR for live streaming, another 2 for file streaming.
 #define AQ_LEN                   64            // * 1 MP2 and 1 AMR for live streaming, another 2 for file streaming.
 #define AV_NAME_MAX              127
 
@@ -1537,6 +1537,12 @@ void gm_enc_init(int cap_ch, int cap_path, int rec_track, int enc_type, int mode
             h264e_attr.ratectl.min_quant     = 20;
             h264e_attr.ratectl.max_quant     = 51;
             gm_set_attr(param->enc[rec_track].obj, &h264e_attr);
+/* H264 advanced */
+			DECLARE_ATTR(h264_adv, gm_h264_advanced_attr_t);
+			h264_adv.multi_slice = 4;
+			h264_adv.field_coding = 0;
+			h264_adv.gray_scale = 0;
+			gm_set_attr(param->enc[rec_track].obj, &h264_adv);
             memcpy(&param->enc[rec_track].codec.h264e_attr, &h264e_attr, sizeof(gm_h264e_attr_t));
             break;
         case ENC_TYPE_MPEG4:
