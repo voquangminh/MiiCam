@@ -116,7 +116,12 @@ static int ircut_get(int *enabled){char state[16];int rc=0;pthread_mutex_lock(&g
 static void image_defaults(image_state_t *s){memset(s,0,sizeof(*s));s->brightness=s->contrast=s->saturation=s->sharpness=128;s->denoise=128;s->sensor_fps=20;s->ae_en=s->awb_en=1;}
 
 static int image_get(image_state_t *s){int rc=0;image_defaults(s);
-    #define GET_FIELD(name,field)do{if(isp_get(name,&s->field)<0)rc=-1;}while(0)GET_FIELD("brightness",brightness);GET_FIELD("contrast",contrast);GET_FIELD("hue",hue);GET_FIELD("saturation",saturation);GET_FIELD("denoise",denoise);GET_FIELD("sharpness",sharpness);GET_FIELD("drc_strength",drc_strength);GET_FIELD("dr_mode",dr_mode);GET_FIELD("daynight",daynight);GET_FIELD("ae_en",ae_en);GET_FIELD("awb_en",awb_en);GET_FIELD("af_en",af_en);GET_FIELD("sen_exp",sensor_exposure);GET_FIELD("sen_gain",sensor_gain);GET_FIELD("sen_fps",sensor_fps);GET_FIELD("mirror",mirror);GET_FIELD("flip",flip);if(ircut_get(&s->ircut)<0)rc=-1;#undef GET_FIELDreturn rc;}
+#define GET_FIELD(name,field)do{if(isp_get(name,&s->field)<0)rc=-1;}while(0)
+    GET_FIELD("brightness",brightness);GET_FIELD("contrast",contrast);GET_FIELD("hue",hue);GET_FIELD("saturation",saturation);GET_FIELD("denoise",denoise);GET_FIELD("sharpness",sharpness);GET_FIELD("drc_strength",drc_strength);GET_FIELD("dr_mode",dr_mode);GET_FIELD("daynight",daynight);GET_FIELD("ae_en",ae_en);GET_FIELD("awb_en",awb_en);GET_FIELD("af_en",af_en);GET_FIELD("sen_exp",sensor_exposure);GET_FIELD("sen_gain",sensor_gain);GET_FIELD("sen_fps",sensor_fps);GET_FIELD("mirror",mirror);GET_FIELD("flip",flip);if(ircut_get(&s->ircut)<0)rc=-1;
+#undef GET_FIELD
+    return rc;
+}
+
 static int set_checked(const char*n,int v,int lo,int hi){return isp_set(n,clampi(v,lo,hi));}
 
 static int get_ip(const char *name,char *out,size_t size){int fd=socket(AF_INET,SOCK_DGRAM,0);struct ifreq q;if(fd<0)return-1;memset(&q,0,sizeof(q));q.ifr_addr.sa_family=AF_INET;strncpy(q.ifr_name,name,IFNAMSIZ-1);if(ioctl(fd,SIOCGIFADDR,&q)<0){close(fd);return-1;}snprintf(out,size,"%s",inet_ntoa(((struct sockaddr_in*)&q.ifr_addr)->sin_addr));close(fd);return 0;}
