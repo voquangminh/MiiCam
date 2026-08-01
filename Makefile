@@ -171,9 +171,11 @@ $(BUILDDIR)/onvif_server: $(PREFIXDIR)/bin
 	@mkdir -p $(BUILDDIR) $(TOOLSDIR)/bin
 	cd $(ONVIFDIR) 				&& \
 	$(TARGET)-gcc 				\
+		-std=gnu99    \
 		-Os 					\
 		-DLOG_USE_COLOR			\
 		-Wall					\
+		-Wextra       \
 		-pthread      \
 		$(ONVIFDIR)/motor_driver.c		\
 		$(ONVIFDIR)/onvif_hw_image_led.c		\
