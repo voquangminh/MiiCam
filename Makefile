@@ -180,7 +180,7 @@ $(BUILDDIR)/onvif_server: $(PREFIXDIR)/bin
 		$(ONVIFDIR)/motor_driver.c		\
 		$(ONVIFDIR)/onvif_hw_image_led.c		\
 		$(ONVIFDIR)/onvif_server.c		\
-		-lpthread -lm -lrt -lgm -o $(TOOLSDIR)/bin/onvif_server && \
+		-lpthread -lm -lrt -o $(TOOLSDIR)/bin/onvif_server && \
 		$(TARGET)-strip $(TOOLSDIR)/bin/onvif_server
 	@touch $@
 
