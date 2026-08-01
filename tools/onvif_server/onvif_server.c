@@ -134,7 +134,41 @@ static int motor_position(int*x,int*y){*x = ptz.x;*y = ptz.y;return 0;}
 //static int motor_axis(unsigned long dir_cmd,unsigned long dist_cmd,int delta){int dir,dist;if(!delta)return 0;dir=delta>0?1:0;dist=delta>0?delta:-delta;if(motor_ioctl_int(dir_cmd,&dir)<0)return-1;return motor_ioctl_int(dist_cmd,&dist);}
 //static int motor_goto_locked(int tx,int ty){int x,y;tx=clampi(tx,0,X_MAX);ty=clampi(ty,0,Y_MAX);if(motor_position(&x,&y)<0){x=ptz.x;y=ptz.y;}log_message("MOTOR","current=(%d,%d) ta*get=(%d,%d)",x,y,tx,ty);if(motor_axis(H_DIR_SET,H_DIST_SET,tx-x)<0)return-1;if(motor_axis(V_DIR_SET,V_DIST_SET,ty-y)<0)return-1;if(motor_position(&ptz.x,&ptz.y)<0){ptz.x=tx;ptz.y=ty;}save_ptz();return 0;}
 //static int motor_goto(int x,int y){int rc;log_message("MOTOR","goto x=%d y=%d",x,y);pthread_mutex_lock(&motor_mutex);rc=motor_goto_locked(x,y);log_message("MOTOR","goto rc=%d errno=%d (%s)",rc,errno,strerror(errno));pthread_mutex_unlock(&motor_mutex);return rc;}
-static int motor_move_relative(int dx, int dy){int dir;int dist;pthread_mutex_lock(&motor_mutex);if(dx != 0){dir  = (dx > 0) ? 1 : 0;dist = (dx > 0) ? dx : -dx;motor_ioctl_int(H_DIR_SET, &dir);motor_ioctl_int(H_DIST_SET, &dist);ptz.x += dx;}if(dy != 0){dir  = (dy > 0) ? 1 : 0;dist = (dy > 0) ? dy : -dy;motor_ioctl_int(V_DIR_SET, &dir);motor_ioctl_int(V_DIST_SET, &dist);ptz.y += dy;}ptz.x = clampi(ptz.x, 0, X_MAX);ptz.y = clampi(ptz.y, 0, Y_MAX);save_ptz();pthread_mutex_unlock(&motor_mutex);return 0;}
+static int motor_move_relative(int dx,int dy)
+{
+    int dir;
+    int dist;
+    int hpos;
+    int vpos;
+
+    pthread_mutex_lock(&motor_mutex);
+    if(dx){
+        dir  = dx > 0 ? 1 : 0;
+        dist = dx > 0 ? dx : -dx;
+        motor_ioctl_int(H_DIR_SET,&dir);
+        motor_ioctl_int(H_DIST_SET,&dist);
+    }
+    if(dy){
+        dir  = dy > 0 ? 1 : 0;
+        dist = dy > 0 ? dy : -dy;
+        motor_ioctl_int(V_DIR_SET,&dir);
+        motor_ioctl_int(V_DIST_SET,&dist);
+    }
+
+    hpos = 0;
+    vpos = 0;
+
+    motor_ioctl_int(H_COORD_GET,&hpos);
+    motor_ioctl_int(V_COORD_GET,&vpos);
+
+    ptz.x = clampi(hpos,0,X_MAX);
+    ptz.y = clampi(vpos,0,Y_MAX);
+
+    save_ptz();
+
+    pthread_mutex_unlock(&motor_mutex);
+
+    return 0;}
 static void motor_refresh(void){save_ptz();}
 static void motor_stop(void){pthread_mutex_lock(&motor_mutex);ptz.moving=0;pthread_mutex_unlock(&motor_mutex);}
 static void *motor_worker(void *unused){(void)unused;for(;;){int active,dx,dy,tx,ty;pthread_mutex_lock(&motor_mutex);active=running&&ptz.moving;dx = ptz.dx;dy = ptz.dy;pthread_mutex_unlock(&motor_mutex);if(!active)break;if(motor_move_relative(ptz.dx,ptz.dy)<0)break;usleep(100000);}pthread_mutex_lock(&motor_mutex);ptz.moving=0;ptz.worker_active=0;pthread_mutex_unlock(&motor_mutex);return NULL;}
