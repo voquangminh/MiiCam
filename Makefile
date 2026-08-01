@@ -169,13 +169,16 @@ build/aac_play: $(BUILDDIR)/aac_play
 
 $(BUILDDIR)/onvif_server: $(PREFIXDIR)/bin
 	@mkdir -p $(BUILDDIR) $(TOOLSDIR)/bin
-	cd $(ONVIFDDIR) 				&& \
+	cd $(ONVIFDIR) 				&& \
 	$(TARGET)-gcc 				\
 		-Os 					\
 		-DLOG_USE_COLOR			\
 		-Wall					\
-		$(RTSPDDIR)/onvif_server.c		\
-		-lpthread -lm -lrt -lgm -o $(TOOLSDIR)/bin/onvif_server && \
+		-pthread      \
+		$(ONVIFDIR)/motor_driver.c		\
+		$(ONVIFDIR)/onvif_hw_image_led.c		\
+		$(ONVIFDIR)/onvif_server.c		\
+		-o $(TOOLSDIR)/bin/onvif_server && \
 		$(TARGET)-strip $(TOOLSDIR)/bin/onvif_server
 	@touch $@
 
