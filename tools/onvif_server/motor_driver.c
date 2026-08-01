@@ -56,7 +56,7 @@ int gm8136_motor_open(const char *device)
         return 0;
     }
 
-    fd = open(device, O_RDWR | O_CLOEXEC);
+    fd = open(device, O_RDWR);
     if (fd < 0) {
         pthread_mutex_unlock(&motor_mutex);
         return -1;
