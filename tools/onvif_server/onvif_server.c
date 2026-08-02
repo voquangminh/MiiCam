@@ -64,13 +64,31 @@
 #define V_COORD_GET _IOW(MOTOR_MAGIC, 25, int)
 #define V_COORD_SET _IOW(MOTOR_MAGIC, 26, int)
 
+#define PWM_DEVICE "/dev/ftpwmtmr010"
+#define PWM_IOCTL_01 0x40047001UL
+#define PWM_IOCTL_02 0x40047002UL
+#define PWM_IOCTL_05 0x40307005UL
+#define PWM_IOCTL_06 0x40307006UL
+#define PWM_IOCTL_07 0x40307007UL
+#define PWM_IOCTL_09 0x40307009UL
+#define PWM_IOCTL_0E 0x4004700eUL
+
 static volatile sig_atomic_t running = 1;
 static char local_ip[64] = "127.0.0.1";
 static char endpoint_uuid[96] = "urn:uuid:81360000-0000-4000-8000-000000000001";
+static int pwm_fd = -1;
 static int motor_fd = -1;
 static pthread_mutex_t motor_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_mutex_t isp_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_mutex_t gpio_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+typedef char pwm_config_size_must_be_48[
+    sizeof(pwm_config_t) == 48 ? 1 : -1
+];
+
+typedef struct {
+    uint32_t value[12];
+} pwm_config_t;
 
 typedef struct { int used, x, y; char token[32], name[64]; } preset_t;
 typedef struct {
@@ -129,6 +147,89 @@ static void make_uuid(void){FILE*f=fopen("/sys/class/net/mlan0/address","r");cha
 static void save_ptz(void){FILE*f=fopen(STATE_FILE,"w");if(!f)return;fprintf(f,"%d %d %d %d\n",ptz.x,ptz.y,ptz.home_x,ptz.home_y);for(int i=0;i<PRESET_MAX;i++)if(ptz.presets[i].used)fprintf(f,"P %s %d %d %s\n",ptz.presets[i].token,ptz.presets[i].x,ptz.presets[i].y,ptz.presets[i].name);fclose(f);}
 static void load_ptz(void){FILE*f=fopen(STATE_FILE,"r");char line[256];if(!f)return;if(fgets(line,sizeof(line),f))sscanf(line,"%d %d %d %d",&ptz.x,&ptz.y,&ptz.home_x,&ptz.home_y);while(fgets(line,sizeof(line),f)){char token[32],name[64];int x,y;if(sscanf(line,"P %31s %d %d %63s",token,&x,&y,name)==4)for(int i=0;i<PRESET_MAX;i++)if(!ptz.presets[i].used){ptz.presets[i].used=1;ptz.presets[i].x=x;ptz.presets[i].y=y;snprintf(ptz.presets[i].token,32,"%s",token);snprintf(ptz.presets[i].name,64,"%s",name);break;}}fclose(f);}
 //static int motor_ioctl_int(unsigned long cmd,int *value){int rc;if(motor_fd<0){errno=ENODEV;return-1;}log_message("IOCTL","cmd=0x%08lx value=%d",cmd,value ? *value : -1);do{ rc=ioctl(motor_fd,cmd,value);log_message("IOCTL","rc=%d errno=%d",rc,errno);}while(rc<0&&errno==EINTR);return rc;}
+static int pwm_ioctl(unsigned long request, void *argument)
+{
+    int rc;
+    if (pwm_fd < 0) {
+        errno = ENODEV;
+        return -1;
+    }
+    errno = 0;
+    do {
+        rc = ioctl(pwm_fd, request, argument);
+    } while (rc < 0 && errno == EINTR);
+    if (rc < 0) {
+        log_message("ERROR","PWM ioctl 0x%08lx failed: %s",request,strerror(errno));
+    }
+    return rc;
+}
+static int motor_pwm_init(void)
+{
+    pwm_config_t config[2];
+    int channel;
+    int rc;
+    memset(config, 0, sizeof(config));
+    /* Layout được khôi phục trực tiếp từ mijia_ctrl tại 0x9384. */
+    config[0].value[0]  = 0;      /* PWM channel 0 */
+    config[0].value[1]  = 1;
+    config[0].value[2]  = 1;
+    config[0].value[3]  = 0;
+    config[0].value[4]  = 255;
+    config[0].value[5]  = 127;
+    config[0].value[6]  = 0;
+    config[0].value[7]  = 0;
+    config[0].value[8]  = 0;
+    config[0].value[9]  = 0;
+    config[0].value[10] = 1;
+    config[0].value[11] = 127;
+
+    /* Cấu hình PWM1 ban đầu giống PWM0, chỉ đổi channel index. */
+    memcpy(&config[1],&config[0],sizeof(config[0]));
+    config[1].value[0] = 1;
+    pwm_fd = open(PWM_DEVICE, O_RDWR);
+    if (pwm_fd < 0) {
+        log_message("ERROR","open %s failed: %s",PWM_DEVICE,strerror(errno));
+        return -1;
+    }
+    for (channel = 0; channel < 2; channel++) {
+        rc = pwm_ioctl(PWM_IOCTL_01,&config[channel]);
+        if (rc < 0)
+            goto fail;
+        rc = pwm_ioctl(PWM_IOCTL_05,&config[channel]);
+        if (rc < 0)
+            goto fail;
+        rc = pwm_ioctl(PWM_IOCTL_09,&config[channel]);
+        if (rc < 0)
+            goto fail;
+        rc = pwm_ioctl(PWM_IOCTL_0E,&config[channel]);
+        if (rc < 0)
+            goto fail;
+        rc = pwm_ioctl(PWM_IOCTL_07,&config[channel]);
+        if (rc < 0)
+            goto fail;
+    }
+    /* mijia_ctrl ghi 0x00E4E1C0 = 15,000,000 vào offset 12 của cấu hình PWM1. */
+    config[1].value[3] = 1500000*U;
+    rc = pwm_ioctl(PWM_IOCTL_06,&config[1]);
+   if (rc < 0)
+        goto fail;
+   rc = pwm_ioctl(PWM_IOCTL_0E,&config[1]);
+    if(rc < 0)
+        goto fail;
+    r* = pwm_ioctl(
+        PWM_IOCTL_02,&config[1]);
+    if (rc < 0)
+        goto fail;
+    log_message("INFO","motor PWM initialized using %s",PWM_DEVICE);
+    return 0;
+
+fail:
+    log_message("ERROR" "motor PWM initialization*failed: %s",
+        strerror(errno));
+    close(pwm_fd);
+    pwm_fd = -1;
+    return -1;
+}
 static int motor_ioctl_int(unsigned long cmd, int *value)
 {
     int rc;
@@ -418,6 +519,9 @@ int main(void)
         get_ip("wlan0",local_ip,sizeof(local_ip));
     make_uuid();
     load_ptz();
+    if (motor_pwm_init() < 0) {
+        log_message("ERROR","motor PWM is unavailable; physical PTZ may not move");
+    }
     motor_fd=open(MOTOR_DEVICE,O_RDWR);
     if(motor_fd<0)
         log_message("WARN","open %s: %s",MOTOR_DEVICE,strerror(errno));
@@ -431,6 +535,13 @@ int main(void)
     motor_stop();pthread_cancel(http);
     pthread_cancel(wsd);pthread_join(http,NULL);
     pthread_join(wsd,NULL);
-    if(motor_fd>=0)
-        close(motor_fd);return 0;
+    if (motor_fd >= 0) {
+        close(motor_fd);
+        motor_fd = -1;
+    }
+    if (pwm_fd >= 0) {
+        close(pwm_fd);
+        pwm_fd = -1;
+    }
+    return 0;
 }
