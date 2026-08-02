@@ -129,7 +129,22 @@ static int get_ip(const char *name,char *out,size_t size){int fd=socket(AF_INET,
 static void make_uuid(void){FILE*f=fopen("/sys/class/net/mlan0/address","r");char mac[32]={0},hex[20]={0};int j=0;if(!f)f=fopen("/sys/class/net/wlan0/address","r");if(!f)return;fgets(mac,sizeof(mac),f);fclose(f);for(int i=0;mac[i]&&j<12;i++)if(isxdigit((unsigned char)mac[i]))hex[j++]=(char)tolower((unsigned char)mac[i]);if(j==12)snprintf(endpoint_uuid,sizeof(endpoint_uuid),"urn:uuid:81360000-0000-4000-8000-%s",hex);}
 static void save_ptz(void){FILE*f=fopen(STATE_FILE,"w");if(!f)return;fprintf(f,"%d %d %d %d\n",ptz.x,ptz.y,ptz.home_x,ptz.home_y);for(int i=0;i<PRESET_MAX;i++)if(ptz.presets[i].used)fprintf(f,"P %s %d %d %s\n",ptz.presets[i].token,ptz.presets[i].x,ptz.presets[i].y,ptz.presets[i].name);fclose(f);}
 static void load_ptz(void){FILE*f=fopen(STATE_FILE,"r");char line[256];if(!f)return;if(fgets(line,sizeof(line),f))sscanf(line,"%d %d %d %d",&ptz.x,&ptz.y,&ptz.home_x,&ptz.home_y);while(fgets(line,sizeof(line),f)){char token[32],name[64];int x,y;if(sscanf(line,"P %31s %d %d %63s",token,&x,&y,name)==4)for(int i=0;i<PRESET_MAX;i++)if(!ptz.presets[i].used){ptz.presets[i].used=1;ptz.presets[i].x=x;ptz.presets[i].y=y;snprintf(ptz.presets[i].token,32,"%s",token);snprintf(ptz.presets[i].name,64,"%s",name);break;}}fclose(f);}
-static int motor_ioctl_int(unsigned long cmd,int *value){int rc;if(motor_fd<0){errno=ENODEV;return-1;}log_message("IOCTL","cmd=0x%08lx value=%d",cmd,value ? *value : -1);do{ rc=ioctl(motor_fd,cmd,value);log_message("IOCTL","rc=%d errno=%d",rc,errno);}while(rc<0&&errno==EINTR);return rc;}
+//static int motor_ioctl_int(unsigned long cmd,int *value){int rc;if(motor_fd<0){errno=ENODEV;return-1;}log_message("IOCTL","cmd=0x%08lx value=%d",cmd,value ? *value : -1);do{ rc=ioctl(motor_fd,cmd,value);log_message("IOCTL","rc=%d errno=%d",rc,errno);}while(rc<0&&errno==EINTR);return rc;}
+static int motor_ioctl_int(unsigned long cmd,int *value)
+{
+    int rc;
+    if(motor_fd < 0){
+        errno = ENODEV;
+        return -1;
+    }
+    log_message("IOCTL","before cmd=0x%08lx value=%d",cmd,value ? *value : -1);
+    do{
+        rc = ioctl(motor_fd,cmd,value);
+    }
+    while(rc < 0 && errno == EINTR);
+    log_message("IOCTL","after cmd=0x%08lx rc=%d value=%d errno=%d",cmd,rc,value ? *value : -1,errno);
+    return rc;
+}
 static int motor_position(int*x,int*y){*x = ptz.x;*y = ptz.y;return 0;}
 //static int motor_axis(unsigned long dir_cmd,unsigned long dist_cmd,int delta){int dir,dist;if(!delta)return 0;dir=delta>0?1:0;dist=delta>0?delta:-delta;if(motor_ioctl_int(dir_cmd,&dir)<0)return-1;return motor_ioctl_int(dist_cmd,&dist);}
 //static int motor_goto_locked(int tx,int ty){int x,y;tx=clampi(tx,0,X_MAX);ty=clampi(ty,0,Y_MAX);if(motor_position(&x,&y)<0){x=ptz.x;y=ptz.y;}log_message("MOTOR","current=(%d,%d) ta*get=(%d,%d)",x,y,tx,ty);if(motor_axis(H_DIR_SET,H_DIST_SET,tx-x)<0)return-1;if(motor_axis(V_DIR_SET,V_DIST_SET,ty-y)<0)return-1;if(motor_position(&ptz.x,&ptz.y)<0){ptz.x=tx;ptz.y=ty;}save_ptz();return 0;}
@@ -140,7 +155,6 @@ static int motor_move_relative(int dx,int dy)
     int dist;
     int hpos;
     int vpos;
-
     pthread_mutex_lock(&motor_mutex);
     if(dx){
         dir  = dx > 0 ? 1 : 0;
@@ -154,21 +168,17 @@ static int motor_move_relative(int dx,int dy)
         motor_ioctl_int(V_DIR_SET,&dir);
         motor_ioctl_int(V_DIST_SET,&dist);
     }
-
     hpos = 0;
     vpos = 0;
-
     motor_ioctl_int(H_COORD_GET,&hpos);
     motor_ioctl_int(V_COORD_GET,&vpos);
-
+    log_message("MOTOR","hpos=%d vpos=%d");
     ptz.x = clampi(hpos,0,X_MAX);
     ptz.y = clampi(vpos,0,Y_MAX);
-
     save_ptz();
-
     pthread_mutex_unlock(&motor_mutex);
-
-    return 0;}
+    return 0;
+}
 static void motor_refresh(void){save_ptz();}
 static void motor_stop(void){pthread_mutex_lock(&motor_mutex);ptz.moving=0;pthread_mutex_unlock(&motor_mutex);}
 static void *motor_worker(void *unused){(void)unused;for(;;){int active,dx,dy,tx,ty;pthread_mutex_lock(&motor_mutex);active=running&&ptz.moving;dx = ptz.dx;dy = ptz.dy;pthread_mutex_unlock(&motor_mutex);if(!active)break;if(motor_move_relative(ptz.dx,ptz.dy)<0)break;usleep(100000);}pthread_mutex_lock(&motor_mutex);ptz.moving=0;ptz.worker_active=0;pthread_mutex_unlock(&motor_mutex);return NULL;}
@@ -200,7 +210,23 @@ static void handle_soap(const char*r,char*out,size_t size){out[0]=0;append(out,s
  else if(strstr(r,"SetPreset")){int idx;pthread_mutex_lock(&motor_mutex);for(idx = 0; idx < PRESET_MAX; idx++){if(!ptz.presets[idx].used)break;}if(idx < PRESET_MAX){ptz.presets[idx].used = 1;snprintf(ptz.presets[idx].token,sizeof(ptz.presets[idx].token),"preset_%d",idx);snprintf(ptz.presets[idx].name,sizeof(ptz.presets[idx].name),"Preset%d",idx);ptz.presets[idx].x = ptz.x;ptz.presets[idx].y = ptz.y;save_ptz();}pthread_mutex_unlock(&motor_mutex);append(out,size,"<tptz:SetPresetResponse>""<tptz:PresetToken>preset_%d</tptz:PresetToken>""</tptz:SetPresetResponse>",idx);}
  else if(strstr(r,"GotoPreset")){char token[64];int p;if(xml_tag(r,"tptz:PresetToken",token,sizeof(token)) == 0){for(p=0;p<PRESET_MAX;p++){if(ptz.presets[p].used && strcmp(ptz.presets[p].token,token) == 0){int mdx = ptz.presets[p].x - ptz.x;int mdy = ptz.presets[p].y - ptz.y;motor_move_relative(mdx, mdy);break;}}}append(out,size,"<tptz:GotoPresetResponse/>");}
  else if(strstr(r,"AbsoluteMove")){float x, y;int tx, ty;int adx, ady;log_message("PTZ","AbsoluteMove request:%s",r);if(xml_attr_float(r,"PanTilt","x",&x) < 0 || xml_attr_float(r,"PanTilt","y",&y) < 0){log_message("PTZ","cannot parse PanTilt");soap_fault(out,size,"Invalid PanTilt");return;}tx = pan_to_x(x);ty = tilt_to_y(y);adx = tx - ptz.x;ady = ty - ptz.y;motor_stop();if(motor_move_relative(adx, ady) < 0){log_message("PTZ","motor_move_relative failed errno=%d (%s)",errno,strerror(errno));soap_fault(out,size,"Motor failure");return;}append(out,size,"<tptz:AbsoluteMoveResponse/>");} 
- else if(strstr(r,"RelativeMove")){float x,y;int rdx,rdy;log_message("PTZ","RelativeMove request:%s",r);if(xml_attr_float(r,"PanTilt","x",&x) < 0 || xml_attr_float(r,"PanTilt","y",&y) < 0){soap_fault(out,size,"Invalid translation");return;}rdx = (x > 0.0f) ? 1 : (x < 0.0f) ? -1 : 0;rdy = (y > 0.0f) ? 1 : (y < 0.0f) ? -1 : 0;motor_stop();if(motor_move_relative(rdx,rdy) < 0){soap_fault(out,size,"Motor failure");return;}append(out,size,"<tptz:RelativeMoveResponse/>");} 
+ else if(strstr(r,"RelativeMove"))
+{
+    float x,y;
+    int dx,dy;
+    if(xml_attr_float(r,"PanTilt","x",&x) < 0 || xml_attr_float(r,"PanTilt","y",&y) < 0){
+        soap_fault(out,size,"Invalid translation");
+        return;
+    }
+    dx = (x > 0.0f) ? 1 :
+         (x < 0.0f) ? -1 : 0;
+    dy = (y > 0.0f) ? 1 :
+         (y < 0.0f) ? -1 : 0;
+    if(motor_move(dx,dy) < 0){
+        soap_fault(out,size,"Motor failure");
+        return;
+    }
+    append(out,size,"<tptz:RelativeMoveResponse/>");} 
  else if(strstr(r,"ContinuousMove")){log_message("PTZ","ContinuousMove request:%s",r);float x=0,y=0;xml_attr_float(r,"PanTilt","x",&x);xml_attr_float(r,"PanTilt","y",&y);log_message("PTZ","velocity x=%f y=%f",x,y);motor_continuous(x>0.05?1:(x<-0.05?-1:0),y>0.05?1:(y<-0.05?-1:0));append(out,size,"<tptz:ContinuousMoveResponse/>");}
  else if(strstr(r,"<tptz:Stop")||strstr(r,"<Stop")){motor_stop();append(out,size,"<tptz:StopResponse/>");}
  else if(strstr(r,"GetImagingSettings")){image_state_t s;image_get(&s);append(out,size,"<timg:GetImagingSettingsResponse><timg:ImagingSettings><tt:Brightness>%d</tt:Brightness><tt:ColorSaturation>%d</tt:ColorSaturation><tt:Contrast>%d</tt:Contrast><tt:Sharpness>%d</tt:Sharpness><tt:Exposure><tt:Mode>%s</tt:Mode><tt:ExposureTime>%d</tt:ExposureTime><tt:Gain>%d</tt:Gain><tt:Iris>%d</tt:Iris></tt:Exposure><tt:WhiteBalance><tt:Mode>%s</tt:Mode></tt:WhiteBalance><tt:WideDynamicRange><tt:Mode>%s</tt:Mode><tt:Level>%d</tt:Level></tt:WideDynamicRange><tt:IrCutFilter>%s</tt:IrCutFilter><tt:Focus><tt:AutoFocusMode>%s</tt:AutoFocusMode></tt:Focus><tt:Extension><tt:Chuangmi><tt:Hue>%d</tt:Hue><tt:Denoise>%d</tt:Denoise><tt:DayNight>%d</tt:DayNight><tt:Mirror>%d</tt:Mirror><tt:Flip>%d</tt:Flip><tt:SensorFPS>%d</tt:SensorFPS></tt:Chuangmi></tt:Extension></timg:ImagingSettings></timg:GetImagingSettingsResponse>",s.brightness,s.saturation,s.contrast,s.sharpness,s.ae_en?"AUTO":"MANUAL",s.sensor_exposure,s.sensor_gain,s.iris_ratio,s.awb_en?"AUTO":"MANUAL",s.dr_mode?"ON":"OFF",s.drc_strength,s.ircut?"ON":"OFF",s.af_en?"AUTO":"MANUAL",s.hue,s.denoise,s.daynight,s.mirror,s.flip,s.sensor_fps);}
