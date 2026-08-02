@@ -16,6 +16,9 @@
 #include <sys/time.h>
 #include <netinet/in.h>
 #include <syslog.h>
+#include <sys/ioctl.h>
+#include <netinet/in.h>
+#include <net/if.h>
 
 #include "gmlib.h"
 #include "librtsp.h"
