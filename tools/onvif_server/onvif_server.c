@@ -82,13 +82,13 @@ static pthread_mutex_t motor_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_mutex_t isp_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_mutex_t gpio_mutex = PTHREAD_MUTEX_INITIALIZER;
 
-typedef char pwm_config_size_must_be_48[
-    sizeof(pwm_config_t) == 48 ? 1 : -1
-];
-
 typedef struct {
     uint32_t value[12];
 } pwm_config_t;
+
+typedef char pwm_config_size_must_be_48[
+    sizeof(pwm_config_t) == 48 ? 1 : -1
+];
 
 typedef struct { int used, x, y; char token[32], name[64]; } preset_t;
 typedef struct {
