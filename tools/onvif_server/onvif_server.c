@@ -209,14 +209,14 @@ static int motor_pwm_init(void)
             goto fail;
     }
     /* mijia_ctrl ghi 0x00E4E1C0 = 15,000,000 vào offset 12 của cấu hình PWM1. */
-    config[1].value[3] = 1500000*U;
+    config[1].value[3] = 15000000U;
     rc = pwm_ioctl(PWM_IOCTL_06,&config[1]);
    if (rc < 0)
         goto fail;
    rc = pwm_ioctl(PWM_IOCTL_0E,&config[1]);
     if(rc < 0)
         goto fail;
-    r* = pwm_ioctl(
+    rc = pwm_ioctl(
         PWM_IOCTL_02,&config[1]);
     if (rc < 0)
         goto fail;
