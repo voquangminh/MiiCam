@@ -63,7 +63,7 @@
 #define V_DIST_SET  _IOW(MOTOR_MAGIC, 24, int)
 #define V_COORD_GET _IOW(MOTOR_MAGIC, 25, int)
 #define V_COORD_SET _IOW(MOTOR_MAGIC, 26, int)
-
+/* PWM controller */
 #define PWM_DEVICE "/dev/ftpwmtmr010"
 #define PWM_IOCTL_01 0x40047001UL
 #define PWM_IOCTL_02 0x40047002UL
@@ -72,6 +72,48 @@
 #define PWM_IOCTL_07 0x40307007UL
 #define PWM_IOCTL_09 0x40307009UL
 #define PWM_IOCTL_0E 0x4004700eUL
+/* LED controller */
+#define BLUE_LED_BRIGHTNESS  "/sys/class/leds/BLUE/brightness"
+#define BLUE_LED_TRIGGER     "/sys/class/leds/BLUE/trigger"
+#define BLUE_LED_DELAY_ON	 "/sys/class/leds/BLUE/delay_on"
+#define BLUE_LED_DELAY_OFF   "/sys/class/leds/BLUE/delay_off"
+#define RED_LED_BRIGHTNESS   "/sys/class/leds/RED/brightness"
+#define RED_LED_TRIGGER		 "/sys/class/leds/RED/trigger"
+#define RED_LED_DELAY_ON	 "/sys/class/leds/RED/delay_on"
+#define RED_LED_DELAY_OFF    "/sys/class/leds/RED/delay_off"
+
+enum {
+    STATUS_LED_BLUE = 0,
+    STATUS_LED_RED  = 1
+};
+
+enum {
+    STATUS_LED_SOLID = 0,
+    STATUS_LED_OFF   = 1,
+    STATUS_LED_BLINK = 2
+};
+
+typedef struct {
+    const char *brightness;
+    const char *trigger;
+    const char *delay_on;
+    const char *delay_off;
+} status_led_paths_t;
+
+static const status_led_paths_t status_led_paths[] = {
+    {
+        BLUE_LED_BRIGHTNESS,
+        BLUE_LED_TRIGGER,
+        BLUE_LED_DELAY_ON,
+        BLUE_LED_DELAY_OFF
+    },
+    {
+        RED_LED_BRIGHTNESS,
+        RED_LED_TRIGGER,
+        RED_LED_DELAY_ON,
+        RED_LED_DELAY_OFF
+    }
+};
 
 static volatile sig_atomic_t running = 1;
 static char local_ip[64] = "127.0.0.1";
@@ -117,6 +159,77 @@ static void signal_handler(int sig){(void)sig;running=0;}
 static void log_message(const char *level,const char *fmt,...){va_list ap;fprintf(stderr,"%s onvif: ",level);va_start(ap,fmt);vfprintf(stderr,fmt,ap);va_end(ap);fputc('\n',stderr);}
 
 static int write_all_file(const char *path,const char *text){int fd,rc=0;size_t off=0,len=strlen(text);fd=open(path,O_WRONLY);if(fd<0)return-1;while(off<len){ssize_t n=write(fd,text+off,len-off);if(n<0){if(errno==EINTR)continue;rc=-1;break;}off+=(size_t)n;}if(close(fd)<0&&rc==0)rc=-1;return rc;}
+static int write_sysfs_string(const char *path,const char *value){int rc;if (!path || !value) {errno = EINVAL;return -1;}rc = write_all_file(path, value);if (rc < 0) {log_message("ERROR","write %s='%s' failed: %s",path,value,strerror(errno));}return rc;}
+static int write_sysfs_int(const char *path,int value){char text[32];snprintf(text,sizeof(text),"%d\n",value);return write_sysfs_string(path, text);}
+static int status_led_set(int led,int brightness,int mode,int delay_on_ms,int delay_off_ms)
+{
+    const status_led_paths_t *paths;
+    int rc = 0;
+    if (led < STATUS_LED_BLUE || led > STATUS_LED_RED) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (brightness < 0 || brightness > 100) {
+        errno = ERANGE;
+        return -1;
+    }
+    if (mode < STATUS_LED_SOLID || mode > STATUS_LED_BLINK) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (delay_on_ms < 0 || delay_off_ms < 0) {
+        errno = ERANGE;
+        return -1;
+    }
+    paths = &status_led_paths[led];
+    pthread_mutex_lock(&gpio_mutex);
+    switch (mode) {
+    case STATUS_LED_SOLID:
+        if (write_sysfs_string(paths->trigger,"none\n") < 0) {
+            rc = -1;
+            break;
+        }
+        if (write_sysfs_int(paths->brightness,brightness) < 0) {
+            rc = -1;
+        }
+        break;
+    case STATUS_LED_OFF:
+        if (write_sysfs_string(paths->trigger,"none\n") < 0) {
+            rc = -1;
+            break;
+        }
+        if (write_sysfs_int(paths->brightness,0) < 0) {
+            rc = -1;
+        }
+        break;
+    case STATUS_LED_BLINK:
+        if (delay_on_ms <= 0)
+            delay_on_ms = 100;
+        if (delay_off_ms <= 0)
+            delay_off_ms = 100;
+        if (write_sysfs_string(paths->trigger,"timer\n") < 0) {
+            rc = -1;
+            break;
+        }
+        if (write_sysfs_int(paths->delay_on,delay_on_ms) < 0) {
+            rc = -1;
+            break;
+        }
+        if (write_sysfs_int(paths->delay_off,delay_off_ms) < 0) {
+            rc = -1;
+            break;
+        }
+        if (write_sysfs_int(paths->brightness,brightness) < 0) {
+            rc = -1;
+        }
+        break;
+    }
+    pthread_mutex_unlock(&gpio_mutex);
+    if (rc == 0) {
+        log_message("LED","led=%d brightness=%d mode=%d on=%d off=%d",led,brightness,mode,delay_on_ms,delay_off_ms);}
+    return rc;
+}
+
 static int read_file(const char *path,char *buf,size_t size){int fd;ssize_t n;if(!buf||size<2){errno=EINVAL;return-1;}fd=open(path,O_RDONLY);if(fd<0)return-1;do n=read(fd,buf,size-1);while(n<0&&errno==EINTR);close(fd);if(n<0)return-1;buf[n]=0;return 0;}
 static int last_integer(const char *s,int *value){const char*p=s;char*e;long found=0;int have=0;while(*p){if(*p=='-'||isdigit((unsigned char)*p)){errno=0;long v=strtol(p,&e,0);if(e!=p&&errno==0){found=v;have=1;p=e;continue;}}p++;}if(!have){errno=EPROTO;return-1;}*value=(int)found;return 0;}
 static int valid_isp_name(const char *s){if(!s||!*s)return 0;for(;*s;s++)if(!(isalnum((unsigned char)*s)||*s=='_'))return 0;return 1;}
@@ -126,9 +239,52 @@ static int isp_set(const char *name,int value){char cmd[128];int rc;if(!valid_is
 
 static int gpio_set(int pin,int value){char path[128],text[8];snprintf(path,sizeof(path),"/sys/class/gpio/gpio%d/value",pin);snprintf(text,sizeof(text),"%d\n",value?1:0);return write_all_file(path,text);}
 static int gpio_get(int pin,int *value){char path[128],text[32];snprintf(path,sizeof(path),"/sys/class/gpio/gpio%d/value",pin);if(read_file(path,text,sizeof(text))<0)return-1;*value=atoi(text)?1:0;return 0;}
-static int led_set(const char *name,int on){char path[160],text[8];const char*roots[]={"/sys/class/leds","/sys/devices/platform/leds-gpio/leds"};snprintf(text,sizeof(text),"%d\n",on?1:0);for(unsigned i=0;i<sizeof(roots)/sizeof(roots[0]);i++){snprintf(path,sizeof(path),"%s/%s/brightness",roots[i],name);if(write_all_file(path,text)==0)return 0;}return-1;}
-static int blue_led_set(int on){return led_set("BLUE",on);}
-static int yellow_led_set(int on){return led_set("RED",on);}
+//static int led_set(const char *name,int on){char path[160],text[8];const char*roots[]={"/sys/class/leds","/sys/devices/platform/leds-gpio/leds"};snprintf(text,sizeof(text),"%d\n",on?1:0);for(unsigned i=0;i<sizeof(roots)/sizeof(roots[0]);i++){snprintf(path,sizeof(path),"%s/%s/brightness",roots[i],name);if(write_all_file(path,text)==0)return 0;}return-1;}
+static int blue_led_set(int enabled)
+{
+    return status_led_set(
+        STATUS_LED_BLUE,
+        enabled ? 100 : 0,
+        enabled
+            ? STATUS_LED_SOLID
+            : STATUS_LED_OFF,
+        0,
+        0);
+}
+static int yellow_led_set(int enabled)
+{
+    return status_led_set(
+        STATUS_LED_RED,
+        enabled ? 100 : 0,
+        enabled
+            ? STATUS_LED_SOLID
+            : STATUS_LED_OFF,
+        0,
+        0);
+}
+static int blue_led_blink(
+    int delay_on_ms,
+    int delay_off_ms)
+{
+    return status_led_set(
+        STATUS_LED_BLUE,
+        100,
+        STATUS_LED_BLINK,
+        delay_on_ms,
+        delay_off_ms);
+}
+static int yellow_led_blink(
+    int delay_on_ms,
+    int delay_off_ms)
+{
+    return status_led_set(
+        STATUS_LED_RED,
+        100,
+        STATUS_LED_BLINK,
+        delay_on_ms,
+        delay_off_ms);
+}
+
 static int ircut_set(int enabled){int rc;char state[8];enabled=enabled?1:0;pthread_mutex_lock(&gpio_mutex);if(enabled){rc=gpio_set(14,1);if(rc==0)rc=gpio_set(15,0);}else{rc=gpio_set(14,0);if(rc==0)rc=gpio_set(15,1);}if(rc==0){snprintf(state,sizeof(state),"%d\n",enabled);rc=write_all_file(IRCUT_STATE,state);}pthread_mutex_unlock(&gpio_mutex);return rc;}
 static int ircut_get(int *enabled){char state[16];int rc=0;pthread_mutex_lock(&gpio_mutex);if(read_file(IRCUT_STATE,state,sizeof(state))==0)*enabled=atoi(state)?1:0;else rc=gpio_get(14,enabled);pthread_mutex_unlock(&gpio_mutex);return rc;}
 
@@ -398,7 +554,9 @@ static void handle_soap(const char*r,char*out,size_t size){out[0]=0;append(out,s
    if(xml_tag(r,"tt:IrCutFilter",b,sizeof(b))==0&&ircut_set(!strcmp(b,"ON"))<0)status=-1;
    q=set_optional(r,"tt:Hue","hue",-255,255);if(q<0)status=-1;q=set_optional(r,"tt:Denoise","denoise",0,255);if(q<0)status=-1;q=set_optional(r,"tt:DayNight","daynight",0,1);if(q<0)status=-1;q=set_optional(r,"tt:Mirror","mirror",0,1);if(q<0)status=-1;q=set_optional(r,"tt:Flip","flip",0,1);if(q<0)status=-1;q=set_optional(r,"tt:SensorFPS","sen_fps",1,30);if(q<0)status=-1;
    if(status<0){soap_fault(out,size,"Failed to apply imaging settings");return;}append(out,size,"<timg:SetImagingSettingsResponse/>");}
+ else if(strstr(r,"SetBlueLEDBlink")){int on_ms = 500;int off_ms = 500;get_int_tag(r,"OnTime",&on_ms);get_int_tag(r,"OffTime",&off_ms);on_ms = clampi(on_ms,50,60000);off_ms = clampi(off_ms,50,60000);if(blue_led_blink(on_ms,off_ms) < 0) {soap_fault(out,size,"Blue LED blink failed");return;}append(out,size,"<tmd:SetBlueLEDBlinkResponse/>");}
  else if(strstr(r,"SetBlueLED")){int v;if(get_int_tag(r,"Enabled",&v)<0||blue_led_set(v)<0){soap_fault(out,size,"Blue LED failed");return;}append(out,size,"<tmd:SetBlueLEDResponse/>");}
+ else if(strstr(r,"SetYellowLEDBlink")){int on_ms = 500;int off_ms = 500;get_int_tag(r,"OnTime",&on_ms);get_int_tag(r,"OffTime",&off_ms);on_ms = clampi(on_ms,50,60000);off_ms = clampi(off_ms,50,60000);if(yellow_led_blink(on_ms,off_ms) < 0) {soap_fault(out,size,"Yellow LED blink failed");return;append(out,size,"<tmd:SetYellowLEDBlinkResponse/>");}
  else if(strstr(r,"SetYellowLED")){int v;if(get_int_tag(r,"Enabled",&v)<0||yellow_led_set(v)<0){soap_fault(out,size,"Yellow LED failed");return;}append(out,size,"<tmd:SetYellowLEDResponse/>");}
  else if(strstr(r,"SetIrCut")){int v;if(get_int_tag(r,"Enabled",&v)<0||ircut_set(v)<0){soap_fault(out,size,"IR-cut failed");return;}append(out,size,"<tmd:SetIrCutResponse/>");}
  else {soap_fault(out,size,"Action not supported");return;}append(out,size,"%s",SOAP_TAIL);
