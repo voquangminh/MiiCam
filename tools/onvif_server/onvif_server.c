@@ -124,7 +124,6 @@ static int image_get(image_state_t *s){int rc=0;image_defaults(s);
 }
 
 static int set_checked(const char*n,int v,int lo,int hi){return isp_set(n,clampi(v,lo,hi));}
-
 static int get_ip(const char *name,char *out,size_t size){int fd=socket(AF_INET,SOCK_DGRAM,0);struct ifreq q;if(fd<0)return-1;memset(&q,0,sizeof(q));q.ifr_addr.sa_family=AF_INET;strncpy(q.ifr_name,name,IFNAMSIZ-1);if(ioctl(fd,SIOCGIFADDR,&q)<0){close(fd);return-1;}snprintf(out,size,"%s",inet_ntoa(((struct sockaddr_in*)&q.ifr_addr)->sin_addr));close(fd);return 0;}
 static void make_uuid(void){FILE*f=fopen("/sys/class/net/mlan0/address","r");char mac[32]={0},hex[20]={0};int j=0;if(!f)f=fopen("/sys/class/net/wlan0/address","r");if(!f)return;fgets(mac,sizeof(mac),f);fclose(f);for(int i=0;mac[i]&&j<12;i++)if(isxdigit((unsigned char)mac[i]))hex[j++]=(char)tolower((unsigned char)mac[i]);if(j==12)snprintf(endpoint_uuid,sizeof(endpoint_uuid),"urn:uuid:81360000-0000-4000-8000-%s",hex);}
 static void save_ptz(void){FILE*f=fopen(STATE_FILE,"w");if(!f)return;fprintf(f,"%d %d %d %d\n",ptz.x,ptz.y,ptz.home_x,ptz.home_y);for(int i=0;i<PRESET_MAX;i++)if(ptz.presets[i].used)fprintf(f,"P %s %d %d %s\n",ptz.presets[i].token,ptz.presets[i].x,ptz.presets[i].y,ptz.presets[i].name);fclose(f);}
@@ -181,7 +180,7 @@ static int motor_move_relative(int dx,int dy)
 }
 static void motor_refresh(void){save_ptz();}
 static void motor_stop(void){pthread_mutex_lock(&motor_mutex);ptz.moving=0;pthread_mutex_unlock(&motor_mutex);}
-static void *motor_worker(void *unused){(void)unused;for(;;){int active,dx,dy,tx,ty;pthread_mutex_lock(&motor_mutex);active=running&&ptz.moving;dx = ptz.dx;dy = ptz.dy;pthread_mutex_unlock(&motor_mutex);if(!active)break;if(motor_move_relative(ptz.dx,ptz.dy)<0)break;usleep(100000);}pthread_mutex_lock(&motor_mutex);ptz.moving=0;ptz.worker_active=0;pthread_mutex_unlock(&motor_mutex);return NULL;}
+static void *motor_worker(void *unused){(void)unused;for(;;){int active,dx,dy;pthread_mutex_lock(&motor_mutex);active=running&&ptz.moving;dx = ptz.dx;dy = ptz.dy;pthread_mutex_unlock(&motor_mutex);if(!active)break;if(motor_move_relative(ptz.dx,ptz.dy)<0)break;usleep(100000);}pthread_mutex_lock(&motor_mutex);ptz.moving=0;ptz.worker_active=0;pthread_mutex_unlock(&motor_mutex);return NULL;}
 static void motor_continuous(int dx,int dy){motor_stop();usleep(200000);pthread_mutex_lock(&motor_mutex);ptz.dx=dx;ptz.dy=dy;ptz.moving=(dx||dy);if(ptz.moving&&!ptz.worker_active){ptz.worker_active=1;pthread_create(&ptz.worker,NULL,motor_worker,NULL);pthread_detach(ptz.worker);}pthread_mutex_unlock(&motor_mutex);}
 
 static int xml_tag(const char *xml,const char *name,char *out,size_t size){char a[96],b[96];const char*p,*q;snprintf(a,sizeof(a),"<%s",name);p=strstr(xml,a);if(!p){const char*c=strchr(name,':');if(c){snprintf(a,sizeof(a),"<%s",c+1);p=strstr(xml,a);}}if(!p)return-1;p=strchr(p,'>');if(!p)return-1;p++;snprintf(b,sizeof(b),"</%s>",name);q=strstr(p,b);if(!q){const char*c=strchr(name,':');if(c){snprintf(b,sizeof(b),"</%s>",c+1);q=strstr(p,b);}}if(!q)return-1;size_t n=(size_t)(q-p);if(n>=size)n=size-1;memcpy(out,p,n);out[n]=0;return 0;}
@@ -222,7 +221,7 @@ static void handle_soap(const char*r,char*out,size_t size){out[0]=0;append(out,s
          (x < 0.0f) ? -1 : 0;
     dy = (y > 0.0f) ? 1 :
          (y < 0.0f) ? -1 : 0;
-    if(motor_move(dx,dy) < 0){
+    if(motor_move_relative(dx,dy) < 0){
         soap_fault(out,size,"Motor failure");
         return;
     }
