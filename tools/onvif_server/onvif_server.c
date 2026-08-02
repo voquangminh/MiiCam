@@ -229,67 +229,24 @@ static int status_led_set(int led,int brightness,int mode,int delay_on_ms,int de
         log_message("LED","led=%d brightness=%d mode=%d on=%d off=%d",led,brightness,mode,delay_on_ms,delay_off_ms);}
     return rc;
 }
-
+// * ISP funtions
 static int read_file(const char *path,char *buf,size_t size){int fd;ssize_t n;if(!buf||size<2){errno=EINVAL;return-1;}fd=open(path,O_RDONLY);if(fd<0)return-1;do n=read(fd,buf,size-1);while(n<0&&errno==EINTR);close(fd);if(n<0)return-1;buf[n]=0;return 0;}
 static int last_integer(const char *s,int *value){const char*p=s;char*e;long found=0;int have=0;while(*p){if(*p=='-'||isdigit((unsigned char)*p)){errno=0;long v=strtol(p,&e,0);if(e!=p&&errno==0){found=v;have=1;p=e;continue;}}p++;}if(!have){errno=EPROTO;return-1;}*value=(int)found;return 0;}
 static int valid_isp_name(const char *s){if(!s||!*s)return 0;for(;*s;s++)if(!(isalnum((unsigned char)*s)||*s=='_'))return 0;return 1;}
-
 static int isp_get(const char *name,int *value){char cmd[128],reply[512];int rc=-1;if(!valid_isp_name(name)||!value){errno=EINVAL;return-1;}snprintf(cmd,sizeof(cmd),"r %s\n",name);pthread_mutex_lock(&isp_mutex);if(write_all_file(ISP_COMMAND,cmd)==0&&read_file(ISP_COMMAND,reply,sizeof(reply))==0)rc=last_integer(reply,value);pthread_mutex_unlock(&isp_mutex);return rc;}
 static int isp_set(const char *name,int value){char cmd[128];int rc;if(!valid_isp_name(name)){errno=EINVAL;return-1;}snprintf(cmd,sizeof(cmd),"w %s %d\n",name,value);pthread_mutex_lock(&isp_mutex);rc=write_all_file(ISP_COMMAND,cmd);pthread_mutex_unlock(&isp_mutex);return rc;}
-
+// * LED functions 
+static int blue_led_set(int enabled){return status_led_set(STATUS_LED_BLUE,enabled ? 100 : 0,enabled ? STATUS_LED_SOLID : STATUS_LED_OFF,0,0);}
+static int yellow_led_set(int enabled){return status_led_set(STATUS_LED_RED,enabled ? 100 : 0,enabled ? STATUS_LED_SOLID : STATUS_LED_OFF,0,0);}
+static int blue_led_blink(int delay_on_ms,int delay_off_ms){return status_led_set(STATUS_LED_BLUE,100,STATUS_LED_BLINK,delay_on_ms,delay_off_ms);}
+static int yellow_led_blink(int delay_on_ms,int delay_off_ms){return status_led_set(STATUS_LED_RED,100,STATUS_LED_BLINK,delay_on_ms,delay_off_ms);}
+// * IR LED functions
 static int gpio_set(int pin,int value){char path[128],text[8];snprintf(path,sizeof(path),"/sys/class/gpio/gpio%d/value",pin);snprintf(text,sizeof(text),"%d\n",value?1:0);return write_all_file(path,text);}
 static int gpio_get(int pin,int *value){char path[128],text[32];snprintf(path,sizeof(path),"/sys/class/gpio/gpio%d/value",pin);if(read_file(path,text,sizeof(text))<0)return-1;*value=atoi(text)?1:0;return 0;}
-//static int led_set(const char *name,int on){char path[160],text[8];const char*roots[]={"/sys/class/leds","/sys/devices/platform/leds-gpio/leds"};snprintf(text,sizeof(text),"%d\n",on?1:0);for(unsigned i=0;i<sizeof(roots)/sizeof(roots[0]);i++){snprintf(path,sizeof(path),"%s/%s/brightness",roots[i],name);if(write_all_file(path,text)==0)return 0;}return-1;}
-static int blue_led_set(int enabled)
-{
-    return status_led_set(
-        STATUS_LED_BLUE,
-        enabled ? 100 : 0,
-        enabled
-            ? STATUS_LED_SOLID
-            : STATUS_LED_OFF,
-        0,
-        0);
-}
-static int yellow_led_set(int enabled)
-{
-    return status_led_set(
-        STATUS_LED_RED,
-        enabled ? 100 : 0,
-        enabled
-            ? STATUS_LED_SOLID
-            : STATUS_LED_OFF,
-        0,
-        0);
-}
-static int blue_led_blink(
-    int delay_on_ms,
-    int delay_off_ms)
-{
-    return status_led_set(
-        STATUS_LED_BLUE,
-        100,
-        STATUS_LED_BLINK,
-        delay_on_ms,
-        delay_off_ms);
-}
-static int yellow_led_blink(
-    int delay_on_ms,
-    int delay_off_ms)
-{
-    return status_led_set(
-        STATUS_LED_RED,
-        100,
-        STATUS_LED_BLINK,
-        delay_on_ms,
-        delay_off_ms);
-}
-
 static int ircut_set(int enabled){int rc;char state[8];enabled=enabled?1:0;pthread_mutex_lock(&gpio_mutex);if(enabled){rc=gpio_set(14,1);if(rc==0)rc=gpio_set(15,0);}else{rc=gpio_set(14,0);if(rc==0)rc=gpio_set(15,1);}if(rc==0){snprintf(state,sizeof(state),"%d\n",enabled);rc=write_all_file(IRCUT_STATE,state);}pthread_mutex_unlock(&gpio_mutex);return rc;}
 static int ircut_get(int *enabled){char state[16];int rc=0;pthread_mutex_lock(&gpio_mutex);if(read_file(IRCUT_STATE,state,sizeof(state))==0)*enabled=atoi(state)?1:0;else rc=gpio_get(14,enabled);pthread_mutex_unlock(&gpio_mutex);return rc;}
 
 static void image_defaults(image_state_t *s){memset(s,0,sizeof(*s));s->brightness=s->contrast=s->saturation=s->sharpness=128;s->denoise=128;s->sensor_fps=20;s->ae_en=s->awb_en=1;}
-
 static int image_get(image_state_t *s){int rc=0;image_defaults(s);
 #define GET_FIELD(name,field)do{if(isp_get(name,&s->field)<0)rc=-1;}while(0)
     GET_FIELD("brightness",brightness);GET_FIELD("contrast",contrast);GET_FIELD("hue",hue);GET_FIELD("saturation",saturation);GET_FIELD("denoise",denoise);GET_FIELD("sharpness",sharpness);GET_FIELD("drc_strength",drc_strength);GET_FIELD("dr_mode",dr_mode);GET_FIELD("daynight",daynight);GET_FIELD("ae_en",ae_en);GET_FIELD("awb_en",awb_en);GET_FIELD("af_en",af_en);GET_FIELD("sen_exp",sensor_exposure);GET_FIELD("sen_gain",sensor_gain);GET_FIELD("sen_fps",sensor_fps);GET_FIELD("mirror",mirror);GET_FIELD("flip",flip);if(ircut_get(&s->ircut)<0)rc=-1;
@@ -376,11 +333,9 @@ static int motor_pwm_init(void)
         PWM_IOCTL_02,&config[1]);
     if (rc < 0)
         goto fail;
-    log_message("INFO","motor PWM initialized using %s",PWM_DEVICE);
     return 0;
 
 fail:
-    log_message("ERROR","motor PWM initialization*failed: %s",strerror(errno));
     close(pwm_fd);
     pwm_fd = -1;
     return -1;
@@ -397,13 +352,11 @@ static int motor_ioctl_int(unsigned long cmd, int *value)
         errno = EINVAL;
         return -1;
     }
-    log_message("IOCTL","before cmd=0x%08lx value=%d ptr=%p",cmd,*value,(void *)value);
     errno = 0;
     do {
         rc = ioctl(motor_fd, cmd, value);
     } while (rc < 0 && errno == EINTR);
     saved_errno = errno;
-    log_message("IOCTL","after cmd=0x%08lx rc=%d value=%d ptr=%p errno=%d (%s)",cmd,rc,*value,(void *)value,saved_errno,saved_errno ? strerror(saved_errno) : "Success");
     errno = saved_errno;
     return rc;
 }
@@ -451,47 +404,24 @@ static int motor_move_relative(int dx, int dy)
     rc = motor_ioctl_int(V_COORD_GET, &vpos);
     if (rc < 0)
         goto fail;
-    log_message("MOTOR","returned HPOS=%d VPOS=%d",hpos,vpos);
     if (hpos < 0 || hpos > X_MAX) {
-        log_message("ERROR","invalid HPOS returned by driver: %d",hpos);
         errno = ERANGE;
         goto fail;
     }
     if (vpos < 0 || vpos > Y_MAX) {
-        log_message("ERROR","invalid VPOS returned by driver: %d",vpos);
         errno = ERANGE;
         goto fail;
     }
     ptz.x = hpos;
     ptz.y = vpos;
     save_ptz();
-    log_message("MOTOR","move dx=%d dy=%d complete, position=(%d,%d)",dx,dy,ptz.x,ptz.y);
     pthread_mutex_unlock(&motor_mutex);
     return 0;
 fail:
-    log_message("ERROR","motor move dx=%d dy=%d failed: errno=%d (%s)",dx,dy,errno,strerror(errno));
     pthread_mutex_unlock(&motor_mutex);
     return -1;
 }
-static int motor_refresh(void)
-{
-    int hpos = -1;
-    int vpos = -1;
-    int rc = 0;
-    pthread_mutex_lock(&motor_mutex);
-    if (motor_ioctl_int(H_COORD_GET, &hpos) < 0 || motor_ioctl_int(V_COORD_GET, &vpos) < 0) {
-        rc = -1;
-    } else if (hpos < 0 || hpos > X_MAX || vpos < 0 || vpos > Y_MAX) {
-        errno = ERANGE;
-        rc = -1;
-    } else {
-        ptz.x = hpos;
-        ptz.y = vpos;
-        save_ptz();
-    }
-    pthread_mutex_unlock(&motor_mutex);
-    return rc;
-}
+static int motor_refresh(void){int hpos = -1;int vpos = -1;int rc = 0;pthread_mutex_lock(&motor_mutex);if (motor_ioctl_int(H_COORD_GET, &hpos) < 0 || motor_ioctl_int(V_COORD_GET, &vpos) < 0) {rc = -1;} else if (hpos < 0 || hpos > X_MAX || vpos < 0 || vpos > Y_MAX) {errno = ERANGE;rc = -1;} else {ptz.x = hpos;ptz.y = vpos;save_ptz();}pthread_mutex_unlock(&motor_mutex);return rc;}
 static void motor_stop(void){pthread_mutex_lock(&motor_mutex);ptz.moving=0;pthread_mutex_unlock(&motor_mutex);}
 static void *motor_worker(void *unused){(void)unused;for(;;){int active,dx,dy;pthread_mutex_lock(&motor_mutex);active=running&&ptz.moving;dx = ptz.dx;dy = ptz.dy;pthread_mutex_unlock(&motor_mutex);if(!active)break;if(motor_move_relative(ptz.dx,ptz.dy)<0)break;usleep(100000);}pthread_mutex_lock(&motor_mutex);ptz.moving=0;ptz.worker_active=0;pthread_mutex_unlock(&motor_mutex);return NULL;}
 static void motor_continuous(int dx,int dy){motor_stop();usleep(200000);pthread_mutex_lock(&motor_mutex);ptz.dx=dx;ptz.dy=dy;ptz.moving=(dx||dy);if(ptz.moving&&!ptz.worker_active){ptz.worker_active=1;pthread_create(&ptz.worker,NULL,motor_worker,NULL);pthread_detach(ptz.worker);}pthread_mutex_unlock(&motor_mutex);}
@@ -520,23 +450,7 @@ static void handle_soap(const char*r,char*out,size_t size){out[0]=0;append(out,s
  else if(strstr(r,"SetPreset")){int idx;pthread_mutex_lock(&motor_mutex);for(idx = 0; idx < PRESET_MAX; idx++){if(!ptz.presets[idx].used)break;}if(idx < PRESET_MAX){ptz.presets[idx].used = 1;snprintf(ptz.presets[idx].token,sizeof(ptz.presets[idx].token),"preset_%d",idx);snprintf(ptz.presets[idx].name,sizeof(ptz.presets[idx].name),"Preset%d",idx);ptz.presets[idx].x = ptz.x;ptz.presets[idx].y = ptz.y;save_ptz();}pthread_mutex_unlock(&motor_mutex);append(out,size,"<tptz:SetPresetResponse>""<tptz:PresetToken>preset_%d</tptz:PresetToken>""</tptz:SetPresetResponse>",idx);}
  else if(strstr(r,"GotoPreset")){char token[64];int p;if(xml_tag(r,"tptz:PresetToken",token,sizeof(token)) == 0){for(p=0;p<PRESET_MAX;p++){if(ptz.presets[p].used && strcmp(ptz.presets[p].token,token) == 0){int mdx = ptz.presets[p].x - ptz.x;int mdy = ptz.presets[p].y - ptz.y;motor_move_relative(mdx, mdy);break;}}}append(out,size,"<tptz:GotoPresetResponse/>");}
  else if(strstr(r,"AbsoluteMove")){float x, y;int tx, ty;int adx, ady;log_message("PTZ","AbsoluteMove request:%s",r);if(xml_attr_float(r,"PanTilt","x",&x) < 0 || xml_attr_float(r,"PanTilt","y",&y) < 0){log_message("PTZ","cannot parse PanTilt");soap_fault(out,size,"Invalid PanTilt");return;}tx = pan_to_x(x);ty = tilt_to_y(y);adx = tx - ptz.x;ady = ty - ptz.y;motor_stop();if(motor_move_relative(adx, ady) < 0){log_message("PTZ","motor_move_relative failed errno=%d (%s)",errno,strerror(errno));soap_fault(out,size,"Motor failure");return;}append(out,size,"<tptz:AbsoluteMoveResponse/>");} 
- else if(strstr(r,"RelativeMove"))
-{
-    float x,y;
-    int dx,dy;
-    if(xml_attr_float(r,"PanTilt","x",&x) < 0 || xml_attr_float(r,"PanTilt","y",&y) < 0){
-        soap_fault(out,size,"Invalid translation");
-        return;
-    }
-    dx = (x > 0.0f) ? 1 :
-         (x < 0.0f) ? -1 : 0;
-    dy = (y > 0.0f) ? 1 :
-         (y < 0.0f) ? -1 : 0;
-    if(motor_move_relative(dx,dy) < 0){
-        soap_fault(out,size,"Motor failure");
-        return;
-    }
-    append(out,size,"<tptz:RelativeMoveResponse/>");} 
+ else if(strstr(r,"RelativeMove")){float x,y;int dx,dy;if(xml_attr_float(r,"PanTilt","x",&x) < 0 || xml_attr_float(r,"PanTilt","y",&y) < 0){soap_fault(out,size,"Invalid translation");return;}dx = (x > 0.0f) ? 1 : (x < 0.0f) ? -1 : 0;dy = (y > 0.0f) ? 1 : (y < 0.0f) ? -1 : 0;if(motor_move_relative(dx,dy) < 0){soap_fault(out,size,"Motor failure");return;}append(out,size,"<tptz:RelativeMoveResponse/>");} 
  else if(strstr(r,"ContinuousMove")){log_message("PTZ","ContinuousMove request:%s",r);float x=0,y=0;xml_attr_float(r,"PanTilt","x",&x);xml_attr_float(r,"PanTilt","y",&y);log_message("PTZ","velocity x=%f y=%f",x,y);motor_continuous(x>0.05?1:(x<-0.05?-1:0),y>0.05?1:(y<-0.05?-1:0));append(out,size,"<tptz:ContinuousMoveResponse/>");}
  else if(strstr(r,"<tptz:Stop")||strstr(r,"<Stop")){motor_stop();append(out,size,"<tptz:StopResponse/>");}
  else if(strstr(r,"GetImagingSettings")){image_state_t s;image_get(&s);append(out,size,"<timg:GetImagingSettingsResponse><timg:ImagingSettings><tt:Brightness>%d</tt:Brightness><tt:ColorSaturation>%d</tt:ColorSaturation><tt:Contrast>%d</tt:Contrast><tt:Sharpness>%d</tt:Sharpness><tt:Exposure><tt:Mode>%s</tt:Mode><tt:ExposureTime>%d</tt:ExposureTime><tt:Gain>%d</tt:Gain></tt:Exposure><tt:WhiteBalance><tt:Mode>%s</tt:Mode></tt:WhiteBalance><tt:WideDynamicRange><tt:Mode>%s</tt:Mode><tt:Level>%d</tt:Level></tt:WideDynamicRange><tt:IrCutFilter>%s</tt:IrCutFilter><tt:Focus><tt:AutoFocusMode>%s</tt:AutoFocusMode></tt:Focus><tt:Extension><tt:Chuangmi><tt:Hue>%d</tt:Hue><tt:Denoise>%d</tt:Denoise><tt:DayNight>%d</tt:DayNight><tt:Mirror>%d</tt:Mirror><tt:Flip>%d</tt:Flip><tt:SensorFPS>%d</tt:SensorFPS></tt:Chuangmi></tt:Extension></timg:ImagingSettings></timg:GetImagingSettingsResponse>",s.brightness,s.saturation,s.contrast,s.sharpness,s.ae_en?"AUTO":"MANUAL",s.sensor_exposure,s.sensor_gain,s.awb_en?"AUTO":"MANUAL",s.dr_mode?"ON":"OFF",s.drc_strength,s.ircut?"ON":"OFF",s.af_en?"AUTO":"MANUAL",s.hue,s.denoise,s.daynight,s.mirror,s.flip,s.sensor_fps);}
@@ -556,7 +470,7 @@ static void handle_soap(const char*r,char*out,size_t size){out[0]=0;append(out,s
  else if(strstr(r,"SetYellowLEDBlink")){int on_ms = 500;int off_ms = 500;get_int_tag(r,"OnTime",&on_ms);get_int_tag(r,"OffTime",&off_ms);on_ms = clampi(on_ms,50,60000);off_ms = clampi(off_ms,50,60000);if(yellow_led_blink(on_ms,off_ms) < 0){soap_fault(out,size,"Yellow LED blink failed");return;}append(out,size,"<tmd:SetYellowLEDBlinkResponse/>");}
  else if(strstr(r,"SetYellowLED")){int v;if(get_int_tag(r,"Enabled",&v) < 0 || yellow_led_set(v != 0) < 0){soap_fault(out,size,"Yellow LED failed");return;}append(out,size,"<tmd:SetYellowLEDResponse/>");}
  else if(strstr(r,"SetIrCut")){int v;if(get_int_tag(r,"Enabled",&v) < 0 || ircut_set(v != 0) < 0){soap_fault(out,size,"IR-cut failed");return;}append(out,size,"<tmd:SetIrCutResponse/>");}
-else{soap_fault(out,size,"Action not supported");return;}append(out,size,"%s",SOAP_TAIL); 
+else{soap_fault(out,size,"Action not supported");return;}append(out,size,"%s",SOAP_TAIL);}
 
 static void http_reply(int fd,int code,const char*type,const char*body){char h[512];size_t n=body?strlen(body):0;int l=snprintf(h,sizeof(h),"HTTP/1.1 %d %s\r\nContent-Type: %s\r\nContent-Length: %lu\r\nConnection: close\r\nServer: GM8136-ONVIF\r\n\r\n",code,code==200?"OK":"Error",type,(unsigned long)n);send(fd,h,l,0);if(n)send(fd,body,n,0);}
 static void *client_thread(void*arg)
