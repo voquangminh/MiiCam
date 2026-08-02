@@ -52,9 +52,10 @@ jobs:
           # 2. Ép Git nhận diện thư mục tools/bin/ bất chấp file .gitignore chặn
           git add -f tools/bin/rtspd2MP
           git add -f tools/bin/rtspd
+          git add -f tools/bin/rtspd-v5
           
           # 3. Tiến hành commit file chạy
-          git commit -m "Automated build: update camera binary rtspd2MP/rtspd" || echo "No changes to commit"
+          git commit -m "Automated build: update camera binary rtspd2MP/rtspd/rtspd-v5" || echo "No changes to commit"
           
           # 4. Kéo code mới nhất từ GitHub về gộp tự động trước khi đẩy (Tránh lỗi fetch first)
           git pull origin HEAD --no-rebase || true
