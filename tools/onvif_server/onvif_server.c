@@ -129,56 +129,113 @@ static void make_uuid(void){FILE*f=fopen("/sys/class/net/mlan0/address","r");cha
 static void save_ptz(void){FILE*f=fopen(STATE_FILE,"w");if(!f)return;fprintf(f,"%d %d %d %d\n",ptz.x,ptz.y,ptz.home_x,ptz.home_y);for(int i=0;i<PRESET_MAX;i++)if(ptz.presets[i].used)fprintf(f,"P %s %d %d %s\n",ptz.presets[i].token,ptz.presets[i].x,ptz.presets[i].y,ptz.presets[i].name);fclose(f);}
 static void load_ptz(void){FILE*f=fopen(STATE_FILE,"r");char line[256];if(!f)return;if(fgets(line,sizeof(line),f))sscanf(line,"%d %d %d %d",&ptz.x,&ptz.y,&ptz.home_x,&ptz.home_y);while(fgets(line,sizeof(line),f)){char token[32],name[64];int x,y;if(sscanf(line,"P %31s %d %d %63s",token,&x,&y,name)==4)for(int i=0;i<PRESET_MAX;i++)if(!ptz.presets[i].used){ptz.presets[i].used=1;ptz.presets[i].x=x;ptz.presets[i].y=y;snprintf(ptz.presets[i].token,32,"%s",token);snprintf(ptz.presets[i].name,64,"%s",name);break;}}fclose(f);}
 //static int motor_ioctl_int(unsigned long cmd,int *value){int rc;if(motor_fd<0){errno=ENODEV;return-1;}log_message("IOCTL","cmd=0x%08lx value=%d",cmd,value ? *value : -1);do{ rc=ioctl(motor_fd,cmd,value);log_message("IOCTL","rc=%d errno=%d",rc,errno);}while(rc<0&&errno==EINTR);return rc;}
-static int motor_ioctl_int(unsigned long cmd,int *value)
+static int motor_ioctl_int(unsigned long cmd, int *value)
 {
     int rc;
-    if(motor_fd < 0){
+    int saved_errno;
+    if (motor_fd < 0) {
         errno = ENODEV;
         return -1;
     }
-    log_message("IOCTL","before cmd=0x%08lx value=%d",cmd,value ? *value : -1);
-    do{
-        rc = ioctl(motor_fd,cmd,value);
+    if (value == NULL) {
+        errno = EINVAL;
+        return -1;
     }
-    while(rc < 0 && errno == EINTR);
-    log_message("IOCTL","after cmd=0x%08lx rc=%d value=%d errno=%d",cmd,rc,value ? *value : -1,errno);
+    log_message("IOCTL","before cmd=0x%08lx value=%d ptr=%p",cmd,*value,(void *)value);
+    errno = 0;
+    do {
+        rc = ioctl(motor_fd, cmd, value);
+    } while (rc < 0 && errno == EINTR);
+    saved_errno = errno;
+    log_message("IOCTL","after cmd=0x%08lx rc=%d value=%d ptr=%p errno=%d (%s)",cmd,rc,*value,(void *)value,saved_errno,saved_errno ? strerror(saved_errno) : "Success");
+    errno = saved_errno;
     return rc;
 }
-static int motor_position(int*x,int*y){*x = ptz.x;*y = ptz.y;return 0;}
-//static int motor_axis(unsigned long dir_cmd,unsigned long dist_cmd,int delta){int dir,dist;if(!delta)return 0;dir=delta>0?1:0;dist=delta>0?delta:-delta;if(motor_ioctl_int(dir_cmd,&dir)<0)return-1;return motor_ioctl_int(dist_cmd,&dist);}
-//static int motor_goto_locked(int tx,int ty){int x,y;tx=clampi(tx,0,X_MAX);ty=clampi(ty,0,Y_MAX);if(motor_position(&x,&y)<0){x=ptz.x;y=ptz.y;}log_message("MOTOR","current=(%d,%d) ta*get=(%d,%d)",x,y,tx,ty);if(motor_axis(H_DIR_SET,H_DIST_SET,tx-x)<0)return-1;if(motor_axis(V_DIR_SET,V_DIST_SET,ty-y)<0)return-1;if(motor_position(&ptz.x,&ptz.y)<0){ptz.x=tx;ptz.y=ty;}save_ptz();return 0;}
-//static int motor_goto(int x,int y){int rc;log_message("MOTOR","goto x=%d y=%d",x,y);pthread_mutex_lock(&motor_mutex);rc=motor_goto_locked(x,y);log_message("MOTOR","goto rc=%d errno=%d (%s)",rc,errno,strerror(errno));pthread_mutex_unlock(&motor_mutex);return rc;}
-static int motor_move_relative(int dx,int dy)
+static int motor_move_relative(int dx, int dy)
 {
     int dir;
     int dist;
     int hpos;
     int vpos;
+    int rc;
     pthread_mutex_lock(&motor_mutex);
-    if(dx){
-        dir  = dx > 0 ? 1 : 0;
+    if (ptz.x + dx < 0)
+        dx = -ptz.x;
+    if (ptz.x + dx > X_MAX)
+        dx = X_MAX - ptz.x;
+    if (ptz.y + dy < 0)
+        dy = -ptz.y;
+    if (ptz.y + dy > Y_MAX)
+        dy = Y_MAX - ptz.y;
+    if (dx != 0) {
+        dir = dx > 0 ? 1 : 0;
         dist = dx > 0 ? dx : -dx;
-        motor_ioctl_int(H_DIR_SET,&dir);
-        motor_ioctl_int(H_DIST_SET,&dist);
+        rc = motor_ioctl_int(H_DIR_SET, &dir);
+        if (rc < 0)
+            goto fail;
+        rc = motor_ioctl_int(H_DIST_SET, &dist);
+        if (rc < 0)
+            goto fail;
     }
-    if(dy){
-        dir  = dy > 0 ? 1 : 0;
+    if (dy != 0) {
+        dir = dy > 0 ? 1 : 0;
         dist = dy > 0 ? dy : -dy;
-        motor_ioctl_int(V_DIR_SET,&dir);
-        motor_ioctl_int(V_DIST_SET,&dist);
+        rc = motor_ioctl_int(V_DIR_SET, &dir);
+        if (rc < 0)
+            goto fail;
+        rc = motor_ioctl_int(V_DIST_SET, &dist);
+        if (rc < 0)
+            goto fail;
     }
-    hpos = 0;
-    vpos = 0;
-    motor_ioctl_int(H_COORD_GET,&hpos);
-    motor_ioctl_int(V_COORD_GET,&vpos);
-    log_message("MOTOR","hpos=%d vpos=%d");
-    ptz.x = clampi(hpos,0,X_MAX);
-    ptz.y = clampi(vpos,0,Y_MAX);
+    hpos = -1;
+    vpos = -1;
+    rc = motor_ioctl_int(H_COORD_GET, &hpos);
+    if (rc < 0)
+        goto fail;
+    rc = motor_ioctl_int(V_COORD_GET, &vpos);
+    if (rc < 0)
+        goto fail;
+    log_message("MOTOR","returned HPOS=%d VPOS=%d",hpos,vpos);
+    if (hpos < 0 || hpos > X_MAX) {
+        log_message("ERROR","invalid HPOS returned by driver: %d",hpos);
+        errno = ERANGE;
+        goto fail;
+    }
+    if (vpos < 0 || vpos > Y_MAX) {
+        log_message("ERROR","invalid VPOS returned by driver: %d",vpos);
+        errno = ERANGE;
+        goto fail;
+    }
+    ptz.x = hpos;
+    ptz.y = vpos;
     save_ptz();
+    log_message("MOTOR","move dx=%d dy=%d complete, position=(%d,%d)",dx,dy,ptz.x,ptz.y);
     pthread_mutex_unlock(&motor_mutex);
     return 0;
+fail:
+    log_message("ERROR","motor move dx=%d dy=%d failed: errno=%d (%s)",dx,dy,errno,strerror(errno));
+    pthread_mutex_unlock(&motor_mutex);
+    return -1;
 }
-static void motor_refresh(void){save_ptz();}
+static int motor_refresh(void)
+{
+    int hpos = -1;
+    int vpos = -1;
+    int rc = 0;
+    pthread_mutex_lock(&motor_mutex);
+    if (motor_ioctl_int(H_COORD_GET, &hpos) < 0 || motor_ioctl_int(V_COORD_GET, &vpos) < 0) {
+        rc = -1;
+    } else if (hpos < 0 || hpos > X_MAX || vpos < 0 || vpos > Y_MAX) {
+        errno = ERANGE;
+        rc = -1;
+    } else {
+        ptz.x = hpos;
+        ptz.y = vpos;
+        save_ptz();
+    }
+    pthread_mutex_unlock(&motor_mutex);
+    return rc;
+}
 static void motor_stop(void){pthread_mutex_lock(&motor_mutex);ptz.moving=0;pthread_mutex_unlock(&motor_mutex);}
 static void *motor_worker(void *unused){(void)unused;for(;;){int active,dx,dy;pthread_mutex_lock(&motor_mutex);active=running&&ptz.moving;dx = ptz.dx;dy = ptz.dy;pthread_mutex_unlock(&motor_mutex);if(!active)break;if(motor_move_relative(ptz.dx,ptz.dy)<0)break;usleep(100000);}pthread_mutex_lock(&motor_mutex);ptz.moving=0;ptz.worker_active=0;pthread_mutex_unlock(&motor_mutex);return NULL;}
 static void motor_continuous(int dx,int dy){motor_stop();usleep(200000);pthread_mutex_lock(&motor_mutex);ptz.dx=dx;ptz.dy=dy;ptz.moving=(dx||dy);if(ptz.moving&&!ptz.worker_active){ptz.worker_active=1;pthread_create(&ptz.worker,NULL,motor_worker,NULL);pthread_detach(ptz.worker);}pthread_mutex_unlock(&motor_mutex);}
