@@ -16,11 +16,17 @@
 #include <sys/time.h>
 #include <netinet/in.h>
 #include <syslog.h>
+#include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/ioctl.h>
 #include <netinet/in.h>
 #include <net/if.h>
+#include <dirent.h>
+#include <arpa/inet.h>
+#include <netdb.h>
 
 #include "gmlib.h"
+#include <ctype.h>
 #include "librtsp.h"
 
 #define DVR_ENC_EBST_ENABLE      0x55887799
