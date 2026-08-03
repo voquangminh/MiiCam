@@ -228,7 +228,7 @@ static void read_hostname(char *out, size_t outlen)
         while (end > line && (end[-1] == '\n' || end[-1] == '\r' || end[-1] == ' ')) {
             *--end = '\0';
         }
-        strncpy(out, v, outlen - 1);
+        strncpy(out, line, outlen - 1);
         out[outlen - 1] = '\0';
     }
     fclose(f);
