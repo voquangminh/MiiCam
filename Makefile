@@ -142,16 +142,16 @@ $(BUILDDIR)/rtspd: $(PREFIXDIR)/bin
 	@touch $@
 $(BUILDDIR)/aac_play: $(PREFIXDIR)/bin
 	@mkdir -p $(BUILDDIR) $(TOOLSDIR)/bin
-	cd $(RTSPDDIR) 			&& \
-	$(TARGET)-gcc 			\
-		-Os \
-		-DLOG_USE_COLOR		\
-		-Wall			\
+	cd $(RTSPDDIR) 				&& \
+	$(TARGET)-gcc 				\
+		-Os 					\
+		-DLOG_USE_COLOR			\
+		-Wall					\
 		-I$(GMLIBDIR)/inc		\
 		$(RTSPDDIR)/audio_playback.c	\
 		$(RTSPDDIR)/log/log.c	\
 		$(RTSPDDIR)/librtsp.a	\
-		-L$(GMLIBDIR)/lib	\
+		-L$(GMLIBDIR)/lib		\
 		-lpthread -lm -lrt -lgm -o $(TOOLSDIR)/bin/aac_play && \
 		$(TARGET)-strip $(TOOLSDIR)/bin/aac_play
 	@touch $@
@@ -169,17 +169,17 @@ build/aac_play: $(BUILDDIR)/aac_play
 
 $(BUILDDIR)/onvif_server: $(PREFIXDIR)/bin
 	@mkdir -p $(BUILDDIR) $(TOOLSDIR)/bin
-	cd $(ONVIFDIR) 				&& \
-	$(TARGET)-gcc 				\
-		-std=gnu99    \
-		-Os 					\
-		-DLOG_USE_COLOR			\
-		-Wall					\
-		-Wextra       \
-		-pthread      \
-		$(ONVIFDIR)/motor_driver.c		\
-		$(ONVIFDIR)/onvif_hw_image_led.c		\
-		$(ONVIFDIR)/onvif_server.c		\
+	cd $(ONVIFDIR) 						 && \
+	$(TARGET)-gcc 		   				 \
+		-std=gnu99    	   				 \
+		-Os 			   				 \
+		-DLOG_USE_COLOR	   				 \
+		-Wall			   				 \
+		-Wextra            				 \
+		-pthread           				 \
+		$(ONVIFDIR)/motor_driver.c		 \
+		$(ONVIFDIR)/onvif_hw_image_led.c \
+		$(ONVIFDIR)/onvif_server.c		 \
 		-lpthread -lm -lrt -o $(TOOLSDIR)/bin/onvif_server && \
 		$(TARGET)-strip $(TOOLSDIR)/bin/onvif_server
 	@touch $@
