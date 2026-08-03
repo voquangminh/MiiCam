@@ -121,7 +121,7 @@ $(PREFIXDIR)/bin:
 
 
 #################################################################
-## RTSPD													   ##
+## RTSPD			##$(RTSPDDIR)/log/log.c	\##				   ##
 #################################################################
 
 $(BUILDDIR)/rtspd: $(PREFIXDIR)/bin
@@ -133,11 +133,10 @@ $(BUILDDIR)/rtspd: $(PREFIXDIR)/bin
 		-Wall					\
 		-I$(GMLIBDIR)/inc		\
 		$(RTSPDDIR)/rtspd-chuangmi-v5.c		\
-		-L$(GMLIBDIR)/lib		\
-		##$(RTSPDDIR)/log/log.c	\##
 		$(RTSPDDIR)/librtsp.a	\
 		$(RTSPDDIR)/librtsp_glibc.a	\
-		-lgm -lm -lpthread -lrt -o $(TOOLSDIR)/bin/rtspd-v5 && \
+		-L$(GMLIBDIR)/lib		\
+		-lpthread -lm -lrt -lgm -o $(TOOLSDIR)/bin/rtspd-v5 && \
 		$(TARGET)-strip $(TOOLSDIR)/bin/rtspd-v5
 	@touch $@
 $(BUILDDIR)/aac_play: $(PREFIXDIR)/bin
