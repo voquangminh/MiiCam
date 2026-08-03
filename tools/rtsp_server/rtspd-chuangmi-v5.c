@@ -1288,7 +1288,7 @@ void *encode_thread(void *ptr)
         ret = 0;
         if (rtspd_sysinit == 0)
             break;
-        ret = gm_poll(&poll_fds[i][j], CAP_CH_NUM * RTSP_NUM_PER_CAP, 2000);
+        ret = gm_poll(&poll_fds[0][0], CAP_CH_NUM * RTSP_NUM_PER_CAP, 2000);
         if (ret == GM_TIMEOUT) {
             log_error("GM Poll timeout!!");
             continue;
