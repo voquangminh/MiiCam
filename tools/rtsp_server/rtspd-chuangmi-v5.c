@@ -300,7 +300,7 @@ static void rtspd_set_osd_text(void *capture_obj, const char *line1, const char 
     osd_font2.font_index = rtspd_osd_font2_text;
     osd_font2.font_alpha = GM_OSD_FONT_ALPHA_75;
     osd_font2.win_alpha = GM_OSD_FONT_ALPHA_75;
-    osd_font2.font_palette_idx = 14;   							// WHITE
+    osd_font2.font_palette_idx = 4;   							// WHITE from 0 in table palette
     osd_font2.priority = GM_OSD_PRIORITY_MARK_ON_OSD;
     osd_font2.smooth.enabled = 1;
     osd_font2.smooth.level = GM_OSD_FONT_SMOOTH_LEVEL_WEAK;
