@@ -660,7 +660,7 @@ int set_poll_event(void)
 
 void get_enc_res(gm_enc_info_t *enc, int *enc_type, int *width, int *height)
 {
-    int w, h;
+    int w = 0, h = 0;
     gm_h264e_attr_t *h264e_attr;
     gm_mpeg4e_attr_t *mpeg4e_attr;
     gm_mjpege_attr_t *mjpege_attr;
@@ -1288,7 +1288,7 @@ void *encode_thread(void *ptr)
         ret = 0;
         if (rtspd_sysinit == 0)
             break;
-        ret = gm_poll(&poll_fds[0][0], CAP_CH_NUM * RTSP_NUM_PER_CAP, 2000);
+        ret = gm_poll(&poll_fds[i][j], CAP_CH_NUM * RTSP_NUM_PER_CAP, 2000);
         if (ret == GM_TIMEOUT) {
             log_error("GM Poll timeout!!");
             continue;
