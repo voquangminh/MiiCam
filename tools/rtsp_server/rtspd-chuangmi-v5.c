@@ -51,7 +51,7 @@
 #define VQ_MAX                   (SR_MAX)
 #define VQ_LEN                   100
 #define AQ_MAX                   64            // * 1 MP2 and 1 AMR for live streaming, another 2 for file streaming.
-#define AQ_LEN                   4             // * 1 MP2 and 1 AMR for live streaming, another 2 for file streaming.
+#define AQ_LEN                   32            // * 1 MP2 and 1 AMR for live streaming, another 2 for file streaming.
 #define AV_NAME_MAX              127
 
 #define RTP_HZ                   90000
@@ -213,6 +213,26 @@ struct CommandLineArguments {
     int osd_bg_color;
     char osd_text[32];
 } cliArgs;
+
+/* Read HOSTNAME from config file. Try common locations. */
+static void read_hostname(char *out, size_t outlen)
+{
+    FILE *f;
+    char line[256];
+    out[0] = '\0';
+    f = fopen("/tmp/hostname", "r");
+    if (!f)
+        return;
+    while (fgets(line, sizeof(line), f)) {
+        char *end = line + strlen(line);
+        while (end > line && (end[-1] == '\n' || end[-1] == '\r' || end[-1] == ' ')) {
+            *--end = '\0';
+        }
+        strncpy(out, v, outlen - 1);
+        out[outlen - 1] = '\0';
+    }
+    fclose(f);
+}
 
 static gm_palette_table_t rtspd_osd_palette = {
     palette_table: {
@@ -991,7 +1011,7 @@ void gm_enc_init(int cap_ch, int cap_path, int rec_track, int enc_type, int mode
             h264e_attr.dim.height            = height;
             h264e_attr.frame_info.framerate  = framerate;
             h264e_attr.ratectl.mode          = mode;
-            h264e_attr.ratectl.gop           = 20;
+            h264e_attr.ratectl.gop           = 60;			   // * I frame per second
             h264e_attr.ratectl.bitrate       = bitrate;
             h264e_attr.ratectl.bitrate_max   = bitrate;
             h264e_attr.b_frame_num           = 0;              // * B-frames per GOP (H.264 high profile)
@@ -1136,7 +1156,7 @@ static void audio_init() {
     audio_encode_object = gm_new_obj(GM_AUDIO_ENCODER_OBJECT);
 
     audio_grab_attr.vch = 0;
-    audio_grab_attr.sample_rate = 16000;
+    audio_grab_attr.sample_rate = 8000;
     audio_grab_attr.sample_size = 16;
     audio_grab_attr.channel_type = GM_MONO;
     gm_set_attr(audio_grab_object, &audio_grab_attr);
@@ -1500,9 +1520,9 @@ void update_video_sdp(int cap_ch, int cap_path, int rec_track)
                     case 0:
                         stream_sdp_parameter_encoder("H264", (unsigned char *) bs.bs.bs_buf, bs.bs.bs_len, pb->video.sdpstr, SDPSTR_MAX);
                     case 1:
-                        stream_sdp_parameter_encoder("MPEG4", (unsigned char *) bs.bs.bs_buf, bs.bs.bs_len, pb->video.sdpstr, SDPSTR_MAX);
+                        stream_sdp_parameter_encoder("H264", (unsigned char *) bs.bs.bs_buf, bs.bs.bs_len, pb->video.sdpstr, SDPSTR_MAX);
                     case 2:
-                        stream_sdp_parameter_encoder("MJPEG", (unsigned char *) bs.bs.bs_buf, bs.bs.bs_len, pb->video.sdpstr, SDPSTR_MAX);
+                        stream_sdp_parameter_encoder("H264", (unsigned char *) bs.bs.bs_buf, bs.bs.bs_len, pb->video.sdpstr, SDPSTR_MAX);
                 }
                 break;
             }
@@ -1660,7 +1680,7 @@ int main(int argc, char *argv[])
     cliArgs.encoderType = ENC_TYPE_H264;
     cliArgs.osd         = 1;				// * enabled by default
     cliArgs.font_zoom   = 1;				// * small=GM_OSD_FONT_ZOOM_NONE, 1=minimum, 2=normal
-    cliArgs.osd_bg_color= 0;				// * default is Black form 0-4
+    cliArgs.osd_bg_color= 0;				// * default is Black from 0-4
     cliArgs.osd_text[0] = '\0';
     cliArgs.user        = NULL;
     cliArgs.password    = NULL;
@@ -1770,6 +1790,16 @@ int main(int argc, char *argv[])
         return 1;
     }
 
+	/* If no custom OSD text provided, read HOSTNAME from config and use it */
+    if (cliArgs.osd_text[0] == '\0') {
+        char hostbuf[32];
+        read_hostname(hostbuf, sizeof(hostbuf));
+        if (hostbuf[0] != '\0') {
+            strncpy(cliArgs.osd_text, hostbuf, sizeof(cliArgs.osd_text) - 1);
+            cliArgs.osd_text[sizeof(cliArgs.osd_text) - 1] = '\0';
+        }
+    }
+	
     log_info("Starting the RTSP Daemon");
 
     if (cliArgs.user != NULL && strcmp(cliArgs.user, "") != 0 && cliArgs.password != NULL && strcmp(cliArgs.password, "") != 0) {
