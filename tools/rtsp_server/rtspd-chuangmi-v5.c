@@ -1238,6 +1238,7 @@ void *encode_thread(void *ptr)
     static int timeval_init = 0;
     int diff;
 
+	memset(first_play, 0xff, sizeof(first_play));
     memset(poll_fds, 0, sizeof(poll_fds));
 
     for (cap_ch = 0; cap_ch < CAP_CH_NUM; cap_ch++) {
@@ -1594,7 +1595,6 @@ char *get_local_ip(void)
 {
     int fd;
     struct ifreq ifr;
-
     fd = socket(AF_INET, SOCK_DGRAM, 0);
     ifr.ifr_addr.sa_family = AF_INET;
     strncpy(ifr.ifr_name, "wlan0", IFNAMSIZ-1);
@@ -1660,7 +1660,7 @@ int main(int argc, char *argv[])
     cliArgs.encoderType = ENC_TYPE_H264;
     cliArgs.osd         = 1;				// * enabled by default
     cliArgs.font_zoom   = 1;				// * small=GM_OSD_FONT_ZOOM_NONE, 1=minimum, 2=normal
-    cliArgs.osd_bg_color= 1;				// * default is Black
+    cliArgs.osd_bg_color= 0;				// * default is Black form 0-4
     cliArgs.osd_text[0] = '\0';
     cliArgs.user        = NULL;
     cliArgs.password    = NULL;
@@ -1781,6 +1781,12 @@ int main(int argc, char *argv[])
 
     // * Initializing gmlib
     gm_graph_init();
+
+	/* Initialize OSD after the capture object has been created. */
+	if (cliArgs.osd) {
+		rtspd_set_osd_palette();
+		rtspd_enable_osd_font(enc_param[0][0].cap.obj,cliArgs.osd_text);
+	}
 
     log_info("Width        : %d", cliArgs.width);
     log_info("Height       : %d", cliArgs.height);
