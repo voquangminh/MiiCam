@@ -137,7 +137,7 @@ $(BUILDDIR)/rtspd: $(PREFIXDIR)/bin
 		$(RTSPDDIR)/librtsp.a	\
 		$(RTSPDDIR)/librtsp_glibc.a	\
 		-L$(GMLIBDIR)/lib		\
-		-lpthread -lm -lrt -lgm -o $(TOOLSDIR)/bin/rtspd-v5 && \
+		-lgm -lm -lpthread -lrt -o $(TOOLSDIR)/bin/rtspd-v5 && \
 		$(TARGET)-strip $(TOOLSDIR)/bin/rtspd-v5
 	@touch $@
 $(BUILDDIR)/aac_play: $(PREFIXDIR)/bin
