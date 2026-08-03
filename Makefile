@@ -121,7 +121,7 @@ $(PREFIXDIR)/bin:
 
 
 #################################################################
-## RTSPD													   ##
+## RTSPD	$(RTSPDDIR)/log/log.c	\						   ##
 #################################################################
 
 $(BUILDDIR)/rtspd: $(PREFIXDIR)/bin
@@ -132,13 +132,12 @@ $(BUILDDIR)/rtspd: $(PREFIXDIR)/bin
 		-DLOG_USE_COLOR			\
 		-Wall					\
 		-I$(GMLIBDIR)/inc		\
-		$(RTSPDDIR)/log/log.c	\
-		$(RTSPDDIR)/rtspdc		\
+		$(RTSPDDIR)/rtspd-chuangmi-v5.c		\
 		$(RTSPDDIR)/librtsp.a	\
 		$(RTSPDDIR)/librtsp_glibc.a	\
 		-L$(GMLIBDIR)/lib		\
-		-lpthread -lm -lrt -lgm -o $(TOOLSDIR)/bin/rtspd && \
-		$(TARGET)-strip $(TOOLSDIR)/bin/rtspd
+		-lpthread -lm -lrt -lgm -o $(TOOLSDIR)/bin/rtspd-v5 && \
+		$(TARGET)-strip $(TOOLSDIR)/bin/rtspd-v5
 	@touch $@
 $(BUILDDIR)/aac_play: $(PREFIXDIR)/bin
 	@mkdir -p $(BUILDDIR) $(TOOLSDIR)/bin
