@@ -117,6 +117,9 @@ static const status_led_paths_t status_led_paths[] = {
 
 static volatile sig_atomic_t running = 1;
 static char local_ip[64] = "127.0.0.1";
+static char public_host[128] = "";
+static int public_http_port = 0;
+static int public_rtsp_port = 0;
 static char endpoint_uuid[96] = "urn:uuid:81360000-0000-4000-8000-000000000001";
 static int pwm_fd = -1;
 static int motor_fd = -1;
@@ -140,6 +143,21 @@ typedef struct {
     preset_t presets[PRESET_MAX];
 } ptz_state_t;
 static ptz_state_t ptz = { .x=15, .y=7, .home_x=15, .home_y=7 };
+
+static const char *onvif_host(void)
+{
+    return public_host[0] ? public_host : local_ip;
+}
+
+static int onvif_http_port(void)
+{
+    return public_http_port > 0 ? public_http_port : HTTP_PORT;
+}
+
+static int onvif_rtsp_port(void)
+{
+    return public_rtsp_port > 0 ? public_rtsp_port : RTSP_PORT;
+}
 
 typedef struct {
     int brightness, contrast, hue, saturation, denoise, sharpness;
@@ -435,12 +453,12 @@ static int get_int_tag(const char*r,const char*n,int*v){char b[64];if(xml_tag(r,
 static int set_optional(const char*r,const char*tag,const char*isp,int lo,int hi){int v;if(get_int_tag(r,tag,&v)<0)return 0;return set_checked(isp,v,lo,hi)==0?1:-1;}
 static void handle_soap(const char*r,char*out,size_t size){out[0]=0;append(out,size,"%s",SOAP_HEAD);
  if(strstr(r,"GetDeviceInformation"))append(out,size,"<tds:GetDeviceInformationResponse><tds:Manufacturer>Xiaomi/Chuangmi</tds:Manufacturer><tds:Model>Mijia 1080p GM8136</tds:Model><tds:FirmwareVersion>ONVIF-full-1.0</tds:FirmwareVersion><tds:SerialNumber>%s</tds:SerialNumber><tds:HardwareId>GM8136</tds:HardwareId></tds:GetDeviceInformationResponse>",endpoint_uuid);
- else if(strstr(r,"GetCapabilities"))append(out,size,"<tds:GetCapabilitiesResponse><tds:Capabilities><tt:Device><tt:XAddr>http://%s:%d/onvif/device_service</tt:XAddr></tt:Device><tt:Media><tt:XAddr>http://%s:%d/onvif/media_service</tt:XAddr><tt:StreamingCapabilities><tt:RTP_TCP>true</tt:RTP_TCP><tt:RTP_RTSP_TCP>true</tt:RTP_RTSP_TCP></tt:StreamingCapabilities></tt:Media><tt:PTZ><tt:XAddr>http://%s:%d/onvif/ptz_service</tt:XAddr></tt:PTZ><tt:Imaging><tt:XAddr>http://%s:%d/onvif/imaging_service</tt:XAddr></tt:Imaging><tt:DeviceIO><tt:XAddr>http://%s:%d/onvif/deviceio_service</tt:XAddr></tt:DeviceIO></tds:Capabilities></tds:GetCapabilitiesResponse>",local_ip,HTTP_PORT,local_ip,HTTP_PORT,local_ip,HTTP_PORT,local_ip,HTTP_PORT,local_ip,HTTP_PORT);
- else if(strstr(r,"GetServices"))append(out,size,"<tds:GetServicesResponse><tds:Service><tds:Namespace>http://www.onvif.org/ver10/device/wsdl</tds:Namespace><tds:XAddr>http://%s:%d/onvif/device_service</tds:XAddr></tds:Service><tds:Service><tds:Namespace>http://www.onvif.org/ver10/media/wsdl</tds:Namespace><tds:XAddr>http://%s:%d/onvif/media_service</tds:XAddr></tds:Service><tds:Service><tds:Namespace>http://www.onvif.org/ver20/ptz/wsdl</tds:Namespace><tds:XAddr>http://%s:%d/onvif/ptz_service</tds:XAddr></tds:Service><tds:Service><tds:Namespace>http://www.onvif.org/ver20/imaging/wsdl</tds:Namespace><tds:XAddr>http://%s:%d/onvif/imaging_service</tds:XAddr></tds:Service></tds:GetServicesResponse>",local_ip,HTTP_PORT,local_ip,HTTP_PORT,local_ip,HTTP_PORT,local_ip,HTTP_PORT);
+ else if(strstr(r,"GetCapabilities"))append(out,size,"<tds:GetCapabilitiesResponse><tds:Capabilities><tt:Device><tt:XAddr>http://%s:%d/onvif/device_service</tt:XAddr></tt:Device><tt:Media><tt:XAddr>http://%s:%d/onvif/media_service</tt:XAddr><tt:StreamingCapabilities><tt:RTP_TCP>true</tt:RTP_TCP><tt:RTP_RTSP_TCP>true</tt:RTP_RTSP_TCP></tt:StreamingCapabilities></tt:Media><tt:PTZ><tt:XAddr>http://%s:%d/onvif/ptz_service</tt:XAddr></tt:PTZ><tt:Imaging><tt:XAddr>http://%s:%d/onvif/imaging_service</tt:XAddr></tt:Imaging><tt:DeviceIO><tt:XAddr>http://%s:%d/onvif/deviceio_service</tt:XAddr></tt:DeviceIO></tds:Capabilities></tds:GetCapabilitiesResponse>",onvif_host(),onvif_http_port(),onvif_host(),onvif_http_port(),onvif_host(),onvif_http_port(),onvif_host(),onvif_http_port(),onvif_host(),onvif_http_port());
+ else if(strstr(r,"GetServices"))append(out,size,"<tds:GetServicesResponse><tds:Service><tds:Namespace>http://www.onvif.org/ver10/device/wsdl</tds:Namespace><tds:XAddr>http://%s:%d/onvif/device_service</tds:XAddr></tds:Service><tds:Service><tds:Namespace>http://www.onvif.org/ver10/media/wsdl</tds:Namespace><tds:XAddr>http://%s:%d/onvif/media_service</tds:XAddr></tds:Service><tds:Service><tds:Namespace>http://www.onvif.org/ver20/ptz/wsdl</tds:Namespace><tds:XAddr>http://%s:%d/onvif/ptz_service</tds:XAddr></tds:Service><tds:Service><tds:Namespace>http://www.onvif.org/ver20/imaging/wsdl</tds:Namespace><tds:XAddr>http://%s:%d/onvif/imaging_service</tds:XAddr></tds:Service></tds:GetServicesResponse>",onvif_host(),onvif_http_port(),onvif_host(),onvif_http_port(),onvif_host(),onvif_http_port(),onvif_host(),onvif_http_port());
  else if(strstr(r,"GetProfiles"))append(out,size,"<trt:GetProfilesResponse><trt:Profiles token=\"profile_0\" fixed=\"true\"><tt:Name>MainStream</tt:Name><tt:VideoSourceConfiguration token=\"vsrc_0\"><tt:Name>VideoSource</tt:Name><tt:UseCount>1</tt:UseCount><tt:SourceToken>source_0</tt:SourceToken><tt:Bounds x=\"0\" y=\"0\" width=\"1920\" height=\"1080\"/></tt:VideoSourceConfiguration><tt:PTZConfiguration token=\"ptz_0\"><tt:Name>PTZ</tt:Name><tt:UseCount>1</tt:UseCount><tt:NodeToken>node_0</tt:NodeToken></tt:PTZConfiguration></trt:Profiles></trt:GetProfilesResponse>");
  else if(strstr(r,"GetVideoSources"))append(out,size,"<trt:GetVideoSourcesResponse><trt:VideoSources token=\"source_0\"><tt:Framerate>20</tt:Framerate><tt:Resolution><tt:Width>1920</tt:Width><tt:Height>1080</tt:Height></tt:Resolution></trt:VideoSources></trt:GetVideoSourcesResponse>");
- else if(strstr(r,"GetStreamUri"))append(out,size,"<trt:GetStreamUriResponse><trt:MediaUri><tt:Uri>rtsp://%s:%d/live/ch00_0</tt:Uri><tt:InvalidAfterConnect>false</tt:InvalidAfterConnect><tt:InvalidAfterReboot>false</tt:InvalidAfterReboot><tt:Timeout>PT60S</tt:Timeout></trt:MediaUri></trt:GetStreamUriResponse>",local_ip,RTSP_PORT);
- else if(strstr(r,"GetSnapshotUri"))append(out,size,"<trt:GetSnapshotUriResponse>""<trt:MediaUri>""<tt:Uri>http://%s:%d/snapshot.jpg</tt:Uri>""<tt:InvalidAfterConnect>false</tt:InvalidAfterConnect>""<tt:InvalidAfterReboot>false</tt:InvalidAfterReboot>""<tt:Timeout>PT60S</tt:Timeout>""</trt:MediaUri>""</trt:GetSnapshotUriResponse>",local_ip,HTTP_PORT);
+ else if(strstr(r,"GetStreamUri"))append(out,size,"<trt:GetStreamUriResponse><trt:MediaUri><tt:Uri>rtsp://%s:%d/live/ch00_0</tt:Uri><tt:InvalidAfterConnect>false</tt:InvalidAfterConnect><tt:InvalidAfterReboot>false</tt:InvalidAfterReboot><tt:Timeout>PT60S</tt:Timeout></trt:MediaUri></trt:GetStreamUriResponse>",onvif_host(),onvif_http_port());
+ else if(strstr(r,"GetSnapshotUri"))append(out,size,"<trt:GetSnapshotUriResponse>""<trt:MediaUri>""<tt:Uri>http://%s:%d/snapshot.jpg</tt:Uri>""<tt:InvalidAfterConnect>false</tt:InvalidAfterConnect>""<tt:InvalidAfterReboot>false</tt:InvalidAfterReboot>""<tt:Timeout>PT60S</tt:Timeout>""</trt:MediaUri>""</trt:GetSnapshotUriResponse>",onvif_host(),onvif_http_port());
  else if(strstr(r,"GetNodes"))append(out,size,"<tptz:GetNodesResponse><tptz:PTZNode token=\"node_0\"><tt:Name>PanTilt</tt:Name><tt:MaximumNumberOfPresets>%d</tt:MaximumNumberOfPresets><tt:HomeSupported>true</tt:HomeSupported></tptz:PTZNode></tptz:GetNodesResponse>",PRESET_MAX);
  else if(strstr(r,"GetConfigurations"))append(out,size,"<tptz:GetConfigurationsResponse>""<tptz:PTZConfiguration token=\"ptz_0\">""<tt:Name>PTZ</tt:Name>""<tt:UseCount>1</tt:UseCount>""<tt:NodeToken>node_0</tt:NodeToken>""</tptz:PTZConfiguration>""</tptz:GetConfigurationsResponse>");
  else if(strstr(r,"GetConfigurationOptions"))append(out,size,"<tptz:GetConfigurationOptionsResponse>""<tptz:PTZConfigurationOptions>""<tt:Spaces>""<tt:AbsolutePanTiltPositionSpace>""<tt:URI>""http://www.onvif.org/ver10/tptz/PanTiltSpaces/PositionGenericSpace""</tt:URI>""<tt:XRange>""<tt:Min>-1.0</tt:Min>""<tt:Max>1.0</tt:Max>""</tt:XRange>""<tt:YRange>""<tt:Min>-1.0</tt:Min>""<tt:Max>1.0</tt:Max>""</tt:YRange>""</tt:AbsolutePanTiltPositionSpace>""<tt:RelativePanTiltTranslationSpace>""<tt:URI>""http://www.onvif.org/ver10/tptz/PanTiltSpaces/TranslationGenericSpace""</tt:URI>""<tt:XRange>""<tt:Min>-1.0</tt:Min>""<tt:Max>1.0</tt:Max>""</tt:XRange>""<tt:YRange>""<tt:Min>-1.0</tt:Min>""<tt:Max>1.0</tt:Max>""</tt:YRange>""</tt:RelativePanTiltTranslationSpace>""</tt:Spaces>""</tptz:PTZConfigurationOptions>""</tptz:GetConfigurationOptionsResponse>");
@@ -569,16 +587,30 @@ static void *discovery_server(void*arg)
         char id[256]="urn:uuid:probe";
         xml_tag(b,"a:MessageID",id,sizeof(id));
         char x[4096];
-        int l=snprintf(x,sizeof(x),"<?xml version=\"1.0\"?><e:Envelope xmlns:e=\"http://www.w3.org/2003/05/soap-envelope\" xmlns:a=\"http://www.w3.org/2005/08/addressing\" xmlns:d=\"http://schemas.xmlsoap.org/ws/2005/04/discovery\" xmlns:dn=\"http://www.onvif.org/ver10/network/wsdl\"><e:Header><a:MessageID>urn:uuid:%ld</a:MessageID><a:RelatesTo>%s</a:RelatesTo><a:Action>http://schemas.xmlsoap.org/ws/2005/04/discovery/ProbeMatches</a:Action></e:Header><e:Body><d:ProbeMatches><d:ProbeMatch><a:EndpointReference><a:Address>%s</a:Address></a:EndpointReference><d:Types>dn:NetworkVideoTransmitter</d:Types><d:Scopes>onvif://www.onvif.org/type/video_encoder onvif://www.onvif.org/type/ptz onvif://www.onvif.org/name/chuangmi-v2</d:Scopes><d:XAddrs>http://%s:%d/onvif/device_service</d:XAddrs><d:MetadataVersion>1</d:MetadataVersion></d:ProbeMatch></d:ProbeMatches></e:Body></e:Envelope>",(long)time(NULL),id,endpoint_uuid,local_ip,HTTP_PORT);
+        int l=snprintf(x,sizeof(x),"<?xml version=\"1.0\"?><e:Envelope xmlns:e=\"http://www.w3.org/2003/05/soap-envelope\" xmlns:a=\"http://www.w3.org/2005/08/addressing\" xmlns:d=\"http://schemas.xmlsoap.org/ws/2005/04/discovery\" xmlns:dn=\"http://www.onvif.org/ver10/network/wsdl\"><e:Header><a:MessageID>urn:uuid:%ld</a:MessageID><a:RelatesTo>%s</a:RelatesTo><a:Action>http://schemas.xmlsoap.org/ws/2005/04/discovery/ProbeMatches</a:Action></e:Header><e:Body><d:ProbeMatches><d:ProbeMatch><a:EndpointReference><a:Address>%s</a:Address></a:EndpointReference><d:Types>dn:NetworkVideoTransmitter</d:Types><d:Scopes>onvif://www.onvif.org/type/video_encoder onvif://www.onvif.org/type/ptz onvif://www.onvif.org/name/chuangmi-v2</d:Scopes><d:XAddrs>http://%s:%d/onvif/device_service</d:XAddrs><d:MetadataVersion>1</d:MetadataVersion></d:ProbeMatch></d:ProbeMatches></e:Body></e:Envelope>",(long)time(NULL),id,endpoint_uuid,onvif_host(),onvif_http_port());
         sendto(s,x,l,0,(void*)&from,fl);
     }
     close(s);
     return NULL;
 }
 
-int main(void)
+int main(int argc, char **argv)
 {
+    int i;
     pthread_t http,wsd;
+    for (i = 1; i < argc; i++) {
+        if (!strncmp(argv[i], "--public-host=", 14)) {
+            snprintf(public_host, sizeof(public_host), "%s", argv[i] + 14);
+        } else if (!strncmp(argv[i], "--public-http-port=", 19)) {
+            public_http_port = atoi(argv[i] + 19);
+        } else if (!strncmp(argv[i], "--public-rtsp-port=", 19)) {
+            public_rtsp_port = atoi(argv[i] + 19);
+        }
+    }
+    if (public_http_port < 0 || public_http_port > 65535)
+        public_http_port = 0;
+    if (public_rtsp_port < 0 || public_rtsp_port > 65535)
+        public_rtsp_port = 0;
     signal(SIGINT,signal_handler);
     signal(SIGTERM,signal_handler);
     signal(SIGPIPE,SIG_IGN);
