@@ -121,7 +121,7 @@ $(PREFIXDIR)/bin:
 
 
 #################################################################
-## RTSPD	$(RTSPDDIR)/log/log.c	\						   ##
+## RTSPD													   ##
 #################################################################
 
 $(BUILDDIR)/rtspd: $(PREFIXDIR)/bin
@@ -132,13 +132,21 @@ $(BUILDDIR)/rtspd: $(PREFIXDIR)/bin
 		-DLOG_USE_COLOR			\
 		-Wall					\
 		-I$(GMLIBDIR)/inc		\
-		$(RTSPDDIR)/rtspd-chuangmi-v5.c		\
+		$(RTSPDDIR)/log/log.c	\
+		$(RTSPDDIR)/rtspd.c		\
 		$(RTSPDDIR)/librtsp.a	\
 		$(RTSPDDIR)/librtsp_glibc.a	\
 		-L$(GMLIBDIR)/lib		\
-		-lpthread -lm -lrt -lgm -o $(TOOLSDIR)/bin/rtspd-v5 && \
-		$(TARGET)-strip $(TOOLSDIR)/bin/rtspd-v5
+		-lpthread -lm -lrt -lgm -o $(TOOLSDIR)/bin/rtspd && \
+		$(TARGET)-strip $(TOOLSDIR)/bin/rtspd
 	@touch $@
+
+build/rtspd: $(BUILDDIR)/rtspd
+	@:
+
+#################################################################
+## AAC-REPACK												   ##
+#################################################################
 $(BUILDDIR)/aac_play: $(PREFIXDIR)/bin
 	@mkdir -p $(BUILDDIR) $(TOOLSDIR)/bin
 	cd $(RTSPDDIR) 				&& \
@@ -147,16 +155,13 @@ $(BUILDDIR)/aac_play: $(PREFIXDIR)/bin
 		-DLOG_USE_COLOR			\
 		-Wall					\
 		-I$(GMLIBDIR)/inc		\
-		$(RTSPDDIR)/audio_playback.c	\
+		$(RTSPDDIR)/aac_player.c	\
 		$(RTSPDDIR)/log/log.c	\
 		$(RTSPDDIR)/librtsp.a	\
 		-L$(GMLIBDIR)/lib		\
 		-lpthread -lm -lrt -lgm -o $(TOOLSDIR)/bin/aac_play && \
 		$(TARGET)-strip $(TOOLSDIR)/bin/aac_play
 	@touch $@
-
-build/rtspd: $(BUILDDIR)/rtspd
-	@:
 
 build/aac_play: $(BUILDDIR)/aac_play
 	@:
