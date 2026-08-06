@@ -1,0 +1,171 @@
+name: Build MiiCam AAC Player
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-aac-player:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Extract SDK
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          cd "${{ github.workspace }}/sdk"
+          tar -xzf toolchain_gnueabi-4.4.0_ARMv5TE.tgz
+          tar -xzf gm_lib_2015-01-09-IPCAM.tgz
+
+      - name: Install 32-bit Compatibility Libraries
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          sudo dpkg --add-architecture i386
+          sudo apt-get update
+          sudo apt-get install -y \
+            libc6:i386 \
+            libstdc++6:i386 \
+            lib32z1 \
+            libmpfr6:i386 \
+            libgmp10:i386
+
+          sudo ln -sf \
+            /usr/lib/i386-linux-gnu/libmpfr.so.6 \
+            /usr/lib/i386-linux-gnu/libmpfr.so.4
+
+          sudo ln -sf \
+            /usr/lib/i386-linux-gnu/libgmp.so.10 \
+            /usr/lib/i386-linux-gnu/libgmp.so.3
+
+      - name: Locate Toolchain and GM Library
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          GCC_PATH="$(find "${{ github.workspace }}/sdk" \
+            -type f \
+            -name 'arm-unknown-linux-uclibcgnueabi-gcc' \
+            -print \
+            -quit)"
+
+          if [ -z "${GCC_PATH}" ]; then
+            echo "ARM cross-compiler was not found"
+            exit 1
+          fi
+
+          TOOLCHAIN_BIN="$(dirname "${GCC_PATH}")"
+          TOOLCHAIN_PREFIX="${TOOLCHAIN_BIN}/arm-unknown-linux-uclibcgnueabi"
+          SDK_ROOT="$(dirname "$(dirname "${TOOLCHAIN_BIN}")")"
+
+          GMLIB_HEADER="$(find "${{ github.workspace }}" \
+            -type f \
+            -name 'gmlib.h' \
+            -print \
+            -quit)"
+
+          LIBGM_PATH="$(find "${{ github.workspace }}" \
+            -type f \
+            \( -name 'libgm.so' -o -name 'libgm.a' \) \
+            -print \
+            -quit)"
+
+          if [ -z "${GMLIB_HEADER}" ] || [ -z "${LIBGM_PATH}" ]; then
+            echo "gmlib.h or libgm was not found"
+            find "${{ github.workspace }}" \
+              \( -name 'gmlib.h' -o -name 'libgm*' \) \
+              -print || true
+            exit 1
+          fi
+
+          GMLIB_INC="$(dirname "${GMLIB_HEADER}")"
+          GMLIB_LIB="$(dirname "${LIBGM_PATH}")"
+
+          chmod -R +x "${SDK_ROOT}"
+
+          {
+            echo "TOOLCHAIN_BIN=${TOOLCHAIN_BIN}"
+            echo "TOOLCHAIN_PREFIX=${TOOLCHAIN_PREFIX}"
+            echo "GMLIB_INC=${GMLIB_INC}"
+            echo "GMLIB_LIB=${GMLIB_LIB}"
+          } >> "${GITHUB_ENV}"
+
+      - name: Build AAC Player
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          export PATH="${TOOLCHAIN_BIN}:${PATH}"
+
+          SOURCE="${{ github.workspace }}/tools/aac_player/aac_player.c"
+          OUTPUT="${{ github.workspace }}/tools/bin/aac_player"
+
+          if [ ! -f "${SOURCE}" ]; then
+            echo "Source file was not found: ${SOURCE}"
+            exit 1
+          fi
+
+          mkdir -p "$(dirname "${OUTPUT}")"
+
+          "${TOOLCHAIN_PREFIX}-gcc" \
+            -std=gnu99 \
+            -Os \
+            -Wall \
+            -Wextra \
+            -I"${GMLIB_INC}" \
+            "${SOURCE}" \
+            -L"${GMLIB_LIB}" \
+            -Wl,-rpath-link,"${GMLIB_LIB}" \
+            -lgm \
+            -o "${OUTPUT}"
+
+          "${TOOLCHAIN_PREFIX}-strip" "${OUTPUT}"
+
+      - name: Verify Binary
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          file tools/bin/aac_player
+          ls -lah tools/bin/aac_player
+
+          "${TOOLCHAIN_PREFIX}-readelf" -h tools/bin/aac_player
+          "${TOOLCHAIN_PREFIX}-readelf" -d tools/bin/aac_player | \
+            grep -E 'NEEDED|libgm|libc' || true
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: aac_player-armv5te-uclibc
+          path: tools/bin/aac_player
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Commit Binary
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email \
+            "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add -f tools/bin/aac_player
+
+          if git diff --cached --quiet; then
+            echo "No binary changes to commit"
+            exit 0
+          fi
+
+          git commit -m "Automated build: update aac_player"
+          git pull --rebase origin "${GITHUB_REF_NAME}"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
