@@ -106,7 +106,7 @@ jobs:
 
           export PATH="${TOOLCHAIN_BIN}:${PATH}"
 
-          SOURCE="${{ github.workspace }}/tools/rtsp_server/aac_player.c"
+          SOURCE="${{ github.workspace }}/tools/rtsp_server/aac_play.c"
           OUTPUT="${{ github.workspace }}/tools/bin/aac_play"
 
           if [ ! -f "${SOURCE}" ]; then
@@ -135,18 +135,18 @@ jobs:
         run: |
           set -euxo pipefail
 
-          file tools/bin/aac_player
-          ls -lah tools/bin/aac_player
+          file tools/bin/aac_play
+          ls -lah tools/bin/aac_play
 
-          "${TOOLCHAIN_PREFIX}-readelf" -h tools/bin/aac_player
-          "${TOOLCHAIN_PREFIX}-readelf" -d tools/bin/aac_player | \
+          "${TOOLCHAIN_PREFIX}-readelf" -h tools/bin/aac_play
+          "${TOOLCHAIN_PREFIX}-readelf" -d tools/bin/aac_play | \
             grep -E 'NEEDED|libgm|libc' || true
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: aac_player-armv5te-uclibc
-          path: tools/bin/aac_player
+          name: aac_play-armv5te-uclibc
+          path: tools/bin/aac_play
           if-no-files-found: error
           retention-days: 30
 
@@ -159,7 +159,7 @@ jobs:
           git config user.email \
             "41898282+github-actions[bot]@users.noreply.github.com"
 
-          git add -f tools/bin/aac_player
+          git add -f tools/bin/aac_play
 
           if git diff --cached --quiet; then
             echo "No binary changes to commit"
