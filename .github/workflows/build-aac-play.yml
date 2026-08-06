@@ -1,4 +1,4 @@
-name: Build MiiCam AAC Player
+name: Build MiiCam AAC Play
 
 on:
   workflow_dispatch:
