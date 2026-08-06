@@ -106,8 +106,8 @@ jobs:
 
           export PATH="${TOOLCHAIN_BIN}:${PATH}"
 
-          SOURCE="${{ github.workspace }}/tools/aac_player/aac_player.c"
-          OUTPUT="${{ github.workspace }}/tools/bin/aac_player"
+          SOURCE="${{ github.workspace }}/tools/rtsp_server/aac_player.c"
+          OUTPUT="${{ github.workspace }}/tools/bin/aac_play"
 
           if [ ! -f "${SOURCE}" ]; then
             echo "Source file was not found: ${SOURCE}"
