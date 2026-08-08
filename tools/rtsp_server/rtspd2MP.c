@@ -666,7 +666,7 @@ void take_snapshot(void)
     snapshot.bs_buf = snapshot_buf;
     snapshot.bs_buf_len = MAX_SNAPSHOT_LEN;
     snapshot.bs_width = 1920;
-    snapshot.bs_height = 1280;
+    snapshot.bs_height = 1080;
     snapshot_len = gm_request_snapshot(&snapshot, 500); // Timeout value 500ms
     if (snapshot_len > 0) {
         strftime(dirstring, sizeof(dirstring), "/tmp/sd/RECORDED_IMAGES/%Y%m%d", sTm);
