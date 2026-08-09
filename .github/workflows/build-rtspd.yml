@@ -53,6 +53,7 @@ jobs:
           git add -f tools/bin/rtspd2MP
           git add -f tools/bin/rtspd
           git add -f tools/bin/rtspd-v5
+          git add -f tools/bin/rtspd2MP00
           
           # 3. Tiến hành commit file chạy
           git commit -m "Automated build: update camera binary rtspd2MP/rtspd/rtspd-v5" || echo "No changes to commit"
