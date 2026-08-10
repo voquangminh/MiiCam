@@ -293,6 +293,11 @@ struct CommandLineArguments {
     int audio_channel_type;   /* GM_MONO / GM_STEREO */
     int audio_encode_type;    /* GM_PCM / GM_AAC / GM_ADPCM / GM_G711_ALAW / GM_G711_ULAW */
     int audio_enabled;        /* 0 = RTSP stream without audio, 1 = with audio */
+
+    /* ePTZ digital zoom: OFF by default (opt-in with -Z).
+     * Runtime ePTZ (gm_apply_attr) is not verified on all GM8136 builds and
+     * must not be touched unless explicitly enabled, to avoid a crash. */
+    int eptz;                 /* 1 = enable ePTZ digital zoom thread */
 } cliArgs;
 
 /* Read HOSTNAME from config file. Try common locations. */
@@ -1908,6 +1913,7 @@ static int rtspd_apply_eptz(float factor, float pan, float tilt)
     void *bindfd;
     int src_w, src_h;
     int crop_w, crop_h, crop_x, crop_y;
+    static int eptz_active = 0;   /* was ePTZ applied to the encoder? */
 
     param = &enc_param[0][0];
     bindfd = param->bindfd[0];
@@ -1929,7 +1935,10 @@ static int rtspd_apply_eptz(float factor, float pan, float tilt)
     if (tilt > 1.0f) tilt = 1.0f;
 
     if (factor <= 1.001f) {
-        /* No zoom: disable ePTZ and encode the full frame */
+        /* No zoom: nothing to do unless we still have ePTZ applied */
+        if (!eptz_active)
+            return 0;
+        /* Restore the full frame */
         eptz_attr.enabled = 0;
         eptz_attr.src_dim.width  = src_w;
         eptz_attr.src_dim.height = src_h;
@@ -1937,6 +1946,7 @@ static int rtspd_apply_eptz(float factor, float pan, float tilt)
         eptz_attr.src_crop_rect.y = 0;
         eptz_attr.src_crop_rect.width  = src_w;
         eptz_attr.src_crop_rect.height = src_h;
+        eptz_active = 0;
     } else {
         /* Crop a window of src_w/factor x src_h/factor, scaled to output */
         crop_w = (int)((float)src_w / factor + 0.5f);
@@ -1964,6 +1974,7 @@ static int rtspd_apply_eptz(float factor, float pan, float tilt)
         eptz_attr.src_crop_rect.y = (unsigned int)crop_y;
         eptz_attr.src_crop_rect.width  = (unsigned int)crop_w;
         eptz_attr.src_crop_rect.height = (unsigned int)crop_h;
+        eptz_active = 1;
     }
 
     if (gm_set_attr(param->enc[0].obj, &eptz_attr) < 0) {
@@ -2427,8 +2438,10 @@ static int rtspd_start(int port)
         pthread_attr_destroy(&attr);
     }
 
-    // * ePTZ Zoom Thread (digital zoom, controlled by the ONVIF server)
-    if (zoom_thread_id == (pthread_t)NULL) {
+    // * ePTZ Zoom Thread (digital zoom, controlled by the ONVIF server).
+    // * Opt-in only: runtime ePTZ (gm_apply_attr) is not verified on all
+    // * GM8136 builds, so it must stay disabled unless -Z is given.
+    if (cliArgs.eptz && zoom_thread_id == (pthread_t)NULL) {
         pthread_attr_init(&attr);
         pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
         ret = pthread_create(&zoom_thread_id, &attr, &rtspd_zoom_thread, NULL);
@@ -2526,6 +2539,7 @@ static void print_usage(void)
         "-C [8|16]      - Audio sample size in bits                          (default: 16)\n"
         "-P [1|2]       - Audio channel type: 1=mono 2=stereo                (default: 1)\n"
         "-q             - Disable audio on the RTSP stream                   (default: audio on)\n"
+        "-Z (optional)  - Enable ePTZ digital zoom via /dev/shm/rtspd_zoom  (default: off)\n"
     );
 
 	exit(EXIT_FAILURE);
@@ -2576,6 +2590,9 @@ int main(int argc, char *argv[])
     cliArgs.audio_frame_samples = 1024;
     cliArgs.audio_channel_type  = GM_MONO;
     cliArgs.audio_encode_type   = GM_AAC;
+
+    /* ePTZ digital zoom: OFF by default, opt-in with -Z */
+    cliArgs.eptz                = 0;
 
     if (argc > 1) {
         for (i = 1; i < argc; i++) {
@@ -2708,6 +2725,9 @@ int main(int argc, char *argv[])
                         break;
                     case 'q':										// * Disable audio
                         cliArgs.audio_enabled = 0;
+                        break;
+                    case 'Z':										// * Enable ePTZ digital zoom
+                        cliArgs.eptz = 1;
                         break;
                     case 't':										// * Set OSD text line 1
                         if (argv[i][2] != '\0') {
