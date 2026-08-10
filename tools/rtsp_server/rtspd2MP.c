@@ -12,9 +12,11 @@
 #include <pthread.h>
 #include <ctype.h>
 #include <string.h>
+#include <strings.h>
 #include <signal.h>
 #include <time.h>
 #include <unistd.h>
+#include <math.h>
 #include <errno.h>
 #include <libgen.h>
 #include <arpa/inet.h>
@@ -79,6 +81,16 @@
 
 #define CREATE_VIDEO_FILE        "/dev/shm/rtspd_video"
 #define LAST_VIDEO_PATH          "/dev/shm/rtspd_last_video_path"
+
+/* ePTZ (digital zoom) control - written by the ONVIF server:
+ * line format: "<zoom> <pan> <tilt>"
+ *   zoom: 0.0 (1x) .. 1.0 (max zoom)
+ *   pan : 0.0 .. 1.0  crop center X, normalized (0.5 = center)
+ *   tilt: 0.0 .. 1.0  crop center Y, normalized (0.5 = center)
+ */
+#define RTSPD_ZOOM_FILE          "/dev/shm/rtspd_zoom"
+#define MAX_ZOOM_FACTOR          4.0f
+#define ZOOM_SMOOTH_STEP         0.05f
 
 #define OSD_PALETTE_COLOR_AQUA              0xCA48CA93        /* YCrYCb */
 #define OSD_PALETTE_COLOR_BLACK             0x10801080
@@ -196,6 +208,7 @@ typedef struct st_av {
 pthread_t enqueue_thread_id   		= 0;		// * Video enqueue
 pthread_t encode_thread_id    		= 0;		// * Video encode
 pthread_t audio_encode_thread_id 	= 0;		// * Audio encode
+pthread_t zoom_thread_id       		= 0;		// * ePTZ zoom (ONVIF)
 pthread_t motion_thread_id    		= 0;		// * Motion
 pthread_t media_thread_id     		= 0;		// * Snapshot
 pthread_t osd_thread_id       		= 0;		// * OSD
@@ -230,6 +243,15 @@ void *audio_grab_object;
 void *audio_encode_object;
 char *audio_data;
 
+/* ePTZ zoom state */
+static pthread_mutex_t zoom_mutex = PTHREAD_MUTEX_INITIALIZER;
+static float zoom_factor  = 1.0f;   // * current zoom factor (1.0 = no zoom)
+static float zoom_pan     = 0.5f;   // * crop center X, normalized
+static float zoom_tilt    = 0.5f;   // * crop center Y, normalized
+static float zoom_target  = 1.0f;   // * target zoom factor
+static float zoom_tgt_pan = 0.5f;
+static float zoom_tgt_tilt = 0.5f;
+
 static unsigned short rtspd_osd_font2_text[64];
 static int rtspd_osd_font2_ready = 0;
 static pthread_mutex_t rtspd_osd_mutex = PTHREAD_MUTEX_INITIALIZER;
@@ -262,6 +284,15 @@ struct CommandLineArguments {
     int font_zoom;
     int osd_bg_color;
     char osd_text[32];
+
+    /* Audio configuration (all types / sample rates supported by gmlib) */
+    int audio_sample_rate;    /* 8000, 16000, 32000, 44100, 48000... */
+    int audio_sample_size;    /* bits per sample: 8, 16 */
+    int audio_bitrate;        /* in bits/sec */
+    int audio_frame_samples;  /* samples per frame: PCM 250~2048, AAC 1024*n, ADPCM 505*n, G711 320*n */
+    int audio_channel_type;   /* GM_MONO / GM_STEREO */
+    int audio_encode_type;    /* GM_PCM / GM_AAC / GM_ADPCM / GM_G711_ALAW / GM_G711_ULAW */
+    int audio_enabled;        /* 0 = RTSP stream without audio, 1 = with audio */
 } cliArgs;
 
 /* Read HOSTNAME from config file. Try common locations. */
@@ -749,6 +780,98 @@ static int convert_gmss_media_type(int type)
     return media_type;
 }
 
+/* Map gmlib audio encoder type to librtsp stream audio type */
+static int convert_gmss_audio_type(int enc_type)
+{
+    switch (enc_type) {
+        case GM_PCM:
+            return GM_SS_TYPE_PCM;
+        case GM_AAC:
+            return GM_SS_TYPE_AAC;
+        case GM_ADPCM:
+            return GM_SS_TYPE_G726;
+        case GM_G711_ALAW:
+            return GM_SS_TYPE_G711A;
+        case GM_G711_ULAW:
+            return GM_SS_TYPE_G711U;
+        default:
+            log_error("convert_gmss_audio_type: enc_type=%d not supported!", enc_type);
+            return -1;
+    }
+}
+
+static const char *audio_encode_type_name(int enc_type)
+{
+    switch (enc_type) {
+        case GM_PCM:        return "PCM";
+        case GM_AAC:        return "AAC";
+        case GM_ADPCM:      return "G726/ADPCM";
+        case GM_G711_ALAW:  return "G711A";
+        case GM_G711_ULAW:  return "G711U";
+        default:            return "UNKNOWN";
+    }
+}
+
+/* RTP timestamp clock (Hz) for the audio payload, per RFC 3551/3640 */
+static int audio_rtp_clock(int enc_type, int sample_rate)
+{
+    switch (enc_type) {
+        case GM_AAC:
+        case GM_PCM:
+            return sample_rate;
+        case GM_ADPCM:
+        case GM_G711_ALAW:
+        case GM_G711_ULAW:
+            return 8000;
+        default:
+            return sample_rate;
+    }
+}
+
+/* Sampling frequency index of the AAC AudioSpecificConfig (ISO/IEC 14496-3) */
+static int aac_sampling_freq_index(int sample_rate)
+{
+    switch (sample_rate) {
+        case 96000: return 0;
+        case 88200: return 1;
+        case 64000: return 2;
+        case 48000: return 3;
+        case 44100: return 4;
+        case 32000: return 5;
+        case 24000: return 6;
+        case 22050: return 7;
+        case 16000: return 8;
+        case 12000: return 9;
+        case 11025: return 10;
+        case 8000:  return 11;
+        case 7350:  return 12;
+        default:    return 11;
+    }
+}
+
+/* Build the audio SDP parameter string that librtsp embeds into a=fmtp: */
+static void build_audio_sdp(int enc_type, int sample_rate, int channels, char *sdp, int sdp_len)
+{
+    switch (enc_type) {
+        case GM_AAC: {
+            /* AudioSpecificConfig (2 bytes): audioObjectType(5) | samplingFrequencyIndex(4) | channelConfiguration(4) */
+            unsigned int config = (2 << 11) | (aac_sampling_freq_index(sample_rate) << 7) | ((channels & 0x0f) << 3);
+            snprintf(sdp, sdp_len, "%X", config);
+            break;
+        }
+        case GM_PCM:
+        case GM_ADPCM:
+        case GM_G711_ALAW:
+        case GM_G711_ULAW:
+            /* No extra config parameter required by librtsp for these codecs */
+            sdp[0] = '\0';
+            break;
+        default:
+            sdp[0] = '\0';
+            break;
+    }
+}
+
 static int open_live_streaming(int ch_num, int sub_num)
 {
     int media_type;
@@ -761,14 +884,18 @@ static int open_live_streaming(int ch_num, int sub_num)
     pb = &enc[ch_num].priv_bs[sub_num];
     media_type = convert_gmss_media_type(b->video.enc_type);
     pb->video.qno = do_queue_alloc(media_type);
-	pb->audio.qno = do_queue_alloc(GM_SS_TYPE_AAC);
-	
-	sprintf(livename, "live/ch%02d_%d", ch_num, sub_num);
-	//printf("%s", livename);
-    log_info(pb->audio.sdpstr, SDPSTR_MAX, "%04X", (2 << 11) | (8 << 7) | (1 << 3)); // AAC LC, bitrate 16000, channel 1
-	//log_info("video sdpstr: %s qno: %d", pb->video.sdpstr, pb->video.qno);
-    //log_info("audio sdpstr: %s qno: %d", pb->audio.sdpstr, pb->audio.qno);
-    pb->sr = stream_reg(livename, pb->video.qno, pb->video.sdpstr,pb->audio.qno, pb->audio.sdpstr,1,0,0,0,0,0,0);
+
+    if (cliArgs.audio_enabled) {
+        pb->audio.qno = do_queue_alloc(convert_gmss_audio_type(cliArgs.audio_encode_type));
+        build_audio_sdp(cliArgs.audio_encode_type, cliArgs.audio_sample_rate,
+                        cliArgs.audio_channel_type, pb->audio.sdpstr, SDPSTR_MAX);
+    } else {
+        pb->audio.qno = 0;
+        pb->audio.sdpstr[0] = '\0';
+    }
+
+    sprintf(livename, "live/ch%02d_%d", ch_num, sub_num);
+    pb->sr = stream_reg(livename, pb->video.qno, pb->video.sdpstr, pb->audio.qno, pb->audio.sdpstr,1,0,0,0,0,0,0);
 	
 	if (pb->sr < 0){
         log_error("open_live_streaming: ch_num=%d, sub_num=%d setup error", ch_num, sub_num);
@@ -1658,25 +1785,39 @@ static void audio_init()
     DECLARE_ATTR(audio_grab_attr, gm_audio_grab_attr_t);
     DECLARE_ATTR(audio_encode_attr, gm_audio_enc_attr_t);
 
+    if (!cliArgs.audio_enabled) {
+        log_info("Audio disabled");
+        audio_bindfd = NULL;
+        return;
+    }
+
     enc_audio_groupfd = gm_new_groupfd();
 
     audio_grab_object = gm_new_obj(GM_AUDIO_GRAB_OBJECT);
     audio_encode_object = gm_new_obj(GM_AUDIO_ENCODER_OBJECT);
 
     audio_grab_attr.vch = 0;
-    audio_grab_attr.sample_rate = 16000;
-    audio_grab_attr.sample_size = 16;
-    audio_grab_attr.channel_type = GM_MONO;
+    audio_grab_attr.sample_rate = cliArgs.audio_sample_rate;
+    audio_grab_attr.sample_size = cliArgs.audio_sample_size;
+    audio_grab_attr.channel_type = (gm_audio_channel_type_t) cliArgs.audio_channel_type;
     gm_set_attr(audio_grab_object, &audio_grab_attr);
 
-    audio_encode_attr.encode_type = GM_AAC;
-    audio_encode_attr.bitrate = 16000;
-    audio_encode_attr.frame_samples = 1024;
+    audio_encode_attr.encode_type = (gm_audio_encode_type_t) cliArgs.audio_encode_type;
+    audio_encode_attr.bitrate = cliArgs.audio_bitrate;
+    audio_encode_attr.frame_samples = cliArgs.audio_frame_samples;
+    if (cliArgs.audio_encode_type == GM_AAC)
+        audio_encode_attr.block_count = 2;
     gm_set_attr(audio_encode_object, &audio_encode_attr);
 
     audio_bindfd = gm_bind(enc_audio_groupfd, audio_grab_object, audio_encode_object);
 
-    //log_info("enc_audio_groupfd:%p audio_bindfd:%p", enc_audio_groupfd, audio_bindfd);
+    log_info("Audio: type=%s rate=%dHz size=%dbit ch=%s bitrate=%d frame_samples=%d",
+             audio_encode_type_name(cliArgs.audio_encode_type),
+             cliArgs.audio_sample_rate,
+             cliArgs.audio_sample_size,
+             cliArgs.audio_channel_type == GM_STEREO ? "stereo" : "mono",
+             cliArgs.audio_bitrate,
+             cliArgs.audio_frame_samples);
     if (gm_apply(enc_audio_groupfd) < 0) {
         log_error("Error! gm_apply fail");
         exit(-1);
@@ -1730,9 +1871,11 @@ void gm_graph_release(void)
             }
         }
     }
-    gm_unbind(audio_bindfd);
+    if (audio_bindfd)
+        gm_unbind(audio_bindfd);
     gm_apply(enc_groupfd);
-    gm_apply(enc_audio_groupfd);
+    if (audio_bindfd)
+        gm_apply(enc_audio_groupfd);
 
     for (cap_ch = 0; cap_ch < CAP_CH_NUM; cap_ch++) {
         for (cap_path = 0; cap_path < CAP_PATH_NUM; cap_path++) {
@@ -1745,11 +1888,156 @@ void gm_graph_release(void)
                 gm_delete_obj(param->cap.obj);
         }
     }
-    gm_delete_obj(audio_grab_object);
-    gm_delete_obj(audio_encode_object);
+    if (audio_grab_object)
+        gm_delete_obj(audio_grab_object);
+    if (audio_encode_object)
+        gm_delete_obj(audio_encode_object);
     gm_delete_groupfd(enc_groupfd);
-    gm_delete_groupfd(enc_audio_groupfd);
+    if (audio_bindfd)
+        gm_delete_groupfd(enc_audio_groupfd);
     gm_release();
+}
+
+/* Apply the current ePTZ crop window to the encoder (digital zoom / pan / tilt).
+ * The crop rectangle is taken from the capture source and scaled up by the
+ * encoder to the configured output resolution. */
+static int rtspd_apply_eptz(float factor, float pan, float tilt)
+{
+    DECLARE_ATTR(eptz_attr, gm_enc_eptz_attr_t);
+    gm_enc_t *param;
+    void *bindfd;
+    int src_w, src_h;
+    int crop_w, crop_h, crop_x, crop_y;
+
+    param = &enc_param[0][0];
+    bindfd = param->bindfd[0];
+    if (bindfd == NULL)
+        return -1;
+
+    src_w = gm_system.cap[0].dim.width;
+    src_h = gm_system.cap[0].dim.height;
+    if (src_w <= 0 || src_h <= 0)
+        return -1;
+
+    if (factor < 1.0f)
+        factor = 1.0f;
+    if (factor > MAX_ZOOM_FACTOR)
+        factor = MAX_ZOOM_FACTOR;
+    if (pan < 0.0f)  pan  = 0.0f;
+    if (pan > 1.0f)  pan  = 1.0f;
+    if (tilt < 0.0f) tilt = 0.0f;
+    if (tilt > 1.0f) tilt = 1.0f;
+
+    if (factor <= 1.001f) {
+        /* No zoom: disable ePTZ and encode the full frame */
+        eptz_attr.enabled = 0;
+        eptz_attr.src_dim.width  = src_w;
+        eptz_attr.src_dim.height = src_h;
+        eptz_attr.src_crop_rect.x = 0;
+        eptz_attr.src_crop_rect.y = 0;
+        eptz_attr.src_crop_rect.width  = src_w;
+        eptz_attr.src_crop_rect.height = src_h;
+    } else {
+        /* Crop a window of src_w/factor x src_h/factor, scaled to output */
+        crop_w = (int)((float)src_w / factor + 0.5f);
+        crop_h = (int)((float)src_h / factor + 0.5f);
+        /* Keep crop dims aligned to a macroblock (16) for the hardware encoder */
+        crop_w &= ~15;
+        crop_h &= ~15;
+        if (crop_w < 16)
+            crop_w = 16;
+        if (crop_h < 16)
+            crop_h = 16;
+        crop_x = (int)((float)(src_w - crop_w) * pan + 0.5f);
+        crop_y = (int)((float)(src_h - crop_h) * tilt + 0.5f);
+        crop_x &= ~1;
+        crop_y &= ~1;
+        if (crop_x + crop_w > src_w)
+            crop_x = src_w - crop_w;
+        if (crop_y + crop_h > src_h)
+            crop_y = src_h - crop_h;
+
+        eptz_attr.enabled = 1;
+        eptz_attr.src_dim.width  = src_w;
+        eptz_attr.src_dim.height = src_h;
+        eptz_attr.src_crop_rect.x = (unsigned int)crop_x;
+        eptz_attr.src_crop_rect.y = (unsigned int)crop_y;
+        eptz_attr.src_crop_rect.width  = (unsigned int)crop_w;
+        eptz_attr.src_crop_rect.height = (unsigned int)crop_h;
+    }
+
+    if (gm_set_attr(param->enc[0].obj, &eptz_attr) < 0) {
+        log_error("rtspd_apply_eptz: gm_set_attr failed");
+        return -1;
+    }
+    if (gm_apply_attr(bindfd, &eptz_attr) < 0) {
+        if (gm_apply(enc_groupfd) < 0) {
+            log_error("rtspd_apply_eptz: gm_apply failed");
+            return -1;
+        }
+    }
+    return 0;
+}
+
+/* Zoom thread: poll the zoom control file written by the ONVIF server and
+ * smoothly move the ePTZ crop window to the requested zoom/pan/tilt. */
+static void *rtspd_zoom_thread(void *arg)
+{
+    float new_zoom, new_pan, new_tilt;
+    float last_zoom = -1.0f, last_pan = -1.0f, last_tilt = -1.0f;
+
+    (void)arg;
+    while (rtspd_sysinit) {
+        FILE *f = fopen(RTSPD_ZOOM_FILE, "r");
+        if (f) {
+            char buf[64];
+            if (fgets(buf, sizeof(buf), f) != NULL) {
+                new_zoom = 0.0f;
+                new_pan = 0.5f;
+                new_tilt = 0.5f;
+                if (sscanf(buf, "%f %f %f", &new_zoom, &new_pan, &new_tilt) >= 1) {
+                    if (new_zoom < 0.0f) new_zoom = 0.0f;
+                    if (new_zoom > 1.0f) new_zoom = 1.0f;
+                    if (new_pan < 0.0f)  new_pan  = 0.0f;
+                    if (new_pan > 1.0f)  new_pan  = 1.0f;
+                    if (new_tilt < 0.0f) new_tilt = 0.0f;
+                    if (new_tilt > 1.0f) new_tilt = 1.0f;
+                    pthread_mutex_lock(&zoom_mutex);
+                    zoom_target   = 1.0f + new_zoom * (MAX_ZOOM_FACTOR - 1.0f);
+                    zoom_tgt_pan  = new_pan;
+                    zoom_tgt_tilt = new_tilt;
+                    pthread_mutex_unlock(&zoom_mutex);
+                }
+            }
+            fclose(f);
+        }
+
+        /* Smoothly step zoom/pan/tilt toward the target, then apply */
+        pthread_mutex_lock(&zoom_mutex);
+        zoom_factor += (zoom_target - zoom_factor) * ZOOM_SMOOTH_STEP;
+        zoom_pan    += (zoom_tgt_pan - zoom_pan)    * ZOOM_SMOOTH_STEP;
+        zoom_tilt   += (zoom_tgt_tilt - zoom_tilt)  * ZOOM_SMOOTH_STEP;
+        new_zoom  = zoom_factor;
+        new_pan   = zoom_pan;
+        new_tilt  = zoom_tilt;
+        pthread_mutex_unlock(&zoom_mutex);
+
+        /* Skip redundant updates */
+        if (fabsf(new_zoom - last_zoom) < 0.001f &&
+            fabsf(new_pan  - last_pan)  < 0.001f &&
+            fabsf(new_tilt - last_tilt) < 0.001f) {
+            usleep(20000);
+            continue;
+        }
+
+        if (rtspd_apply_eptz(new_zoom, new_pan, new_tilt) == 0) {
+            last_zoom = new_zoom;
+            last_pan  = new_pan;
+            last_tilt = new_tilt;
+        }
+        usleep(20000);   // * 50 Hz zoom update
+    }
+    return NULL;
 }
 
 void *encode_thread(void *ptr)
@@ -1907,12 +2195,18 @@ void *encode_thread(void *ptr)
 static void *audio_encode_thread(void *arg)
 {
     int ret;
+    int enc_type;
+    int rtp_clock;
     gm_pollfd_t poll_fds;
     gm_enc_multi_bitstream_t multi_bs;
     char *bitstream_data;
+    char *payload;
+    int payload_len;
     priv_avbs_t *pb;
     gm_ss_entity entity;
-    FILE *audio_file = NULL;
+
+    if (!cliArgs.audio_enabled)
+        return 0;
 
     bitstream_data = (char *)malloc(AU_BITSTREAM_LEN + 4);
     if (bitstream_data == 0)
@@ -1922,6 +2216,10 @@ static void *audio_encode_thread(void *arg)
     poll_fds.bindfd = audio_bindfd;
     poll_fds.event = GM_POLL_READ;
     pb = &enc[0].priv_bs[0];
+
+    enc_type  = cliArgs.audio_encode_type;
+    rtp_clock = audio_rtp_clock(enc_type, cliArgs.audio_sample_rate);
+
     while (rtspd_sysinit) {
         if (pb->play == 0) {
             usleep(2000);
@@ -1946,44 +2244,40 @@ static void *audio_encode_thread(void *arg)
         multi_bs.bs.bs_buf_len = AU_BITSTREAM_LEN;
         multi_bs.bs.mv_buf = NULL;
         multi_bs.bs.mv_buf_len = 0;
-        if ((ret = gm_recv_multi_bitstreams(&multi_bs, 1)) < 0)
+        if ((ret = gm_recv_multi_bitstreams(&multi_bs, 1)) < 0) {
             log_error("audio error return value %d", ret);
-        else {
-            if (!multi_bs.bindfd)
-                continue;
-            if (multi_bs.retval < 0) {
-                log_error("get bitstreame error! ret = %d", ret);
-            } else if (multi_bs.retval == GM_SUCCESS) {
-                //log_info("received audio %d %d %d", multi_bs.bs.bs_buf_len, poll_fds.revent.bs_len, multi_bs.bs.timestamp);
-                char *aac_data = multi_bs.bs.bs_buf;
-                int aac_data_len = multi_bs.bs.bs_len;
-                if (audio_file == NULL) {
-                    audio_file = fopen("/tmp/test.aac", "wb");
-                    fwrite(aac_data, 1, aac_data_len, audio_file);
-                    fclose(audio_file);
-                }
-                int adts_header = 0;
-                if (aac_data[1] & 1) {
-                    adts_header = 7;
-                } else {
-                    adts_header = 9;
-                }
-                entity.data = aac_data + adts_header - 4;
-                entity.size = aac_data_len - adts_header + 4;
-                //entity.timestamp = get_tick_gm(multi_bs.bs.timestamp);		 		// * SDK default timestamp
-				entity.timestamp = multi_bs.bs.timestamp * (16000 / 1000); 				// * our config timestamp
-                // AU Headers
-                entity.data[0] = 0;
-                entity.data[1] = 0x10;
-                entity.data[2] = (aac_data_len - adts_header) >> 5;			//entity.data[2] = ((aac_data_len - adts_header) >> 5) & 0xff;
-                entity.data[3] = (aac_data_len - adts_header) << 3;			//entity.data[3] = ((aac_data_len - adts_header) & 0x1f) << 3;		
-                pthread_mutex_lock(&stream_queue_mutex);
-                ret = stream_media_enqueue(GM_SS_TYPE_AAC, pb->audio.qno, &entity);
-                pthread_mutex_unlock(&stream_queue_mutex);
-                if (ret < 0) {
-                    log_error("audio enqueue failed! ret = %d", ret);
-                }
-            }
+            continue;
+        }
+        if (!multi_bs.bindfd || multi_bs.retval < 0)
+            continue;
+
+        if (enc_type == GM_AAC) {
+            /* gmlib AAC encoder outputs ADTS. Strip the ADTS header and
+             * prepend the RFC 3640 MPEG4-GENERIC AU header (4 bytes). */
+            int adts_header = (multi_bs.bs.bs_buf[1] & 1) ? 7 : 9;
+            char *aac_data = multi_bs.bs.bs_buf;
+            int aac_data_len = multi_bs.bs.bs_len;
+            payload = aac_data + adts_header - 4;
+            payload_len = aac_data_len - adts_header + 4;
+            payload[0] = 0;
+            payload[1] = 0x10;
+            payload[2] = (aac_data_len - adts_header) >> 5;
+            payload[3] = (aac_data_len - adts_header) << 3;
+        } else {
+            /* PCM / G711 / G726 (ADPCM): raw payload, no headers */
+            payload = multi_bs.bs.bs_buf;
+            payload_len = multi_bs.bs.bs_len;
+        }
+
+        memset(&entity, 0, sizeof(entity));
+        entity.data = payload;
+        entity.size = payload_len;
+        entity.timestamp = multi_bs.bs.timestamp * (rtp_clock / 1000);
+        pthread_mutex_lock(&stream_queue_mutex);
+        ret = stream_media_enqueue(convert_gmss_audio_type(enc_type), pb->audio.qno, &entity);
+        pthread_mutex_unlock(&stream_queue_mutex);
+        if (ret < 0) {
+            log_error("audio enqueue failed! ret = %d", ret);
         }
     }
     pthread_exit(NULL);
@@ -2092,7 +2386,7 @@ static int rtspd_start(int port)
     }
 
 	// * Audio thread: capture, encode and enqueue audio frames to stream */
-    if (audio_encode_thread_id == (pthread_t)NULL) {
+    if (cliArgs.audio_enabled && audio_encode_thread_id == (pthread_t)NULL) {
         pthread_attr_init(&attr);
         pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
         ret = pthread_create(&audio_encode_thread_id, &attr, &audio_encode_thread, NULL);
@@ -2130,6 +2424,14 @@ static int rtspd_start(int port)
         pthread_attr_init(&attr);
         pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
         ret = pthread_create(&enqueue_thread_id, &attr, &enqueue_thread, NULL);
+        pthread_attr_destroy(&attr);
+    }
+
+    // * ePTZ Zoom Thread (digital zoom, controlled by the ONVIF server)
+    if (zoom_thread_id == (pthread_t)NULL) {
+        pthread_attr_init(&attr);
+        pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+        ret = pthread_create(&zoom_thread_id, &attr, &rtspd_zoom_thread, NULL);
         pthread_attr_destroy(&attr);
     }
 	
@@ -2214,7 +2516,16 @@ static void print_usage(void)
         "-4 (optional)  - Use MPEG4 encoding      (default: off)\n"
         "-d (optional)  - Enable motion detection (default: off)\n"
         "-s (optional)  - Take a snapshot when motion detected (default: off)\n"
-        "-r (optional)  - Record a 10 second clip on motion    (default: off)\n"
+        "-r (optional)  - Record a 10 second clip on motion    (default: off)\n\n"
+
+        "Audio options (gmlib supported types / sample rates):\n"
+        "-X [type]      - Audio encode type: aac|pcm|g726|adpcm|g711a|alaw|g711u|ulaw (default: aac)\n"
+        "-A [8000-48000]- Audio sample rate in Hz: 8000/16000/32000/44100/48000 (default: 16000)\n"
+        "-R [1-192000]  - Audio bitrate in bits/sec (AAC: 14500~192000)      (default: 16000)\n"
+        "-S [samples]   - Samples per frame (AAC: 1024*n, PCM: 250~2048, ADPCM: 505*n, G711: 320*n)\n"
+        "-C [8|16]      - Audio sample size in bits                          (default: 16)\n"
+        "-P [1|2]       - Audio channel type: 1=mono 2=stereo                (default: 1)\n"
+        "-q             - Disable audio on the RTSP stream                   (default: audio on)\n"
     );
 
 	exit(EXIT_FAILURE);
@@ -2256,6 +2567,15 @@ int main(int argc, char *argv[])
     cliArgs.font_zoom   = 2;				// * small-GM_OSD_FONT_ZOOM_NONE, 1=minimum, 2=normal;
     cliArgs.osd_bg_color= 1;				// * Background osd 1=Black
     cliArgs.osd_text[0] = '\0';				// * Text on line 1
+
+    /* Audio defaults: AAC-LC 16000 Hz 16-bit mono (same as original firmware) */
+    cliArgs.audio_enabled       = 1;
+    cliArgs.audio_sample_rate   = 16000;
+    cliArgs.audio_sample_size   = 16;
+    cliArgs.audio_bitrate       = 16000;
+    cliArgs.audio_frame_samples = 1024;
+    cliArgs.audio_channel_type  = GM_MONO;
+    cliArgs.audio_encode_type   = GM_AAC;
 
     if (argc > 1) {
         for (i = 1; i < argc; i++) {
@@ -2326,6 +2646,69 @@ int main(int argc, char *argv[])
                         if (cliArgs.font_zoom < 0 || cliArgs.font_zoom > 4)
                             cliArgs.font_zoom = GM_OSD_FONT_ZOOM_NONE;
                         break;
+                    case 'X':										// * Set audio encode type
+                        {
+                            const char *v = NULL;
+                            if (argv[i][2] != '\0') v = &argv[i][2];
+                            else if ((i + 1) < argc && argv[i + 1][0] != '-') v = argv[++i];
+                            if (v) {
+                                if (strcasecmp(v, "aac") == 0)          cliArgs.audio_encode_type = GM_AAC;
+                                else if (strcasecmp(v, "pcm") == 0)     cliArgs.audio_encode_type = GM_PCM;
+                                else if (strcasecmp(v, "g726") == 0)    cliArgs.audio_encode_type = GM_ADPCM;
+                                else if (strcasecmp(v, "adpcm") == 0)   cliArgs.audio_encode_type = GM_ADPCM;
+                                else if (strcasecmp(v, "g711a") == 0)   cliArgs.audio_encode_type = GM_G711_ALAW;
+                                else if (strcasecmp(v, "alaw") == 0)    cliArgs.audio_encode_type = GM_G711_ALAW;
+                                else if (strcasecmp(v, "g711u") == 0)   cliArgs.audio_encode_type = GM_G711_ULAW;
+                                else if (strcasecmp(v, "ulaw") == 0)    cliArgs.audio_encode_type = GM_G711_ULAW;
+                                else {
+                                    log_error("Unknown audio encode type: %s", v);
+                                    print_usage();
+                                    return 1;
+                                }
+                                cliArgs.audio_enabled = 1;
+                            }
+                        }
+                        break;
+                    case 'A':										// * Set audio sample rate
+                        if (argv[i][2] != '\0')
+                            cliArgs.audio_sample_rate = atoi(&argv[i][2]);
+                        else if ((i + 1) < argc && argv[i + 1][0] != '-')
+                            cliArgs.audio_sample_rate = atoi(argv[++i]);
+                        else
+                            cliArgs.audio_sample_rate = 0;
+                        cliArgs.audio_enabled = 1;
+                        break;
+                    case 'R':										// * Set audio bitrate
+                        if (argv[i][2] != '\0')
+                            cliArgs.audio_bitrate = atoi(&argv[i][2]);
+                        else if ((i + 1) < argc && argv[i + 1][0] != '-')
+                            cliArgs.audio_bitrate = atoi(argv[++i]);
+                        cliArgs.audio_enabled = 1;
+                        break;
+                    case 'S':										// * Set audio frame samples
+                        if (argv[i][2] != '\0')
+                            cliArgs.audio_frame_samples = atoi(&argv[i][2]);
+                        else if ((i + 1) < argc && argv[i + 1][0] != '-')
+                            cliArgs.audio_frame_samples = atoi(argv[++i]);
+                        cliArgs.audio_enabled = 1;
+                        break;
+                    case 'C':										// * Set audio sample size (bits)
+                        if (argv[i][2] != '\0')
+                            cliArgs.audio_sample_size = atoi(&argv[i][2]);
+                        else if ((i + 1) < argc && argv[i + 1][0] != '-')
+                            cliArgs.audio_sample_size = atoi(argv[++i]);
+                        cliArgs.audio_enabled = 1;
+                        break;
+                    case 'P':										// * Set audio channel type
+                        if (argv[i][2] != '\0')
+                            cliArgs.audio_channel_type = (atoi(&argv[i][2]) == 2) ? GM_STEREO : GM_MONO;
+                        else if ((i + 1) < argc && argv[i + 1][0] != '-')
+                            cliArgs.audio_channel_type = (atoi(argv[++i]) == 2) ? GM_STEREO : GM_MONO;
+                        cliArgs.audio_enabled = 1;
+                        break;
+                    case 'q':										// * Disable audio
+                        cliArgs.audio_enabled = 0;
+                        break;
                     case 't':										// * Set OSD text line 1
                         if (argv[i][2] != '\0') {
                             strncpy(cliArgs.osd_text, &argv[i][2], sizeof(cliArgs.osd_text) - 1);
@@ -2373,6 +2756,40 @@ int main(int argc, char *argv[])
     if ((cliArgs.bitrateMode < 1) || (cliArgs.bitrateMode > 4)) {
         log_error("Bitrate mode should be in between 1 and 4");
         return 1;
+    }
+
+    if (cliArgs.audio_enabled) {
+        /* gmlib sample rate: 8000, 16000, 32000, 44100, 48000... */
+        switch (cliArgs.audio_sample_rate) {
+            case 8000:
+            case 16000:
+            case 32000:
+            case 44100:
+            case 48000:
+                break;
+            default:
+                log_error("Audio sample rate %d not supported (use 8000/16000/32000/44100/48000)", cliArgs.audio_sample_rate);
+                return 1;
+        }
+        if (cliArgs.audio_sample_size != 8 && cliArgs.audio_sample_size != 16) {
+            log_error("Audio sample size must be 8 or 16 bits");
+            return 1;
+        }
+        if (cliArgs.audio_channel_type != GM_MONO && cliArgs.audio_channel_type != GM_STEREO) {
+            log_error("Audio channel type must be 1 (mono) or 2 (stereo)");
+            return 1;
+        }
+        if (convert_gmss_audio_type(cliArgs.audio_encode_type) < 0) {
+            log_error("Audio encode type not supported by librtsp");
+            return 1;
+        }
+        if (cliArgs.audio_encode_type == GM_G711_ALAW || cliArgs.audio_encode_type == GM_G711_ULAW ||
+            cliArgs.audio_encode_type == GM_ADPCM) {
+            if (cliArgs.audio_sample_rate != 8000) {
+                log_error("G711/G726 audio requires 8000 Hz sample rate");
+                return 1;
+            }
+        }
     }
 
     /* If no custom OSD text provided, read HOSTNAME from config and use it */

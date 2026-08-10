@@ -133,7 +133,7 @@ $(BUILDDIR)/rtspd: $(PREFIXDIR)/bin
 		-Wall					\
 		-I$(GMLIBDIR)/inc		\
 		$(RTSPDDIR)/log/log.c	\
-		$(RTSPDDIR)/rtspd2MP00.c		\
+		$(RTSPDDIR)/rtspd2MP.c		\
 		$(RTSPDDIR)/librtsp.a	\
 		$(RTSPDDIR)/librtsp_glibc.a	\
 		-L$(GMLIBDIR)/lib		\
