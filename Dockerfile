@@ -45,6 +45,7 @@ RUN echo "*** Install required packages" \
       autoconf               \
       ca-certificates        \
       bison                  \
+      bzip2                  \
       build-essential        \
       cpio                   \
       curl                   \

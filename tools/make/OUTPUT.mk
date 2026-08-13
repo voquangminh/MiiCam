@@ -17,6 +17,7 @@ THIRD_PARTY_BINS :=				\
 	sftp-server 				\
 	arm-php	arm-php-cgi			\
 	bash						\
+	busybox						\
 	ffmpeg ffprobe				\
 	openssl						\
 	procan socat filan			\

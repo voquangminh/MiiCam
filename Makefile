@@ -85,9 +85,10 @@ all:                                 \
 	$(BUILDDIR)/pcre                 \
 	$(BUILDDIR)/popt                 \
 	$(BUILDDIR)/x264                 \
-	$(BUILDDIR)/ncurses              \
+	$(BUILDDIR)/ncurses             \
 	$(BUILDDIR)/readline             \
 	$(BUILDDIR)/bash                 \
+	$(BUILDDIR)/busybox              \
 	$(BUILDDIR)/wget                 \
 	$(BUILDDIR)/dosfstools           \
 	$(BUILDDIR)/libpcap              \
@@ -290,6 +291,7 @@ include tools/make/h264.mk
 include tools/make/ncurses.mk
 include tools/make/readline.mk
 include tools/make/bash.mk
+include tools/make/busybox.mk
 include tools/make/dosfstools.mk
 include tools/make/tcpdump.mk
 include tools/make/openssl.mk
@@ -329,6 +331,13 @@ install: all
 	\
 	&& echo "*** Copying our own binaries to $(BINARIESDIR)" \
 	&& cd $(TOOLSDIR)/bin   && find . -maxdepth 1 -type f -exec $(TARGET)-strip {} \; -exec cp {} $(BINARIESDIR) \; \
+	\
+	&& echo "*** Creating busybox applet links in $(BINARIESDIR)" \
+	&& if [ -f "$(PREFIXDIR)/busybox.links" ]; then \
+		while read link; do \
+			[ -e "$(BINARIESDIR)/$${link##*/}" ] || ln -sf busybox "$(BINARIESDIR)/$${link##*/}"; \
+		done < "$(PREFIXDIR)/busybox.links"; \
+	fi \
 	\
 	&& echo "*** Copying our own libraries to $(BINARIESDIR)" \
 	&& cd $(TOOLSDIR)/lib   && find . -maxdepth 1 -type f -name '*.so' -exec $(TARGET)-strip {} \; -exec cp {} $(LIBRARIESDIR) \;
