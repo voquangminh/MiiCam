@@ -95,11 +95,13 @@ int gm8136_motor_get_status(gm8136_motor_status_t *status)
 
 static int move_axis(unsigned long dir_request,
                      unsigned long dist_request,
-                     int delta)
+                     int delta,
+                     int invert_dir)
 {
     int direction, distance;
     if (delta == 0) return 0;
     direction = delta > 0 ? 1 : 0;
+    if (invert_dir) direction = 1 - direction;
     distance = delta > 0 ? delta : -delta;
     if (do_ioctl(dir_request, &direction) < 0) return -1;
     if (do_ioctl(dist_request, &distance) < 0) return -1;
@@ -125,9 +127,10 @@ int gm8136_motor_move_relative(int dx, int dy)
     actual_dx = tx - s.horizontal;
     actual_dy = ty - s.vertical;
 
-    if (move_axis(MOTOR_H_DIR_SET, MOTOR_H_DIST_SET, actual_dx) < 0)
+    /* Horizontal axis is mirrored on this unit: ONVIF pan-right == dir 0 */
+    if (move_axis(MOTOR_H_DIR_SET, MOTOR_H_DIST_SET, actual_dx, 1) < 0)
         rc = -1;
-    if (rc == 0 && move_axis(MOTOR_V_DIR_SET, MOTOR_V_DIST_SET, actual_dy) < 0)
+    if (rc == 0 && move_axis(MOTOR_V_DIR_SET, MOTOR_V_DIST_SET, actual_dy, 0) < 0)
         rc = -1;
 
     pthread_mutex_unlock(&motor_mutex);

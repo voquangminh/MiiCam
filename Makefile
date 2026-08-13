@@ -134,12 +134,12 @@ $(BUILDDIR)/rtspd: $(PREFIXDIR)/bin
 		-Wall					\
 		-I$(GMLIBDIR)/inc		\
 		$(RTSPDDIR)/log/log.c	\
-		$(RTSPDDIR)/rtspd2MP.c		\
+		$(RTSPDDIR)/rtspd.c		\
 		$(RTSPDDIR)/librtsp.a	\
 		$(RTSPDDIR)/librtsp_glibc.a	\
 		-L$(GMLIBDIR)/lib		\
-		-lpthread -lm -lrt -lgm -o $(TOOLSDIR)/bin/rtspd2MP00 && \
-		$(TARGET)-strip $(TOOLSDIR)/bin/rtspd2MP00
+		-lpthread -lm -lrt -lgm -o $(TOOLSDIR)/bin/rtspd && \
+		$(TARGET)-strip $(TOOLSDIR)/bin/rtspd
 	@touch $@
 
 build/rtspd: $(BUILDDIR)/rtspd
