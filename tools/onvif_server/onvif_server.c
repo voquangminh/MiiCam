@@ -403,6 +403,7 @@ static int motor_move_relative(int dx, int dy)
     if (ptz.y + dy > Y_MAX)
         dy = Y_MAX - ptz.y;
     if (dx != 0) {
+        /* Horizontal axis is mirrored on this unit: ONVIF pan-right == dir 0 */
         dir = dx > 0 ? 0 : 1;
         dist = dx > 0 ? dx : -dx;
         rc = motor_ioctl_int(H_DIR_SET, &dir);

@@ -2505,7 +2505,7 @@ static void print_usage(void)
         "-w [1-1920]    - Set the image width     (default: 1920 pixels)\n"
         "-h [1-1280]    - Set the image height    (default: 1080 pixels)\n"
         "-m [1-4]       - Set the bitrate mode    (default: 1, CBR)\n"
-        "-o (1/0)  		- Enable OSD timestamp    (default: on)\n"
+        "-o (1/0)  	    - Enable OSD timestamp    (default: on)\n"
         "-t [text]      - Set OSD string text     (default: 'hostname')\n"
         "-z [0-4]       - Set OSD font zoom (0=none,1=2x,2=3x,3=4x,4=1/2) (default: 0)\n"
         "-B [0-15]      - Set OSD background palette index (default: 1)\n"
