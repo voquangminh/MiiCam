@@ -54,7 +54,7 @@
 #define VQ_MAX                   (SR_MAX)
 #define VQ_LEN                   100
 #define AQ_MAX                   64	           	// * 1 MP2 and 1 AMR for live streaming, another 2 for file streaming.
-#define AQ_LEN                   4				// * Higher value will increase latency
+#define AQ_LEN                   16				// * Higher value will increase latency; stock v5 firmware used 32
 #define AV_NAME_MAX              127
 
 #define RTP_HZ                   90000		   // * timestamp HW clock
@@ -560,6 +560,8 @@ int stop_recording(void)
     gettimeofday(&now, NULL);
 
     log_info("Stopping video recording after %ld seconds", now.tv_sec - VideoRecorder.record_start.tv_sec);
+    // * Stop accepting new writes first, then close the files (safe vs. video/audio threads)
+    VideoRecorder.recording = 0;
     // * Close video file
     if (VideoRecorder.fh)
         fclose(VideoRecorder.fh);
@@ -569,7 +571,6 @@ int stop_recording(void)
     VideoRecorder.fh_aac = NULL;
     // * Reset all Recorder settings to zero
     VideoRecorder.waiting_for_keyframe = 1;
-    VideoRecorder.recording = 0;
     VideoRecorder.file_path[0] = '\0';
     VideoRecorder.audio_file_path[0] = '\0';
     return 0;
@@ -1832,8 +1833,6 @@ static void audio_init() {
     audio_encode_attr.encode_type = (gm_audio_encode_type_t) cliArgs.audio_encode_type;
     audio_encode_attr.bitrate = cliArgs.audio_bitrate;
     audio_encode_attr.frame_samples = cliArgs.audio_frame_samples;
-    if (cliArgs.audio_encode_type == GM_AAC)
-        audio_encode_attr.block_count = 2;
     gm_set_attr(audio_encode_object, &audio_encode_attr);
 
     audio_bindfd = gm_bind(enc_audio_groupfd, audio_grab_object, audio_encode_object);
@@ -1936,6 +1935,13 @@ static int rtspd_apply_eptz(float factor, float pan, float tilt)
     void *bindfd;
     int src_w, src_h;
     int crop_w, crop_h, crop_x, crop_y;
+    static int eptz_unsupported = 0;
+
+    /* GM8136S driver does not support the EPTZ attribute; detect it once and
+     * keep the digital zoom feature silently disabled instead of spamming
+     * "GM_ENC_EPTZ_ATTR not support!" on every update. */
+    if (eptz_unsupported)
+        return 0;
 
     param = &enc_param[0][0];
     bindfd = param->bindfd[0];
@@ -1995,10 +2001,13 @@ static int rtspd_apply_eptz(float factor, float pan, float tilt)
     }
 
     if (gm_set_attr(param->enc[0].obj, &eptz_attr) < 0) {
-        log_error("rtspd_apply_eptz: gm_set_attr failed");
-        return -1;
+        eptz_unsupported = 1;
+        log_info("ePTZ not supported by hardware, digital zoom disabled");
+        return 0;
     }
     if (gm_apply_attr(bindfd, &eptz_attr) < 0) {
+        eptz_unsupported = 1;
+        log_info("ePTZ not supported by hardware, digital zoom disabled");
         if (gm_apply(enc_groupfd) < 0) {
             log_error("rtspd_apply_eptz: gm_apply failed");
             return -1;
@@ -2245,7 +2254,7 @@ static void *audio_encode_thread(void *arg)
     rtp_clock = audio_rtp_clock(enc_type, cliArgs.audio_sample_rate);
 
     while (rtspd_sysinit) {
-        if (pb->play == 0) {
+        if (pb->play == 0 && VideoRecorder.recording != 1) {
             usleep(2000);
             continue;
         }
@@ -2276,32 +2285,82 @@ static void *audio_encode_thread(void *arg)
             continue;
 
         if (enc_type == GM_AAC) {
-            /* gmlib AAC encoder outputs ADTS. Strip the ADTS header and
-             * prepend the RFC 3640 MPEG4-GENERIC AU header (4 bytes). */
-            int adts_header = (multi_bs.bs.bs_buf[1] & 1) ? 7 : 9;
+            /* The AAC encoder outputs ADTS. The driver may deliver one or
+             * more ADTS frames per receive (block_count), so walk the buffer
+             * and emit one RFC 3640 MPEG4-GENERIC AU (4-byte AU header + one
+             * ADTS-stripped frame) per ADTS frame. */
             char *aac_data = multi_bs.bs.bs_buf;
             int aac_data_len = multi_bs.bs.bs_len;
-            payload = aac_data + adts_header - 4;
-            payload_len = aac_data_len - adts_header + 4;
-            payload[0] = 0;
-            payload[1] = 0x10;
-            payload[2] = (aac_data_len - adts_header) >> 5;
-            payload[3] = (aac_data_len - adts_header) << 3;
+            int consumed = 0;
+            static struct timeval aq_err_tval;
+
+            while (consumed + 7 <= aac_data_len) {
+                unsigned char *hdr = (unsigned char *)(aac_data + consumed);
+                int adts_header, frame_len, frame_payload_len;
+
+                if (hdr[0] != 0xff || (hdr[1] & 0xf6) != 0xf0)
+                    break;                              // * Not ADTS, stop
+                frame_len = ((hdr[3] & 0x03) << 11) | ((int)hdr[4] << 3) | ((hdr[5] >> 5) & 0x07);
+                if (frame_len < 7 || consumed + frame_len > aac_data_len)
+                    break;                              // * Incomplete tail frame
+
+                adts_header = (hdr[1] & 1) ? 9 : 7;
+                frame_payload_len = frame_len - adts_header;
+
+                /* Write the raw ADTS frame to the recording file (if any).
+                 * Done before the RTP enqueue so recorded audio stays complete
+                 * even when the RTSP audio queue is full. */
+                if (VideoRecorder.recording == 1 && VideoRecorder.fh_aac != NULL) {
+                    fwrite(aac_data + consumed, 1, frame_len, VideoRecorder.fh_aac);
+                    fflush(VideoRecorder.fh_aac);
+                }
+
+                if (pb->play == 1) {
+                    payload = aac_data + consumed + adts_header - 4;
+                    payload_len = frame_payload_len + 4;
+                    payload[0] = 0;
+                    payload[1] = 0x10;
+                    payload[2] = frame_payload_len >> 5;
+                    payload[3] = frame_payload_len << 3;
+
+                    memset(&entity, 0, sizeof(entity));
+                    entity.data = payload;
+                    entity.size = payload_len;
+                    entity.timestamp = multi_bs.bs.timestamp * (rtp_clock / 1000);
+                    pthread_mutex_lock(&stream_queue_mutex);
+                    ret = stream_media_enqueue(convert_gmss_audio_type(enc_type), pb->audio.qno, &entity);
+                    pthread_mutex_unlock(&stream_queue_mutex);
+                    if (ret < 0) {
+                        /* ERR_FULL: drop the frame; log at most once per 5s */
+                        if (ret != ERR_FULL) {
+                            log_error("audio enqueue failed! ret = %d", ret);
+                        } else {
+                            struct timeval aq_now;
+                            gettimeofday(&aq_now, NULL);
+                            if (TIMEVAL_DIFF(aq_err_tval, aq_now) > 5000000) {
+                                log_error("audio queue full, dropping AAC frames");
+                                aq_err_tval = aq_now;
+                            }
+                        }
+                    }
+                }
+                consumed += frame_len;
+            }
         } else {
             /* PCM / G711 / G726 (ADPCM): raw payload, no headers */
             payload = multi_bs.bs.bs_buf;
             payload_len = multi_bs.bs.bs_len;
-        }
 
-        memset(&entity, 0, sizeof(entity));
-        entity.data = payload;
-        entity.size = payload_len;
-        entity.timestamp = multi_bs.bs.timestamp * (rtp_clock / 1000);
-        pthread_mutex_lock(&stream_queue_mutex);
-        ret = stream_media_enqueue(convert_gmss_audio_type(enc_type), pb->audio.qno, &entity);
-        pthread_mutex_unlock(&stream_queue_mutex);
-        if (ret < 0) {
-            log_error("audio enqueue failed! ret = %d", ret);
+            memset(&entity, 0, sizeof(entity));
+            entity.data = payload;
+            entity.size = payload_len;
+            entity.timestamp = multi_bs.bs.timestamp * (rtp_clock / 1000);
+            pthread_mutex_lock(&stream_queue_mutex);
+            ret = stream_media_enqueue(convert_gmss_audio_type(enc_type), pb->audio.qno, &entity);
+            pthread_mutex_unlock(&stream_queue_mutex);
+            if (ret < 0 && ret != ERR_FULL) {
+                log_error("audio enqueue failed! ret = %d", ret);
+            }
         }
     }
     pthread_exit(NULL);
@@ -2361,10 +2420,13 @@ void update_video_sdp(int cap_ch, int cap_path, int rec_track)
                 switch (cliArgs.encoderType) {
                     case 0:
                         stream_sdp_parameter_encoder("H264", (unsigned char *) bs.bs.bs_buf, bs.bs.bs_len, pb->video.sdpstr, SDPSTR_MAX);
+                        break;
                     case 1:
                         stream_sdp_parameter_encoder("MPEG4", (unsigned char *) bs.bs.bs_buf, bs.bs.bs_len, pb->video.sdpstr, SDPSTR_MAX);
+                        break;
                     case 2:
                         stream_sdp_parameter_encoder("MJPEG", (unsigned char *) bs.bs.bs_buf, bs.bs.bs_len, pb->video.sdpstr, SDPSTR_MAX);
+                        break;
                     }
                 	break;
             }
@@ -2518,7 +2580,7 @@ static void print_usage(void)
     printf(" ./rtspd [-bfwhm] [-j|-4]\n");
     printf(
         "\nAvailable options:\n"
-        "-b [1-8192]    - Set the bitrate         (default: 2048)\n"
+        "-b [1-8192]    - Set the bitrate         (default: 4096)\n"
         "-f [1-15]      - Set the framerate       (default: 15)\n"
         "-w [1-1280]    - Set the image width     (default: 1280 pixels)\n"
         "-h [1-720]     - Set the image height    (default: 720 pixels)\n"
@@ -2569,7 +2631,7 @@ int main(int argc, char *argv[])
 
     setup_logging();    // * Setup logging
 
-    cliArgs.bitrate     = 2048;
+    cliArgs.bitrate     = 4096;
     cliArgs.framerate   = 15;
     cliArgs.width       = 1280;
     cliArgs.height      = 720;
