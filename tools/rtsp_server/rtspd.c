@@ -54,7 +54,7 @@
 #define VQ_MAX                   (SR_MAX)
 #define VQ_LEN                   100
 #define AQ_MAX                   64	           	// * 1 MP2 and 1 AMR for live streaming, another 2 for file streaming.
-#define AQ_LEN                   4				// * Higher value will increase latency
+#define AQ_LEN                   2				// * Higher value will increase latency
 #define AV_NAME_MAX              127
 
 #define RTP_HZ                   90000		   // * timestamp HW clock
@@ -1832,8 +1832,6 @@ static void audio_init() {
     audio_encode_attr.encode_type = (gm_audio_encode_type_t) cliArgs.audio_encode_type;
     audio_encode_attr.bitrate = cliArgs.audio_bitrate;
     audio_encode_attr.frame_samples = cliArgs.audio_frame_samples;
-    if (cliArgs.audio_encode_type == GM_AAC)
-        audio_encode_attr.block_count = 2;
     gm_set_attr(audio_encode_object, &audio_encode_attr);
 
     audio_bindfd = gm_bind(enc_audio_groupfd, audio_grab_object, audio_encode_object);
@@ -2518,7 +2516,7 @@ static void print_usage(void)
     printf(" ./rtspd [-bfwhm] [-j|-4]\n");
     printf(
         "\nAvailable options:\n"
-        "-b [1-8192]    - Set the bitrate         (default: 2048)\n"
+        "-b [1-8192]    - Set the bitrate         (default: 4096)\n"
         "-f [1-15]      - Set the framerate       (default: 15)\n"
         "-w [1-1280]    - Set the image width     (default: 1280 pixels)\n"
         "-h [1-720]     - Set the image height    (default: 720 pixels)\n"
@@ -2569,7 +2567,7 @@ int main(int argc, char *argv[])
 
     setup_logging();    // * Setup logging
 
-    cliArgs.bitrate     = 2048;
+    cliArgs.bitrate     = 4096;
     cliArgs.framerate   = 15;
     cliArgs.width       = 1280;
     cliArgs.height      = 720;
@@ -2580,7 +2578,7 @@ int main(int argc, char *argv[])
     cliArgs.record      = 0;// * disable by default
     cliArgs.motion      = 0;// * disable by default
     cliArgs.osd         = 1;// * enabled by default
-    cliArgs.font_zoom   = 1;// * small=GM_OSD_FONT_ZOOM_NONE, 1=minimum, 2=normal
+    cliArgs.font_zoom   = 2;// * small=GM_OSD_FONT_ZOOM_NONE, 1=minimum, 2=normal
     cliArgs.osd_bg_color= 1;// * default is black
     cliArgs.osd_text[0] = '\0';
 
