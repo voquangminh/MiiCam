@@ -1934,6 +1934,13 @@ static int rtspd_apply_eptz(float factor, float pan, float tilt)
     void *bindfd;
     int src_w, src_h;
     int crop_w, crop_h, crop_x, crop_y;
+    static int eptz_unsupported = 0;
+
+    /* GM8136S driver does not support the EPTZ attribute; detect it once and
+     * keep the digital zoom feature silently disabled instead of spamming
+     * "GM_ENC_EPTZ_ATTR not support!" on every update. */
+    if (eptz_unsupported)
+        return 0;
 
     param = &enc_param[0][0];
     bindfd = param->bindfd[0];
@@ -1993,10 +2000,13 @@ static int rtspd_apply_eptz(float factor, float pan, float tilt)
     }
 
     if (gm_set_attr(param->enc[0].obj, &eptz_attr) < 0) {
-        log_error("rtspd_apply_eptz: gm_set_attr failed");
-        return -1;
+        eptz_unsupported = 1;
+        log_info("ePTZ not supported by hardware, digital zoom disabled");
+        return 0;
     }
     if (gm_apply_attr(bindfd, &eptz_attr) < 0) {
+        eptz_unsupported = 1;
+        log_info("ePTZ not supported by hardware, digital zoom disabled");
         if (gm_apply(enc_groupfd) < 0) {
             log_error("rtspd_apply_eptz: gm_apply failed");
             return -1;
@@ -2400,10 +2410,13 @@ void update_video_sdp(int cap_ch, int cap_path, int rec_track)
                 switch (cliArgs.encoderType) {
                     case 0:
                         stream_sdp_parameter_encoder("H264", (unsigned char *) bs.bs.bs_buf, bs.bs.bs_len, pb->video.sdpstr, SDPSTR_MAX);
+                        break;
                     case 1:
                         stream_sdp_parameter_encoder("MPEG4", (unsigned char *) bs.bs.bs_buf, bs.bs.bs_len, pb->video.sdpstr, SDPSTR_MAX);
+                        break;
                     case 2:
                         stream_sdp_parameter_encoder("MJPEG", (unsigned char *) bs.bs.bs_buf, bs.bs.bs_len, pb->video.sdpstr, SDPSTR_MAX);
+                        break;
                     }
                 	break;
             }
