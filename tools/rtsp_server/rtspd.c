@@ -2292,6 +2292,7 @@ static void *audio_encode_thread(void *arg)
             char *aac_data = multi_bs.bs.bs_buf;
             int aac_data_len = multi_bs.bs.bs_len;
             int consumed = 0;
+            int aac_frame_no = 0;
             static struct timeval aq_err_tval;
 
             while (consumed + 7 <= aac_data_len) {
@@ -2304,7 +2305,9 @@ static void *audio_encode_thread(void *arg)
                 if (frame_len < 7 || consumed + frame_len > aac_data_len)
                     break;                              // * Incomplete tail frame
 
-                adts_header = (hdr[1] & 1) ? 9 : 7;
+                /* ADTS header size: bit0 of byte1 is protection_absent; when
+                 * set (no CRC) the header is 7 bytes, otherwise 9 bytes. */
+                adts_header = (hdr[1] & 1) ? 7 : 9;
                 frame_payload_len = frame_len - adts_header;
 
                 /* Write the raw ADTS frame to the recording file (if any).
@@ -2326,7 +2329,11 @@ static void *audio_encode_thread(void *arg)
                     memset(&entity, 0, sizeof(entity));
                     entity.data = payload;
                     entity.size = payload_len;
-                    entity.timestamp = multi_bs.bs.timestamp * (rtp_clock / 1000);
+                    /* The driver may deliver several ADTS frames per receive
+                     * (block_count); give each one its own RTP timestamp so
+                     * the client sees consecutive AUs at the right instants. */
+                    entity.timestamp = multi_bs.bs.timestamp * (rtp_clock / 1000)
+                                       + aac_frame_no * cliArgs.audio_frame_samples;
                     pthread_mutex_lock(&stream_queue_mutex);
                     ret = stream_media_enqueue(convert_gmss_audio_type(enc_type), pb->audio.qno, &entity);
                     pthread_mutex_unlock(&stream_queue_mutex);
@@ -2345,6 +2352,7 @@ static void *audio_encode_thread(void *arg)
                     }
                 }
                 consumed += frame_len;
+                aac_frame_no++;
             }
         } else {
             /* PCM / G711 / G726 (ADPCM): raw payload, no headers */
