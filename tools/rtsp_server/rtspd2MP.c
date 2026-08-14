@@ -54,7 +54,7 @@
 #define VQ_MAX                   (SR_MAX)
 #define VQ_LEN                   100
 #define AQ_MAX                   64				// * 1 MP2 and 1 AMR for live streaming, another 2 for file streaming.
-#define AQ_LEN                   64				// * 1 MP2 and 1 AMR for live streaming, another 2 for file streaming.
+#define AQ_LEN                   16				// * Higher value will increase latency; stock v5 firmware used 32
 #define AV_NAME_MAX              127
 #define BITSTREAM_LEN       	 (720 * 576 * 3 / 2)
 
@@ -2232,7 +2232,7 @@ static void *audio_encode_thread(void *arg)
     rtp_clock = audio_rtp_clock(enc_type, cliArgs.audio_sample_rate);
 
     while (rtspd_sysinit) {
-        if (pb->play == 0) {
+        if (pb->play == 0 && VideoRecorder.recording != 1) {
             usleep(2000);
             continue;
         }
@@ -2263,32 +2263,90 @@ static void *audio_encode_thread(void *arg)
             continue;
 
         if (enc_type == GM_AAC) {
-            /* gmlib AAC encoder outputs ADTS. Strip the ADTS header and
-             * prepend the RFC 3640 MPEG4-GENERIC AU header (4 bytes). */
-            int adts_header = (multi_bs.bs.bs_buf[1] & 1) ? 7 : 9;
+            /* The AAC encoder outputs ADTS. The driver may deliver one or
+             * more ADTS frames per receive (block_count), so walk the buffer
+             * and emit one RFC 3640 MPEG4-GENERIC AU (4-byte AU header + one
+             * ADTS-stripped frame) per ADTS frame. */
             char *aac_data = multi_bs.bs.bs_buf;
             int aac_data_len = multi_bs.bs.bs_len;
-            payload = aac_data + adts_header - 4;
-            payload_len = aac_data_len - adts_header + 4;
-            payload[0] = 0;
-            payload[1] = 0x10;
-            payload[2] = (aac_data_len - adts_header) >> 5;
-            payload[3] = (aac_data_len - adts_header) << 3;
+            int consumed = 0;
+            int aac_frame_no = 0;
+            static struct timeval aq_err_tval;
+
+            while (consumed + 7 <= aac_data_len) {
+                unsigned char *hdr = (unsigned char *)(aac_data + consumed);
+                int adts_header, frame_len, frame_payload_len;
+
+                if (hdr[0] != 0xff || (hdr[1] & 0xf6) != 0xf0)
+                    break;                              // * Not ADTS, stop
+                frame_len = ((hdr[3] & 0x03) << 11) | ((int)hdr[4] << 3) | ((hdr[5] >> 5) & 0x07);
+                if (frame_len < 7 || consumed + frame_len > aac_data_len)
+                    break;                              // * Incomplete tail frame
+
+                /* ADTS header size: bit0 of byte1 is protection_absent; when
+                 * set (no CRC) the header is 7 bytes, otherwise 9 bytes. */
+                adts_header = (hdr[1] & 1) ? 7 : 9;
+                frame_payload_len = frame_len - adts_header;
+
+                /* Write the raw ADTS frame to the recording file (if any).
+                 * Done before the RTP enqueue so recorded audio stays complete
+                 * even when the RTSP audio queue is full. */
+                if (VideoRecorder.recording == 1 && VideoRecorder.fh_aac != NULL) {
+                    fwrite(aac_data + consumed, 1, frame_len, VideoRecorder.fh_aac);
+                    fflush(VideoRecorder.fh_aac);
+                }
+
+                if (pb->play == 1) {
+                    payload = aac_data + consumed + adts_header - 4;
+                    payload_len = frame_payload_len + 4;
+                    payload[0] = 0;
+                    payload[1] = 0x10;
+                    payload[2] = frame_payload_len >> 5;
+                    payload[3] = frame_payload_len << 3;
+
+                    memset(&entity, 0, sizeof(entity));
+                    entity.data = payload;
+                    entity.size = payload_len;
+                    /* The driver may deliver several ADTS frames per receive
+                     * (block_count); give each one its own RTP timestamp so
+                     * the client sees consecutive AUs at the right instants. */
+                    entity.timestamp = multi_bs.bs.timestamp * (rtp_clock / 1000)
+                                       + aac_frame_no * cliArgs.audio_frame_samples;
+                    pthread_mutex_lock(&stream_queue_mutex);
+                    ret = stream_media_enqueue(convert_gmss_audio_type(enc_type), pb->audio.qno, &entity);
+                    pthread_mutex_unlock(&stream_queue_mutex);
+                    if (ret < 0) {
+                        /* ERR_FULL: drop the frame; log at most once per 5s */
+                        if (ret != ERR_FULL) {
+                            log_error("audio enqueue failed! ret = %d", ret);
+                        } else {
+                            struct timeval aq_now;
+                            gettimeofday(&aq_now, NULL);
+                            if (TIMEVAL_DIFF(aq_err_tval, aq_now) > 5000000) {
+                                log_error("audio queue full, dropping AAC frames");
+                                aq_err_tval = aq_now;
+                            }
+                        }
+                    }
+                }
+                consumed += frame_len;
+                aac_frame_no++;
+            }
         } else {
             /* PCM / G711 / G726 (ADPCM): raw payload, no headers */
             payload = multi_bs.bs.bs_buf;
             payload_len = multi_bs.bs.bs_len;
-        }
 
-        memset(&entity, 0, sizeof(entity));
-        entity.data = payload;
-        entity.size = payload_len;
-        entity.timestamp = multi_bs.bs.timestamp * (rtp_clock / 1000);
-        pthread_mutex_lock(&stream_queue_mutex);
-        ret = stream_media_enqueue(convert_gmss_audio_type(enc_type), pb->audio.qno, &entity);
-        pthread_mutex_unlock(&stream_queue_mutex);
-        if (ret < 0) {
-            log_error("audio enqueue failed! ret = %d", ret);
+            memset(&entity, 0, sizeof(entity));
+            entity.data = payload;
+            entity.size = payload_len;
+            entity.timestamp = multi_bs.bs.timestamp * (rtp_clock / 1000);
+            pthread_mutex_lock(&stream_queue_mutex);
+            ret = stream_media_enqueue(convert_gmss_audio_type(enc_type), pb->audio.qno, &entity);
+            pthread_mutex_unlock(&stream_queue_mutex);
+            if (ret < 0 && ret != ERR_FULL) {
+                log_error("audio enqueue failed! ret = %d", ret);
+            }
         }
     }
     pthread_exit(NULL);
