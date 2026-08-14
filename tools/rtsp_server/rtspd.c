@@ -2642,7 +2642,7 @@ int main(int argc, char *argv[])
     cliArgs.record      = 0;// * disable by default
     cliArgs.motion      = 0;// * disable by default
     cliArgs.osd         = 1;// * enabled by default
-    cliArgs.font_zoom   = 2;// * small=GM_OSD_FONT_ZOOM_NONE, 1=minimum, 2=normal
+    cliArgs.font_zoom   = 1;// * small=GM_OSD_FONT_ZOOM_NONE, 1=minimum, 2=normal
     cliArgs.osd_bg_color= 1;// * default is black
     cliArgs.osd_text[0] = '\0';
 
