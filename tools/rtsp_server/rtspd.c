@@ -560,6 +560,8 @@ int stop_recording(void)
     gettimeofday(&now, NULL);
 
     log_info("Stopping video recording after %ld seconds", now.tv_sec - VideoRecorder.record_start.tv_sec);
+    // * Stop accepting new writes first, then close the files (safe vs. video/audio threads)
+    VideoRecorder.recording = 0;
     // * Close video file
     if (VideoRecorder.fh)
         fclose(VideoRecorder.fh);
@@ -569,7 +571,6 @@ int stop_recording(void)
     VideoRecorder.fh_aac = NULL;
     // * Reset all Recorder settings to zero
     VideoRecorder.waiting_for_keyframe = 1;
-    VideoRecorder.recording = 0;
     VideoRecorder.file_path[0] = '\0';
     VideoRecorder.audio_file_path[0] = '\0';
     return 0;
@@ -2253,7 +2254,7 @@ static void *audio_encode_thread(void *arg)
     rtp_clock = audio_rtp_clock(enc_type, cliArgs.audio_sample_rate);
 
     while (rtspd_sysinit) {
-        if (pb->play == 0) {
+        if (pb->play == 0 && VideoRecorder.recording != 1) {
             usleep(2000);
             continue;
         }
@@ -2306,33 +2307,42 @@ static void *audio_encode_thread(void *arg)
                 adts_header = (hdr[1] & 1) ? 9 : 7;
                 frame_payload_len = frame_len - adts_header;
 
-                payload = aac_data + consumed + adts_header - 4;
-                payload_len = frame_payload_len + 4;
-                payload[0] = 0;
-                payload[1] = 0x10;
-                payload[2] = frame_payload_len >> 5;
-                payload[3] = frame_payload_len << 3;
+                /* Write the raw ADTS frame to the recording file (if any).
+                 * Done before the RTP enqueue so recorded audio stays complete
+                 * even when the RTSP audio queue is full. */
+                if (VideoRecorder.recording == 1 && VideoRecorder.fh_aac != NULL) {
+                    fwrite(aac_data + consumed, 1, frame_len, VideoRecorder.fh_aac);
+                    fflush(VideoRecorder.fh_aac);
+                }
 
-                memset(&entity, 0, sizeof(entity));
-                entity.data = payload;
-                entity.size = payload_len;
-                entity.timestamp = multi_bs.bs.timestamp * (rtp_clock / 1000);
-                pthread_mutex_lock(&stream_queue_mutex);
-                ret = stream_media_enqueue(convert_gmss_audio_type(enc_type), pb->audio.qno, &entity);
-                pthread_mutex_unlock(&stream_queue_mutex);
-                if (ret < 0) {
-                    /* ERR_FULL: drop the frame; log at most once per 5s */
-                    if (ret != ERR_FULL) {
-                        log_error("audio enqueue failed! ret = %d", ret);
-                    } else {
-                        struct timeval aq_now;
-                        gettimeofday(&aq_now, NULL);
-                        if (TIMEVAL_DIFF(aq_err_tval, aq_now) > 5000000) {
-                            log_error("audio queue full, dropping AAC frames");
-                            aq_err_tval = aq_now;
+                if (pb->play == 1) {
+                    payload = aac_data + consumed + adts_header - 4;
+                    payload_len = frame_payload_len + 4;
+                    payload[0] = 0;
+                    payload[1] = 0x10;
+                    payload[2] = frame_payload_len >> 5;
+                    payload[3] = frame_payload_len << 3;
+
+                    memset(&entity, 0, sizeof(entity));
+                    entity.data = payload;
+                    entity.size = payload_len;
+                    entity.timestamp = multi_bs.bs.timestamp * (rtp_clock / 1000);
+                    pthread_mutex_lock(&stream_queue_mutex);
+                    ret = stream_media_enqueue(convert_gmss_audio_type(enc_type), pb->audio.qno, &entity);
+                    pthread_mutex_unlock(&stream_queue_mutex);
+                    if (ret < 0) {
+                        /* ERR_FULL: drop the frame; log at most once per 5s */
+                        if (ret != ERR_FULL) {
+                            log_error("audio enqueue failed! ret = %d", ret);
+                        } else {
+                            struct timeval aq_now;
+                            gettimeofday(&aq_now, NULL);
+                            if (TIMEVAL_DIFF(aq_err_tval, aq_now) > 5000000) {
+                                log_error("audio queue full, dropping AAC frames");
+                                aq_err_tval = aq_now;
+                            }
                         }
                     }
-                    break;                              // * Queue full, drop the rest
                 }
                 consumed += frame_len;
             }
