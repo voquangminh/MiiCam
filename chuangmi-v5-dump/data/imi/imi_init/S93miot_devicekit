@@ -1,0 +1,25 @@
+#!/bin/sh
+#
+# Start the miot_devicekit
+#
+
+case "$1" in
+  start)
+  	ft_mode=`cat /tmp/ft_mode`
+  	echo "Starting miot_devicekit($ft_mode)..."
+	/mnt/data/miot/miot_devicekit -m $ft_mode | /usr/bin/logger -t miot_devicekit &
+        ;;
+  stop)
+        printf "Stopping miot_devicekit..."
+	/usr/bin/killall miot_devicekit
+        ;;
+  restart|reload)
+        "$0" stop
+        "$0" start
+        ;;
+  *)
+        echo "Usage: $0 {start|stop|restart}"
+        exit 1
+esac
+
+exit $?

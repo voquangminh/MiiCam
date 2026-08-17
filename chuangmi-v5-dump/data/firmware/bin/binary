@@ -1,0 +1,41 @@
+#!/bin/sh
+
+disable() {
+  local binary="$1"
+
+  if [ ! -x /tmp/disabled ]; then
+    cat > /tmp/disabled <<  EOF
+#!/bin/sh
+echo "\$0 is disabled."
+EOF
+    chmod +x /tmp/disabled
+  fi
+
+  local pid=$(pgrep -o "$binary" || fuser "$binary")
+  if [ -n "$pid" ]; then
+    pkill -P $pid
+    kill $pid
+  fi
+
+  if ! ( mount | grep -q "$binary" ); then
+    mount --bind /tmp/disabled "$binary"
+  fi
+}
+
+enable() {
+  local binary="$1"
+
+  if mount | grep -q "$binary"; then
+    umount "$binary"
+  fi
+}
+
+local command=$1
+shift
+
+case "$command" in
+  enable) enable "$@";;
+  disable) disable "$@";;
+esac
+
+exit $?

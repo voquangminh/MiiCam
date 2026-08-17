@@ -1,0 +1,12 @@
+# environment variables
+SHELL=/bin/sh
+PATH=/sbin:/bin:/usr/sbin:/usr/bin
+# RANDOM_DELAY=60 //busybox cron seems not support this
+
+# min hour day_of_month month day_of_week command
+
+# report log to server every hour (delay random minutes avoid DDOS)
+0 * * * * delay=`expr ${RANDOM} % 60` && sleep ${delay}m && /mnt/data/miot/logmi.sh
+
+# copy to TF card every 5 min
+*/5 * * * * /mnt/data/miot/logtf.sh

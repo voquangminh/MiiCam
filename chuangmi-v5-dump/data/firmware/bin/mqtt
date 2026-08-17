@@ -1,0 +1,139 @@
+#!/bin/sh -l
+
+eval "$(config | grep ^MQTT_)"
+local MQTT_ID=$(nvram factory get mac | tr [:upper:] [:lower:] | tr -d :)
+local MQTT_DISCOVERY_NAME=${MQTT_DISCOVERY_NAME:-${MQTT_NAME:-Camera $MQTT_ID}}
+local MQTT_DISCOVERY_TOPIC=${MQTT_DISCOVERY_TOPIC:-homeassistant}
+local MQTT_NAME=${MQTT_NAME:-$MQTT_ID}
+local MQTT_TOPIC=${MQTT_TOPIC:-$(nvram get vendor)}/$MQTT_NAME
+local MQTT_TOPIC_AVAILABILITY=$MQTT_TOPIC/availability
+
+local entities=$FIRMWARE_PATH/etc/mqtt.d
+local options="\
+  --host $MQTT_HOST \
+  ${MQTT_PORT:+--port $MQTT_PORT} \
+  ${MQTT_USER:+--username $MQTT_USER} \
+  ${MQTT_PASSWORD:+--pw $MQTT_PASSWORD} \
+"
+
+alias get_state_topic="printf '$MQTT_TOPIC/%s'"
+alias get_command_topic="printf '$MQTT_TOPIC/%s/set'"
+alias publish="mosquitto_pub $options \
+  --id $MQTT_ID.publish \
+  --retain \
+"
+alias subscribe="mosquitto_sub $options \
+  --id $MQTT_ID.subscribe \
+  --keepalive 10 \
+  --verbose \
+  --will-topic $MQTT_TOPIC_AVAILABILITY \
+  --will-payload offline \
+  --will-retain \
+"
+
+process_message() {
+  local topic=$(echo "$1" | cut -d " " -f 1)
+  local value=$(echo "$1" | cut -d " " -f 2- | tr [:lower:] [:upper:])
+  local id=$(echo "$topic" | sed -r 's~.*/([^/]+)/set$~\1~')
+  local entity=$entities/$id
+
+  [ ! -f "$entity" ] && return 1
+
+  source $entity
+  set_state $value
+  publish --topic "$(get_state_topic $id)" --message "$(get_state)"
+}
+
+publish_availability() {
+  publish --topic $MQTT_TOPIC_AVAILABILITY --message online
+
+  return $?
+}
+
+publish_discoverability() {
+  local device='{
+    "identifiers": "'"$MQTT_ID"'",
+    "manufacturer": "'"$(nvram get vendor)"'",
+    "model": "'"$(nvram get model)"'",
+    "name": "'"$MQTT_DISCOVERY_NAME"'"
+  }'
+
+  for entity in $entities/*; do
+    source $entity
+
+    local id=$(basename $entity)
+    local topic=$MQTT_DISCOVERY_TOPIC/$TYPE/$MQTT_ID/$id/config
+    local config='{
+      '"${CONFIG:+$CONFIG,}"'
+      "name": "'"$MQTT_DISCOVERY_NAME $NAME"'",
+      "availability_topic": "'"$MQTT_TOPIC_AVAILABILITY"'",
+      "command_topic": "'"$(get_command_topic $id)"'",
+      "device": '"$device"',
+      "state_topic": "'"$(get_state_topic $id)"'",
+      "unique_id": "'"$MQTT_ID-$id"'"
+    }'
+
+    publish --topic "$topic" --message "$config"
+  done
+
+  return $?
+}
+
+publish_state() {
+  for entity in $entities/*; do
+    source $entity
+
+    local id=$(basename $entity)
+    local topic=$(get_state_topic $id)
+    local state=$(get_state)
+
+    publish --topic "$topic" --message "$state"
+  done
+
+  return $?
+}
+
+worker_command() {
+  while :; do
+    if [ -z "$READY" ]; then
+      printf mqtt.command >/proc/$(sh -c 'echo $PPID')/comm
+      READY=1
+    fi
+
+    subscribe --topic "$MQTT_TOPIC/+/set" | while read -r message; do
+      echo "Incoming message: $message"
+      process_message "$message"
+    done
+  done
+}
+
+worker_state() {
+  while :; do
+    if [ -z "$READY" ]; then
+      printf mqtt.state >/proc/$(sh -c 'echo $PPID')/comm
+      READY=1
+    fi
+
+    publish_availability \
+      && publish_discoverability \
+      && publish_state
+
+    sleep $([ "$?" -eq 0 ] && echo 60 || echo 5)
+  done
+}
+
+stop() {
+  for pid in $(pgrep -P $$); do
+    kill $pid $(pgrep -P $pid)
+  done
+
+  exit
+}
+
+printf mqtt >/proc/$$/comm
+trap stop HUP INT QUIT ABRT TERM
+
+worker_command | logger -t mqtt &
+worker_state | logger -t mqtt &
+
+while :; do sleep 1; done

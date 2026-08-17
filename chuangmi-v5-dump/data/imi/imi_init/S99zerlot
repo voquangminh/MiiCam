@@ -1,0 +1,12 @@
+#!/bin/sh
+#
+# end
+#
+
+case "$1" in
+  start)
+        echo "init script all done" > /dev/kmsg
+        ;;
+esac
+
+exit $?

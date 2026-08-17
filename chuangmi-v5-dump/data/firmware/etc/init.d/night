@@ -1,0 +1,60 @@
+#!/bin/sh -l
+
+local pid_file=/var/run/night.pid
+
+enable() {
+  restart create night --pattern=ir_sample --then="$(which service) night start"
+  restart reload
+
+  echo "Automatic night mode is enabled."
+}
+
+disable() {
+  restart delete night
+  restart reload
+  service night stop
+
+  echo "Automatic night mode is disabled."
+}
+
+state() {
+  restart status night || return $?
+}
+
+status() {
+  [ -f $pid_file ] && kill -0 $(cat $pid_file) >/dev/null 2>&1 || return 1
+}
+
+start() {
+  echo "Starting automatic night mode."
+
+  status || start-stop-daemon \
+    --background \
+    --exec ir_sample \
+    --make-pidfile \
+    --oknodo \
+    --pidfile $pid_file \
+    --quiet \
+    --start
+}
+
+stop() {
+  echo "Stopping automatic night mode."
+
+  status && start-stop-daemon \
+    --oknodo \
+    --pidfile $pid_file \
+    --quiet \
+    --stop
+}
+
+case "$1" in
+  enable) enable;;
+  disable) disable;;
+  state) state;;
+  status) status;;
+  start) start;;
+  stop) stop;;
+esac
+
+exit $?

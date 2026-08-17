@@ -1,0 +1,61 @@
+#!/bin/sh -l
+
+local pid_file=/var/run/ntpd.pid
+
+enable() {
+  restart create ntpd --then="$(which service) ntp start"
+  restart reload
+
+  echo "NTP client is enabled."
+}
+
+disable() {
+  restart delete ntpd
+  restart reload
+  service ntp stop
+
+  echo "Automatic night mode is disabled."
+}
+
+state() {
+  restart status ntpd || return $?
+}
+
+status() {
+  [ -f $pid_file ] && kill -0 $(cat $pid_file) >/dev/null 2>&1 || return 1
+}
+
+start() {
+  echo "Starting NTP client."
+
+  status || start-stop-daemon \
+    --background \
+    --exec ntpd \
+    --make-pidfile \
+    --oknodo \
+    --pidfile $pid_file \
+    --quiet \
+    --start \
+    -- -n -p "$(config get NTP_SERVER || echo pool.ntp.org)"
+}
+
+stop() {
+  echo "Stopping NTP client."
+
+  status && start-stop-daemon \
+    --oknodo \
+    --pidfile $pid_file \
+    --quiet \
+    --stop
+}
+
+case "$1" in
+  enable) enable;;
+  disable) disable;;
+  state) state;;
+  status) status;;
+  start) start;;
+  stop) stop;;
+esac
+
+exit $?

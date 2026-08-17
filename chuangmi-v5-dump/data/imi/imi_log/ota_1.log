@@ -1,0 +1,60 @@
+[[34mDEBUG[0m][07:01:52@19700101][215@msg_dispatcher]:msg_dispatcher, msg: {"method": "local.status", "params": "internet_failed"}, strlen: 55, len: 55
+[[31mERROR[0m][07:01:52@19700101][221@msg_dispatcher]:json_verify_get_int failed: {"method": "local.status", "params": "internet_failed"}
+[[34mDEBUG[0m][07:01:56@19700101][272@otd_recv_handler_block]:otd_recv_handler_block(), sockfd: 4, msg: {"method": "local.status", "params": "internet_failed"}, length: 55 bytes
+[[34mDEBUG[0m][07:01:56@19700101][215@msg_dispatcher]:msg_dispatcher, msg: {"method": "local.status", "params": "internet_failed"}, strlen: 55, len: 55
+[[31mERROR[0m][07:01:56@19700101][221@msg_dispatcher]:json_verify_get_int failed: {"method": "local.status", "params": "internet_failed"}
+[[34mDEBUG[0m][07:02:01@19700101][272@otd_recv_handler_block]:otd_recv_handler_block(), sockfd: 4, msg: {"method": "local.status", "params": "internet_failed"}, length: 55 bytes
+[[34mDEBUG[0m][07:02:01@19700101][215@msg_dispatcher]:msg_dispatcher, msg: {"method": "local.status", "params": "internet_failed"}, strlen: 55, len: 55
+[[31mERROR[0m][07:02:01@19700101][221@msg_dispatcher]:json_verify_get_int failed: {"method": "local.status", "params": "internet_failed"}
+[[34mDEBUG[0m][07:02:06@19700101][272@otd_recv_handler_block]:otd_recv_handler_block(), sockfd: 4, msg: {"method": "local.status", "params": "internet_failed"}, length: 55 bytes
+[[34mDEBUG[0m][07:02:06@19700101][215@msg_dispatcher]:msg_dispatcher, msg: {"method": "local.status", "params": "internet_failed"}, strlen: 55, len: 55
+[[31mERROR[0m][07:02:06@19700101][221@msg_dispatcher]:json_verify_get_int failed: {"method": "local.status", "params": "internet_failed"}
+[[34mDEBUG[0m][07:02:11@19700101][272@otd_recv_handler_block]:otd_recv_handler_block(), sockfd: 4, msg: {"method": "local.status", "params": "internet_failed"}, length: 55 bytes
+[[34mDEBUG[0m][07:02:11@19700101][215@msg_dispatcher]:msg_dispatcher, msg: {"method": "local.status", "params": "internet_failed"}, strlen: 55, len: 55
+[[31mERROR[0m][07:02:11@19700101][221@msg_dispatcher]:json_verify_get_int failed: {"method": "local.status", "params": "internet_failed"}
+[[34mDEBUG[0m][07:02:16@19700101][272@otd_recv_handler_block]:otd_recv_handler_block(), sockfd: 4, msg: {"method": "local.status", "params": "internet_failed"}, length: 55 bytes
+[[34mDEBUG[0m][07:02:16@19700101][215@msg_dispatcher]:msg_dispatcher, msg: {"method": "local.status", "params": "internet_failed"}, strlen: 55, len: 55
+[[31mERROR[0m][07:02:16@19700101][221@msg_dispatcher]:json_verify_get_int failed: {"method": "local.status", "params": "internet_failed"}
+[[34mDEBUG[0m][07:02:21@19700101][272@otd_recv_handler_block]:otd_recv_handler_block(), sockfd: 4, msg: {"method": "local.status", "params": "internet_failed"}, length: 55 bytes
+[[34mDEBUG[0m][07:02:21@19700101][215@msg_dispatcher]:msg_dispatcher, msg: {"method": "local.status", "params": "internet_failed"}, strlen: 55, len: 55
+[[31mERROR[0m][07:02:21@19700101][221@msg_dispatcher]:json_verify_get_int failed: {"method": "local.status", "params": "internet_failed"}
+[[34mDEBUG[0m][07:02:26@19700101][272@otd_recv_handler_block]:otd_recv_handler_block(), sockfd: 4, msg: {"method": "local.status", "params": "internet_failed"}, length: 55 bytes
+[[34mDEBUG[0m][07:02:26@19700101][215@msg_dispatcher]:msg_dispatcher, msg: {"method": "local.status", "params": "internet_failed"}, strlen: 55, len: 55
+[[31mERROR[0m][07:02:26@19700101][221@msg_dispatcher]:json_verify_get_int failed: {"method": "local.status", "params": "internet_failed"}
+[[34mDEBUG[0m][07:02:31@19700101][272@otd_recv_handler_block]:otd_recv_handler_block(), sockfd: 4, msg: {"method": "local.status", "params": "internet_failed"}, length: 55 bytes
+[[34mDEBUG[0m][07:02:31@19700101][215@msg_dispatcher]:msg_dispatcher, msg: {"method": "local.status", "params": "internet_failed"}, strlen: 55, len: 55
+[[31mERROR[0m][07:02:31@19700101][221@msg_dispatcher]:json_verify_get_int failed: {"method": "local.status", "params": "internet_failed"}
+[[34mDEBUG[0m][07:02:36@19700101][272@otd_recv_handler_block]:otd_recv_handler_block(), sockfd: 4, msg: {"method": "local.status", "params": "internet_failed"}, length: 55 bytes
+[[34mDEBUG[0m][07:02:36@19700101][215@msg_dispatcher]:msg_dispatcher, msg: {"method": "local.status", "params": "internet_failed"}, strlen: 55, len: 55
+[[31mERROR[0m][07:02:36@19700101][221@msg_dispatcher]:json_verify_get_int failed: {"method": "local.status", "params": "internet_failed"}
+[[34mDEBUG[0m][07:02:41@19700101][272@otd_recv_handler_block]:otd_recv_handler_block(), sockfd: 4, msg: {"method": "local.status", "params": "internet_failed"}, length: 55 bytes
+[[34mDEBUG[0m][07:02:41@19700101][215@msg_dispatcher]:msg_dispatcher, msg: {"method": "local.status", "params": "internet_failed"}, strlen: 55, len: 55
+[[31mERROR[0m][07:02:41@19700101][221@msg_dispatcher]:json_verify_get_int failed: {"method": "local.status", "params": "internet_failed"}
+[[34mDEBUG[0m][07:02:47@19700101][272@otd_recv_handler_block]:otd_recv_handler_block(), sockfd: 4, msg: {"method": "local.status", "params": "internet_connected"}, length: 58 bytes
+[[34mDEBUG[0m][07:02:47@19700101][215@msg_dispatcher]:msg_dispatcher, msg: {"method": "local.status", "params": "internet_connected"}, strlen: 58, len: 58
+[[31mERROR[0m][07:02:47@19700101][221@msg_dispatcher]:json_verify_get_int failed: {"method": "local.status", "params": "internet_connected"}
+[[34mDEBUG[0m][07:02:49@19700101][272@otd_recv_handler_block]:otd_recv_handler_block(), sockfd: 4, msg: {"method": "local.status", "params": "cloud_connected"}, length: 55 bytes
+[[34mDEBUG[0m][07:02:49@19700101][215@msg_dispatcher]:msg_dispatcher, msg: {"method": "local.status", "params": "cloud_connected"}, strlen: 55, len: 55
+[[32mINFO[0m][07:00:24@19700101][300@main]:miio ota start
+[[32mINFO[0m][07:00:24@19700101][327@main]:/mnt/data/miio_ota/pre-ota.sh will run before ota
+[[32mINFO[0m][07:00:24@19700101][328@main]:/mnt/data/miio_ota/post-ota.sh will run after ota
+[[32mINFO[0m][07:00:24@19700101][462@init_ota_rpc_method]:OTD sockfd: 4
+[[32mINFO[0m][07:00:24@19700101][475@init_ota_rpc_method]:Timer fd: 5, interval: 1000 ms
+[[32mINFO[0m][07:00:24@19700101][389@ota_rpc_handle]:ota rpc method thread create success
+[[34mDEBUG[0m][07:00:25@19700101][272@otd_recv_handler_block]:otd_recv_handler_block(), sockfd: 4, msg: {"method": "local.status", "params": "internet_failed"}, length: 55 bytes
+[[34mDEBUG[0m][07:00:25@19700101][215@msg_dispatcher]:msg_dispatcher, msg: {"method": "local.status", "params": "internet_failed"}, strlen: 55, len: 55
+[[31mERROR[0m][07:00:25@19700101][221@msg_dispatcher]:json_verify_get_int failed: {"method": "local.status", "params": "internet_failed"}
+[[34mDEBUG[0m][07:00:26@19700101][272@otd_recv_handler_block]:otd_recv_handler_block(), sockfd: 4, msg: {"method": "local.status", "params": "internet_failed"}, length: 55 bytes
+[[34mDEBUG[0m][07:00:26@19700101][215@msg_dispatcher]:msg_dispatcher, msg: {"method": "local.status", "params": "internet_failed"}, strlen: 55, len: 55
+[[31mERROR[0m][07:00:26@19700101][221@msg_dispatcher]:json_verify_get_int failed: {"method": "local.status", "params": "internet_failed"}
+[[34mDEBUG[0m][07:00:31@19700101][272@otd_recv_handler_block]:otd_recv_handler_block(), sockfd: 4, msg: {"method": "local.status", "params": "internet_failed"}, length: 55 bytes
+[[34mDEBUG[0m][07:00:31@19700101][215@msg_dispatcher]:msg_dispatcher, msg: {"method": "local.status", "params": "internet_failed"}, strlen: 55, len: 55
+[[31mERROR[0m][07:00:31@19700101][221@msg_dispatcher]:json_verify_get_int failed: {"method": "local.status", "params": "internet_failed"}
+[[34mDEBUG[0m][07:00:36@19700101][272@otd_recv_handler_block]:otd_recv_handler_block(), sockfd: 4, msg: {"method": "local.status", "params": "internet_failed"}, length: 55 bytes
+[[34mDEBUG[0m][07:00:36@19700101][215@msg_dispatcher]:msg_dispatcher, msg: {"method": "local.status", "params": "internet_failed"}, strlen: 55, len: 55
+[[31mERROR[0m][07:00:36@19700101][221@msg_dispatcher]:json_verify_get_int failed: {"method": "local.status", "params": "internet_failed"}
+[[34mDEBUG[0m][07:00:42@19700101][272@otd_recv_handler_block]:otd_recv_handler_block(), sockfd: 4, msg: {"method": "local.status", "params": "internet_connected"}, length: 58 bytes
+[[34mDEBUG[0m][07:00:42@19700101][215@msg_dispatcher]:msg_dispatcher, msg: {"method": "local.status", "params": "internet_connected"}, strlen: 58, len: 58
+[[31mERROR[0m][07:00:42@19700101][221@msg_dispatcher]:json_verify_get_int failed: {"method": "local.status", "params": "internet_connected"}
+[[34mDEBUG[0m][07:00:44@19700101][272@otd_recv_handler_block]:otd_recv_handler_block(), sockfd: 4, msg: {"method": "local.status", "params": "cloud_connected"}, length: 55 bytes
+[[34mDEBUG[0m][07:00:44@19700101][215@msg_dispatcher]:msg_dispatcher, msg: {"method": "local.status", "params": "cloud_connected"}, strlen: 55, len: 55

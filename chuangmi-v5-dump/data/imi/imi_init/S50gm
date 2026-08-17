@@ -1,0 +1,22 @@
+#!/bin/sh
+
+CONFIG_PARTITION=/gm/config
+
+/sbin/modprobe frammap.ko
+
+ft_mode=`cat /tmp/ft_mode`
+
+if [ "$ft_mode" != "0" ] ; then
+    echo "ft boot"
+    sd_ft_dir=/tmp/ft
+    data_ft_dir=/mnt/data/ft
+    if [ -d $sd_ft_dir ];then
+	ft_dir=$sd_ft_dir
+    else
+	ft_dir=$data_ft_dir
+    fi
+    sh $ft_dir/ft_boot.sh ${CONFIG_PARTITION} ${ft_mode} ${ft_dir}
+else
+    echo "vg boot"
+    sh ${CONFIG_PARTITION}/vg_boot.sh ${CONFIG_PARTITION}
+fi

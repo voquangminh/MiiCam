@@ -1,0 +1,39 @@
+#!/bin/sh
+#
+# Start the miio_client...
+#
+
+case "$1" in
+  start)
+        echo "Starting miio_client..."
+	ft_mode=`cat /tmp/ft_mode`
+	if [ "$ft_mode" == "4" ];then
+		if [ -d /mnt/media/mmcblk0p1 ]; then
+		  mmcdir="/mnt/media/mmcblk0p1"
+		elif [ -d /mnt/media/mmcblk0 ]; then
+		  mmcdir="/mnt/media/mmcblk0"
+		fi
+		mtbf_log_dir=$mmcdir/log/MTBF	
+		/mnt/data/ot_wifi_tool/miio_client -D -L $mtbf_log_dir/miio_client.log
+	else
+	/mnt/data/ot_wifi_tool/miio_client -D
+###/mnt/data/ot_wifi_tool/miio_client -D -L /var/log/miio_client.log
+	fi	
+	/mnt/data/ot_wifi_tool/miio_client_helper_nomqtt.sh | /usr/bin/logger -t miio_client_helper &
+  #/mnt/data/ot_wifi_tool/miio_client_helper_nomqtt.sh | /tmp/busybox logger -t miio_client_helper &     
+        ;;
+  stop)
+        printf "Stopping miio_client..."
+	/usr/bin/killall miio_client
+	/usr/bin/killall miio_client_helper_nomqtt.sh
+        ;;
+  restart|reload)
+        "$0" stop
+        "$0" start
+        ;;
+  *)
+        echo "Usage: $0 {start|stop|restart}"
+        exit 1
+esac
+
+exit $?

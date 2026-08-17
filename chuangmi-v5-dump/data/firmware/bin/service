@@ -1,0 +1,7 @@
+#!/bin/sh -l
+
+local service=$FIRMWARE_PATH/etc/init.d/$1
+local command=$2
+shift 2
+
+[ -x "$service" ] && "$service" "$command" "$@" || exit $?

@@ -1,0 +1,7 @@
+#!/bin/sh -l
+
+local hostname=$(config get HOSTNAME || nvram factory get mac | tr [:upper:] [:lower:] | tr -d :)
+echo "Setting hostname to '$hostname'."
+hostname $hostname
+echo $hostname >/tmp/hostname && mount --bind /tmp/hostname /etc/hostname
+echo "127.0.0.1 localhost $hostname" >/tmp/hosts && mount --bind /tmp/hosts /etc/hosts

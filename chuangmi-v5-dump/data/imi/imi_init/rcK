@@ -1,0 +1,45 @@
+#!/bin/sh
+
+
+# Stop all init scripts in /etc/init.d
+# executing them in reversed numerical order.
+#
+
+
+:<<!
+for i in $(ls -r /etc/init.d/S??*) ;do
+
+     # Ignore dangling symlinks (if any).
+     [ ! -f "$i" ] && continue
+
+     case "$i" in
+	*.sh)
+	    # Source shell script for speed.
+	    (
+		trap - INT QUIT TSTP
+		set stop
+		. $i
+	    )
+	    ;;
+	*)
+	    # No sh extension, so fork subprocess.
+	    $i stop
+	    ;;
+    esac
+done
+!
+
+if [ -x /tmp/busybox ]
+then
+    cmd=/tmp/busybox
+else
+    cmd=/bin/busybox
+fi
+
+$cmd killall restartd    #kill restartd
+$cmd killall miio_avstreamer    #kill avstreamer
+$cmd sync
+$cmd umount /mnt/media/mmcblk0p1
+$cmd umount /mnt/media/mmcblk0
+
+

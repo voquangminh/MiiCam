@@ -1,0 +1,37 @@
+#!/bin/sh
+#
+# Start the miio_avstreamer ...
+#
+ft_mode=`cat /tmp/ft_mode`
+av_args=$2
+echo 9 > /proc/sys/vm/dirty_expire_centisecs
+echo 9 > /proc/sys/vm/dirty_writeback_centisecs
+echo 2 > /proc/sys/vm/dirty_ratio
+echo 2 > /proc/sys/vm/dirty_background_ratio
+echo 1024 > /proc/sys/vm/min_free_kbytes
+if [ "$ft_mode" = "3" ];then
+    av_args="-t"
+fi
+
+case "$1" in
+  start)
+        echo "Starting miio_avstreamer..."
+        export LD_LIBRARY_PATH=/mnt/data/miio_av/:/mnt/data/imi/lib/
+	    /mnt/data/miio_av/miio_avstreamer $av_args | /usr/bin/logger -t miio_avstreamer &
+	
+        ;;
+  stop)
+        printf "Stopping miio_avstreamer..."
+	/usr/bin/killall miio_avstreamer
+        ;;
+  restart|reload)
+		av_args="-R"
+        "$0" stop
+        "$0" start ${av_args}
+        ;;
+  *)
+        echo "Usage: $0 {start|stop|restart}"
+        exit 1
+esac
+
+exit $?

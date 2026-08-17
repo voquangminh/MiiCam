@@ -1,0 +1,40 @@
+#!/bin/sh
+sd_mountdir=/tmp/sdtest
+magic_str="sdtest*dkiesied999320xxxerei28slo~@!"
+test_file_name=test.bin
+current_dir=`pwd`
+mmc_device=""
+if [ -b /dev/mmcblk0p1 ];then
+mmc_device=/dev/mmcblk0p1
+elif [ -b /dev/mmcblk0 ];then
+mmc_device=/dev/mmcblk0
+fi
+if [ "$mmc_device" != "" ] ; then
+	if [ -d $sd_mountdir ];then
+		:
+	else
+		mkdir $sd_mountdir
+	fi
+	mount -t vfat $mmc_device $sd_mountdir > /dev/null
+	if [ $? -eq 0 ];then
+		:
+	else
+		echo "NG"
+		exit
+	fi
+	if [ -f $sd_mountdir/$test_file_name ];then
+		rm $sd_mountdir/$test_file_name
+	fi
+	echo $magic_str > $sd_mountdir/$test_file_name
+	magic_read=`cat $sd_mountdir/$test_file_name`
+	if [ "$magic_read" == "$magic_str" ];then
+		echo "OK"
+	else
+		echo "NG"
+	fi
+	rm $sd_mountdir/$test_file_name
+	umount $sd_mountdir
+else
+	echo "No card inserted"
+fi
+cd $current_dir

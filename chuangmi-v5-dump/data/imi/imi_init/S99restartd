@@ -1,0 +1,24 @@
+#!/bin/sh
+#
+# restartd
+#
+
+case "$1" in
+  start)
+        echo "Starting restartd..."
+	/mnt/data/restartd/restartd -i 30 -c /mnt/data/restartd/restartd.conf
+        ;;
+  stop)
+        printf "Stopping restartd..."
+	/usr/bin/killall restartd
+        ;;
+  restart|reload)
+        "$0" stop
+        "$0" start
+        ;;
+  *)
+        echo "Usage: $0 {start|stop|restart}"
+        exit 1
+esac
+
+exit $?

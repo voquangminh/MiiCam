@@ -1,0 +1,3 @@
+#!/bin/sh
+
+for script in ./etc/rc.d/*; do $script; done | logger -t firmware

@@ -1,0 +1,71 @@
+#!/bin/sh -l
+
+local pid_file=/var/run/rtspd.pid
+
+enable() {
+  restart create rtspd --then="$(which service) rtsp start"
+  restart reload
+
+  echo "RTSP is enabled."
+}
+
+disable() {
+  restart delete rtspd
+  restart reload
+  service rtsp stop
+
+  echo "RTSP is disabled."
+}
+
+state() {
+  restart status rtspd || return $?
+}
+
+status() {
+  [ -f $pid_file ] && kill -0 $(cat $pid_file) >/dev/null 2>&1 || return 1
+}
+
+start() {
+  echo "Starting RTSP server."
+
+  eval "$(config | grep ^RTSP_)"
+  status || start-stop-daemon \
+    --background \
+    --exec rtspd \
+    --make-pidfile \
+    --oknodo \
+    --pidfile $pid_file \
+    --quiet \
+    --start \
+    -- \
+      ${RTSP_FRAMERATE:+-f$RTSP_FRAMERATE} \
+      ${RTSP_WIDTH:+-w$RTSP_WIDTH} \
+      ${RTSP_HEIGHT:+-h$RTSP_HEIGHT} \
+      ${RTSP_BITRATE:+-b$RTSP_BITRATE} \
+      ${RTSP_BITRATE_MODE:+-m$RTSP_BITRATE_MODE} \
+      ${RTSP_USER:+-u$RTSP_USER} \
+      ${RTSP_PASSWORD:+-p$RTSP_PASSWORD} \
+      $([ "${RTSP_MJPEG:-0}" -eq 1 ] && echo -j) \
+      $([ "${RTSP_MPEG4:-0}" -eq 1 ] && echo -4)
+}
+
+stop() {
+  echo "Stopping RTSP server."
+
+  status && start-stop-daemon \
+    --oknodo \
+    --pidfile $pid_file \
+    --quiet \
+    --stop
+}
+
+case "$1" in
+  enable) enable;;
+  disable) disable;;
+  state) state;;
+  status) status;;
+  start) start;;
+  stop) stop;;
+esac
+
+exit $?

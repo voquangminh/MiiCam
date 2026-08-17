@@ -1,0 +1,24 @@
+#!/bin/sh
+#
+# Start the miio_smb...
+#
+
+case "$1" in
+  start)
+        echo "Starting miio_smb..."
+        /mnt/data/miio_smb/miio_smb | /usr/bin/logger -t miio_smb &
+        ;;
+  stop)
+        printf "Stopping miio_smb..."
+        /usr/bin/killall miio_smb
+        ;;
+  restart|reload)
+        "$0" stop
+        "$0" start
+        ;;
+  *)
+        echo "Usage: $0 {start|stop|restart}"
+        exit 1
+esac
+
+exit $?

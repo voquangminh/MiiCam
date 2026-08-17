@@ -1,0 +1,24 @@
+#!/bin/sh
+#
+# Start the miot_qrcode
+#
+
+case "$1" in
+  start)
+        echo "Starting miot_qrcode..."
+	/mnt/data/miot/miot_qrcode.sh | /usr/bin/logger -t miot_qrcode &
+        ;;
+  stop)
+        printf "Stopping miot_qrcode..."
+	/usr/bin/killall miot_qrcode
+        ;;
+  restart|reload)
+        "$0" stop
+        "$0" start
+        ;;
+  *)
+        echo "Usage: $0 {start|stop|restart}"
+        exit 1
+esac
+
+exit $?

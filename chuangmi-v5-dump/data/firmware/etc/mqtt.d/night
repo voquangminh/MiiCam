@@ -1,0 +1,24 @@
+#!/bin/sh
+
+NAME="Night Vision"
+TYPE=select
+CONFIG='"options": ["AUTO", "ON", "OFF"]'
+
+get_state() {
+  if service night state; then
+    echo AUTO
+  else
+    camera mode night status && echo ON || echo OFF
+  fi
+}
+
+set_state() {
+  if [ "$1" = AUTO ]; then
+    service night enable
+    config set NIGHT AUTO
+  else
+    service night disable
+    camera mode night $([ "$1" = ON ] && echo enable || echo disable)
+    config set NIGHT $([ "$1" = ON ] && echo 1 || echo 0)
+  fi
+}

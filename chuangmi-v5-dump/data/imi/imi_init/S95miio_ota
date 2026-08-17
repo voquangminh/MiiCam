@@ -1,0 +1,25 @@
+#!/bin/sh
+#
+# Start miio_ota...
+#
+
+case "$1" in
+  start)
+        echo "Starting miio_ota..."
+	/mnt/data/miio_ota/miio_ota -p /mnt/data/miio_ota/pre-ota.sh -P /mnt/data/miio_ota/post-ota.sh | /usr/bin/logger -t miio_ota &
+  #/mnt/data/miio_ota/miio_ota -p /mnt/data/miio_ota/pre-ota.sh -P /mnt/data/miio_ota/post-ota.sh | /tmp/busybox logger -t miio_ota &
+        ;;
+  stop)
+        printf "Stopping miio_ota..."
+	/usr/bin/killall miio_ota
+        ;;
+  restart|reload)
+        "$0" stop
+        "$0" start
+        ;;
+  *)
+        echo "Usage: $0 {start|stop|restart}"
+        exit 1
+esac
+
+exit $?

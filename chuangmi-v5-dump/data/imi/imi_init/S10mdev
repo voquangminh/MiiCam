@@ -1,0 +1,31 @@
+#!/bin/sh
+#
+# Start mdev....
+#
+
+ft_mode=`cat /tmp/ft_mode`
+if [ "$ft_mode" == "4" ];then
+    TARGETDIR=/mnt/media
+    for d in ${TARGETDIR}/*; do
+        if [ -d "$d" ]; then
+            exit 0
+        fi
+    done
+fi
+
+case "$1" in
+  start)
+	echo "Starting mdev..."
+	echo /sbin/mdev >/proc/sys/kernel/hotplug
+	/sbin/mdev -s
+	;;
+  stop)
+	;;
+  restart|reload)
+	;;
+  *)
+	echo "Usage: $0 {start|stop|restart}"
+	exit 1
+esac
+
+exit $?

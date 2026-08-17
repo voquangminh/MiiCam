@@ -1,0 +1,28 @@
+#!/bin/sh -l
+
+enable() {
+  restart create telnetd --pattern="/usr/sbin/telnetd" --then="/mnt/data/imi/imi_init/_S50telnet start"
+  restart reload
+
+  echo "Telnet is enabled."
+}
+
+disable() {
+  restart delete telnetd
+  restart reload
+  /mnt/data/imi/imi_init/_S50telnet stop
+
+  echo "Telnet is disabled."
+}
+
+state() {
+  restart status telnetd || return $?
+}
+
+case "$1" in
+  enable) enable;;
+  disable) disable;;
+  state) state;;
+esac
+
+exit $?

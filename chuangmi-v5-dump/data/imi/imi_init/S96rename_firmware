@@ -1,0 +1,41 @@
+#!/bin/sh
+#
+# Start detecting tf_recovery.img...
+#
+
+mmcdir=
+
+if [ -d /mnt/media/mmcblk0p1 ]; then
+    mmcdir="/mnt/media/mmcblk0p1"
+elif [ -d /mnt/media/mmcblk0 ]; then
+    mmcdir="/mnt/media/mmcblk0"
+fi
+
+case "$1" in
+  start)
+	if [ ! -f "$mmcdir/manufacture/not_modify_img.txt" ]; then 
+        echo "Start detecting tf_recovery.img"
+		FIRMWARE_NAME="$mmcdir/tf_recovery.img"
+
+		if [ -f "$FIRMWARE_NAME" ]; then 
+			echo "${FIRMWARE_NAME} exist, will rename it to ${FIRMWARE_NAME}.bak"
+			mv ${FIRMWARE_NAME} ${FIRMWARE_NAME}.bak
+		else
+			echo "$FIRMWARE_NAME not exist"
+		fi
+	fi
+	;;
+  stop)
+        echo "do nothing"
+        ;;
+  restart|reload)
+        "$0" stop
+        "$0" start
+        ;;
+  *)
+        echo "Usage: $0 {start|stop|restart}"
+        exit 1
+esac
+
+exit $?
+

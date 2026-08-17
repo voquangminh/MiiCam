@@ -1,0 +1,23 @@
+#!/bin/sh
+#
+# Cycle upgrade....
+#
+
+case "$1" in
+  start)
+	VERSION="/mnt/media/mmcblk0p1/os-release"
+	if [ -f "$VERSION" ]; then 
+		echo "cp os-release to data partition for cycle upgrade"
+		cp ${VERSION} /mnt/data/
+	fi
+	;;
+  stop)
+	;;
+  restart|reload)
+	;;
+  *)
+	echo "Usage: $0 {start|stop|restart}"
+	exit 1
+esac
+
+exit $?

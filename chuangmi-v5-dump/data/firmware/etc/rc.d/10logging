@@ -1,0 +1,3 @@
+#!/bin/sh -l
+
+[ "$(config get LOGGING || echo 0)" -eq 1 ] && /mnt/data/imi/imi_init/_S01logging start

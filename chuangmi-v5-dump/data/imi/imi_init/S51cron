@@ -1,0 +1,26 @@
+#!/bin/sh
+#
+# Start the crond and crontab
+#
+
+case "$1" in
+  start)
+        echo "Starting crond..."
+	mkdir -p /var/run/cron
+	crond -c /var/run/cron
+	crontab -c /var/run/cron /mnt/data/miot/crontab
+        ;;
+  stop)
+        printf "Stopping crond..."
+	/usr/bin/killall crond
+        ;;
+  restart|reload)
+        "$0" stop
+        "$0" start
+        ;;
+  *)
+        echo "Usage: $0 {start|stop|restart}"
+        exit 1
+esac
+
+exit $?

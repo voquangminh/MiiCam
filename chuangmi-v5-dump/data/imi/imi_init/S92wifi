@@ -1,0 +1,54 @@
+#!/bin/sh
+#
+# Start the wifi...
+#
+
+mac=`/usr/sbin/nvram factory get mac`
+if [ -z $mac ]
+    then mac_param=""
+else 
+	mac_param="mac_addr=$mac"
+fi
+
+ft_mode=`cat /tmp/ft_mode`
+
+case "$1" in
+  start)
+
+        echo "Starting wifi $mac..."
+        
+	#/sbin/modprobe mlan.ko
+	#/sbin/modprobe sd8xxx.ko cfg80211_wext=0xC cal_data_cfg=/etc/WlanCalData_ext.conf $mac_param
+    insmod /lib/modules/3.3.0/8189fs.ko
+    ifconfig wlan0 down
+    ifconfig wlan0 hw ether $mac
+    
+    ###############################
+		# set rtl8189 always active
+		##############################
+		iwpriv wlan0 pm_set lps=0
+    
+    if [ "$ft_mode" = "3" ];then
+        /mnt/data/ot_wifi_tool/wifi_start_ft_mode.sh  | /usr/bin/logger -t wifi &
+    else
+    	/mnt/data/ot_wifi_tool/wifi_start.sh  | /usr/bin/logger -t wifi &
+    fi	
+        ;;
+  stop)
+        printf "Stopping wifi..."
+	/usr/bin/killall wpa_supplicant hostapd udhcpd
+	/sbin/ifconfig wlan0 down
+	#/sbin/ifconfig uap0 down
+	#/sbin/rmmod sd8xxx.ko
+	#/sbin/rmmod mlan.ko
+        ;;
+  restart|reload)
+        "$0" stop
+        "$0" start
+        ;;
+  *)
+        echo "Usage: $0 {start|stop|restart}"
+        exit 1
+esac
+
+exit $?

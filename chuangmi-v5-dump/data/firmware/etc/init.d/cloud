@@ -1,0 +1,58 @@
+#!/bin/sh -l
+
+enable() {
+  # /mnt/data/imi/imi_init/S93miio_client
+  binary enable /mnt/data/ot_wifi_tool/miio_client
+  binary enable /mnt/data/ot_wifi_tool/miio_client_helper_nomqtt.sh
+  # /mnt/data/imi/imi_init/S93miot_devicekit
+  binary enable /mnt/data/miot/miot_devicekit
+  # /mnt/data/imi/imi_init/S93miot_qrcode
+  binary enable /mnt/data/miot/miot_qrcode.sh
+  # /mnt/data/imi/imi_init/S95miio_smb
+  binary enable /mnt/data/miio_smb/miio_smb
+  # cron
+  binary enable /mnt/data/miot/logmi.sh
+
+  restart update miio_client --then="/mnt/data/ot_wifi_tool/miio_client -D"
+  restart enable miio_client
+  restart enable miio_client_helper
+  restart enable miot_devicekit
+  restart enable miio_smb
+  restart reload
+
+  echo "Cloud services are enabled."
+}
+
+disable() {
+  restart disable miio_client
+  restart disable miio_client_helper
+  restart disable miot_devicekit
+  restart disable miio_smb
+  restart reload
+
+  # /mnt/data/imi/imi_init/S93miio_client
+  binary disable /mnt/data/ot_wifi_tool/miio_client
+  binary disable /mnt/data/ot_wifi_tool/miio_client_helper_nomqtt.sh
+  # /mnt/data/imi/imi_init/S93miot_devicekit
+  binary disable /mnt/data/miot/miot_devicekit
+  # /mnt/data/imi/imi_init/S93miot_qrcode
+  binary disable /mnt/data/miot/miot_qrcode.sh
+  # /mnt/data/imi/imi_init/S95miio_smb
+  binary disable /mnt/data/miio_smb/miio_smb
+  # cron
+  binary disable /mnt/data/miot/logmi.sh
+
+  echo "Cloud services are disabled."
+}
+
+state() {
+  restart status miio_client || return $?
+}
+
+case "$1" in
+  enable) enable;;
+  disable) disable;;
+  state) state;;
+esac
+
+exit $?

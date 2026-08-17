@@ -1,0 +1,37 @@
+#!/bin/sh
+#
+# Sanity check CONFIG partition
+#
+
+CONFIG_BAK="/mnt/data/.config.bak"
+CONFIG_PARTITION="/dev/mtdblock4"
+LOGDIR="/mnt/media/mmcblk0p1/log"
+LOGDIR2="/mnt/media/mmcblk0/log"
+
+case "$1" in
+    start)
+	echo "Sanity check CONFIG partition..."
+	flag=`/usr/sbin/nvram get config_partition`
+	if [ x$flag = x ]; then
+	    echo "CONFIG partition currupted?"
+	    if [ -e $CONFIG_BAK ]; then
+		dd if=${CONFIG_BAK} of=${CONFIG_PARTITION} bs=64K count=1
+	    fi
+	fi
+
+	echo "Copy back log in TF"
+	for d in $LOGDIR $LOGDIR2; do
+	    if [ -f $d/messages ]; then
+		cat $d/messages >> /var/log/messages
+	    fi
+	    if [ -f $d/miio_client.log ]; then
+		cat $d/miio_client.log >> /var/log/messages
+	    fi
+	done
+        ;;
+    *)
+        echo "Usage: $0 {start}"
+        exit 1
+esac
+
+exit $?
