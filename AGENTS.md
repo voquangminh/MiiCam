@@ -13,7 +13,7 @@ Alternate firmware for the Xiaomi Chuangmi 720p IP camera (Grain Media GM8136S S
 
 - `tools/rtsp_server/rtspd.c` — the actively developed RTSP daemon (recent work: AAC audio). Build → `tools/bin/rtspd`. Links against `librtsp.a`, `librtsp_glibc.a`, `log/log.c`, and `libgm.so`. `tools/rtsp_server/` also holds older variants (`rtspd-chuangmi-v5.c`, `rtspd2MP.c`, `rtspd2MP00.c`, `osd.c`) that are NOT the active build.
 - `tools/onvif_server/*.c` — ONVIF server → `tools/bin/onvif_server`. `tools/rtsp_server/aac_play.c` → `tools/bin/aac_play`. Note: the Makefile references `aac_player.c` but the actual file is `aac_play.c`; this will cause a build failure for `make build/aac_play` until fixed.
-- `tools/lib/*.c` — shared `libchuangmi_*.so` libs (ircut, led, pwm, isp328, utils); `tools/utils/*.c` — one-off camera utilities. Both build against GM libs in `tools/gm_lib/`.
+- `tools/lib/*.c` — shared `libchuangmi_*.so` libs (ircut, led, pwm, isp328, utils); `tools/utils/*.c` — one-off camera utilities. Both build against GM libs in `tools/gm_lib/` (headers in `inc/`, shared libs in `lib/`).
 - `tools/gm8136-rtsp-audio/` is a standalone parallel subtree (own `Dockerfile`/`Makefile`/`build.sh`, vendored SDK under its `sdk/`). It is NOT wired into the top-level Makefile and its `gm_lib/` is untracked locally. Don't assume edits there affect `tools/bin/rtspd`.
 
 ## Building locally (what CI does — fastest path for a single binary)
@@ -32,6 +32,7 @@ WSL quirk: the 32-bit toolchain cannot read sources on Windows drvfs (`/mnt/c`) 
 
 - `tools/bin/*`, `tools/lib/*.so`, and `sdcard/firmware/bin/*` are gitignored, yet some binaries are committed. CI force-adds them (`git add -f tools/bin/rtspd`, etc.). If you edit C code and rebuild, commit the binary with `git add -f tools/bin/<name>`, not plain `git add`.
 - Manual workflows (`.github/workflows/build-rtspd.yml`, `build-onvif.yml`, `build-aac-play.yml`) reproduce the local-build steps above on `ubuntu-latest` and auto-commit the binary (message style: "Automated build: update camera binary rtspd2MP/rtspd/rtspd-v5").
+- The `build-aac-play.yml` workflow works around the `aac_player.c` filename bug by compiling `aac_play.c` directly with `$(TOOLCHAIN_PREFIX)-gcc` instead of using `make build/aac_play`.
 
 ## Deploying to a camera
 
