@@ -1831,6 +1831,7 @@ void *encode_thread(void *ptr)
         }
     }
 
+    int poll_timeout_count = 0;
     while(1) {
         if (rtspd_sysinit == 0)
             break;
@@ -1860,9 +1861,18 @@ void *encode_thread(void *ptr)
             break;
         ret = gm_poll(&poll_fds[0][0], CAP_CH_NUM * RTSP_NUM_PER_CAP, 2000);
         if (ret == GM_TIMEOUT) {
-            log_error("GM Poll timeout!!");
+            poll_timeout_count++;
+            if (poll_timeout_count >= 30) {
+                log_error("GM Poll timeout x%d — forcing rtspd restart", poll_timeout_count);
+                kill(getpid(), SIGTERM);
+                break;
+            }
+            if (poll_timeout_count % 5 == 1)
+                log_error("GM Poll timeout (count=%d), backing off", poll_timeout_count);
+            usleep(500000);
             continue;
         }
+        poll_timeout_count = 0;
         rcv_nr = 0;
         memset(bs, 0, sizeof(bs));
         for (i = 0; i < CAP_CH_NUM; i++) {
@@ -1975,7 +1985,7 @@ static void *audio_encode_thread(void *arg)
         }
         ret = gm_poll(&poll_fds, 1, 2000);
         if (ret == GM_TIMEOUT) {
-            log_error("audio poll timeout!!");
+            usleep(500000);
             continue;
         }
         memset(&multi_bs, 0, sizeof(multi_bs));
