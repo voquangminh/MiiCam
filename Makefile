@@ -76,6 +76,7 @@ all:                                 \
 	sdcard/config.cfg                \
 	sdcard/manufacture.bin           \
 	$(BUILDDIR)/rtspd                \
+	$(BUILDDIR)/rtspd-v5             \
 	$(BUILDDIR)/onvif_server         \
 	$(BUILDDIR)/zlib                 \
 	$(BUILDDIR)/libxml2              \
@@ -143,6 +144,28 @@ $(BUILDDIR)/rtspd: $(PREFIXDIR)/bin
 	@touch $@
 
 build/rtspd: $(BUILDDIR)/rtspd
+	@:
+
+#################################################################
+## RTSPD-V5 (syslog, internal paths)						   ##
+#################################################################
+
+$(BUILDDIR)/rtspd-v5: $(PREFIXDIR)/bin
+	@mkdir -p $(BUILDDIR) $(TOOLSDIR)/bin
+	cd $(RTSPDDIR) 				&& \
+	$(TARGET)-gcc 				\
+		-Os 					\
+		-Wall					\
+		-I$(GMLIBDIR)/inc		\
+		$(RTSPDDIR)/rtspd-chuangmi-v5.c	\
+		$(RTSPDDIR)/librtsp.a	\
+		$(RTSPDDIR)/librtsp_glibc.a	\
+		-L$(GMLIBDIR)/lib		\
+		-lpthread -lm -lrt -lgm -o $(TOOLSDIR)/bin/rtspd-v5 && \
+		$(TARGET)-strip $(TOOLSDIR)/bin/rtspd-v5
+	@touch $@
+
+build/rtspd-v5: $(BUILDDIR)/rtspd-v5
 	@:
 
 #################################################################
