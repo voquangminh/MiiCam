@@ -42,6 +42,7 @@ jobs:
           
           # 5. Kích hoạt lệnh make biên dịch riêng rtspd
           make TARGET="$REAL_TARGET_PREFIX" build/rtspd
+          make TARGET="$REAL_TARGET_PREFIX" build/rtspd-v5
 
       - name: Commit và Push file Binary trực tiếp lên GitHub (Siêu tốc 1 giây)
         run: |
