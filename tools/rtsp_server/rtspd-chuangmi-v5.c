@@ -223,6 +223,18 @@ struct CommandLineArguments {
     int audio_channel_type;
     int audio_encode_type;
     int audio_enabled;
+
+    int h_flip;
+    int v_flip;
+    int rotation;
+    int h264_profile;
+    int h264_level;
+    int h264_config;
+    int h264_coding;
+    int vui_colorspace;
+    int vui_full_range;
+    int sar_width;
+    int sar_height;
 } cliArgs;
 
 /* Read HOSTNAME from config file. Try common locations. */
@@ -1094,6 +1106,23 @@ void gm_enc_init(int cap_ch, int cap_path, int rec_track, int enc_type, int mode
             gm_set_attr(param->cap.obj, &dnr_attr);
         }
 
+        if (cliArgs.h_flip || cliArgs.v_flip) {
+            gm_cap_flip_t flip_attr;
+            memset(&flip_attr, 0, sizeof(flip_attr));
+            flip_attr.h_flip_enabled = cliArgs.h_flip;
+            flip_attr.v_flip_enabled = cliArgs.v_flip;
+            gm_set_cap_flip(cap_ch, &flip_attr);
+            syslog(LOG_DAEMON | LOG_INFO, "Capture flip: h=%d v=%d", cliArgs.h_flip, cliArgs.v_flip);
+        }
+
+        if (cliArgs.rotation != 0) {
+            DECLARE_ATTR(rotation_attr, gm_rotation_attr_t);
+            rotation_attr.enabled = 1;
+            rotation_attr.clockwise = cliArgs.rotation;
+            gm_set_attr(param->cap.obj, &rotation_attr);
+            syslog(LOG_DAEMON | LOG_INFO, "Capture rotation: %d degrees", cliArgs.rotation);
+        }
+
         memcpy(&param->cap.cap_attr, &cap_attr, sizeof(gm_cap_attr_t));
         memcpy(&param->cap.dnr_attr, &dnr_attr, sizeof(gm_3dnr_attr_t));
     }
@@ -1114,6 +1143,16 @@ void gm_enc_init(int cap_ch, int cap_path, int rec_track, int enc_type, int mode
             h264e_attr.ratectl.init_quant    = 25;
             h264e_attr.ratectl.min_quant     = 20;
             h264e_attr.ratectl.max_quant     = 51;
+
+            if (cliArgs.h264_profile)
+                h264e_attr.profile_setting.profile = (gm_h264e_profile_t) cliArgs.h264_profile;
+            if (cliArgs.h264_level)
+                h264e_attr.profile_setting.level = (gm_h264e_level_t) cliArgs.h264_level;
+            if (cliArgs.h264_config)
+                h264e_attr.profile_setting.config = (gm_h264e_config_t) cliArgs.h264_config;
+            if (cliArgs.h264_coding)
+                h264e_attr.profile_setting.coding = (gm_h264e_coding_t) cliArgs.h264_coding;
+
             gm_set_attr(param->enc[rec_track].obj, &h264e_attr);
 /* H264 advanced */
             DECLARE_ATTR(h264_adv, gm_h264_advanced_attr_t);
@@ -1121,6 +1160,22 @@ void gm_enc_init(int cap_ch, int cap_path, int rec_track, int enc_type, int mode
             h264_adv.field_coding = 0;
             h264_adv.gray_scale = 0;
             gm_set_attr(param->enc[rec_track].obj, &h264_adv);
+
+            if (cliArgs.vui_colorspace || cliArgs.vui_full_range ||
+                cliArgs.sar_width != 1 || cliArgs.sar_height != 1) {
+                DECLARE_ATTR(vui_attr, gm_h264_vui_attr_t);
+                vui_attr.param_info.param.matrix_coefficient = (char) cliArgs.vui_colorspace;
+                vui_attr.param_info.param.full_range = cliArgs.vui_full_range & 1;
+                if (cliArgs.sar_width > 0 && cliArgs.sar_height > 0) {
+                    vui_attr.sar_info.sar.sar_width = cliArgs.sar_width;
+                    vui_attr.sar_info.sar.sar_height = cliArgs.sar_height;
+                }
+                gm_set_attr(param->enc[rec_track].obj, &vui_attr);
+                syslog(LOG_DAEMON | LOG_INFO, "H264 VUI: colorspace=%d full_range=%d SAR=%d:%d",
+                       cliArgs.vui_colorspace, cliArgs.vui_full_range,
+                       cliArgs.sar_width, cliArgs.sar_height);
+            }
+
             memcpy(&param->enc[rec_track].codec.h264e_attr, &h264e_attr, sizeof(gm_h264e_attr_t));
             break;
         case ENC_TYPE_MPEG4:
@@ -1814,14 +1869,24 @@ static void print_usage(void)
         "-j (optional)  - Use MJPEG encoding      (default: off)\n"
         "-4 (optional)  - Use MPEG4 encoding      (default: off)\n\n"
 
-        "Audio options (gmlib supported types / sample rates):\n"
+        "Audio options:\n"
         "-X [type]      - Audio encode type: aac|pcm|g726|adpcm|g711a|alaw|g711u|ulaw (default: aac)\n"
         "-A [8000-48000]- Audio sample rate in Hz: 8000/16000/32000/44100/48000 (default: 16000)\n"
         "-R [1-192000]  - Audio bitrate in bits/sec (AAC: 14500~192000)      (default: 16000)\n"
         "-S [samples]   - Samples per frame (AAC: 1024*n, PCM: 250~2048, ADPCM: 505*n, G711: 320*n)\n"
         "-C [8|16]      - Audio sample size in bits                          (default: 16)\n"
         "-P [1|2]       - Audio channel type: 1=mono 2=stereo                (default: 1)\n"
-        "-q             - Disable audio on the RTSP stream                   (default: audio on)\n"
+        "-q             - Disable audio on the RTSP stream                   (default: audio on)\n\n"
+
+        "Capture / Encoder options:\n"
+        "-F [mode]      - Flip capture: h, v, hv, or 0 (default: none)\n"
+        "-G [degrees]   - Rotate capture: 0, 90, 180, 270  (default: 0)\n"
+        "-V [profile]   - H264 profile: baseline|main|high|default  (default: default)\n"
+        "-L [level]     - H264 level: 10-51 (e.g. 31=3.1, 40=4.0, 41=4.1)  (default: 0)\n"
+        "-E [coding]    - H264 entropy coding: cavlc|cabac|default  (default: default)\n"
+        "-I [preset]    - H264 config: perf|light|quality|default  (default: default)\n"
+        "-U [0|1]       - VUI full-range color (0=limited, 1=full)  (default: 0)\n"
+        "-N [WxH]       - Sample aspect ratio (e.g. 1x1, 4:3)      (default: 1x1)\n"
     );
 
     exit(EXIT_FAILURE);
@@ -1863,6 +1928,18 @@ int main(int argc, char *argv[])
     cliArgs.audio_frame_samples = 1024;
     cliArgs.audio_channel_type  = GM_MONO;
     cliArgs.audio_encode_type   = GM_AAC;
+
+    cliArgs.h_flip       = 0;
+    cliArgs.v_flip       = 0;
+    cliArgs.rotation     = 0;
+    cliArgs.h264_profile = 0;
+    cliArgs.h264_level   = 0;
+    cliArgs.h264_config  = 0;
+    cliArgs.h264_coding  = 0;
+    cliArgs.vui_colorspace = 0;
+    cliArgs.vui_full_range = 0;
+    cliArgs.sar_width    = 1;
+    cliArgs.sar_height   = 1;
 
     if (argc > 1) {
         for (i = 1; i < argc; i++) {
@@ -2002,6 +2079,116 @@ int main(int argc, char *argv[])
                     case 'q':
                         cliArgs.audio_enabled = 0;
                         break;
+
+                    case 'F':
+                        {
+                            const char *v = NULL;
+                            if (argv[i][2] != '\0') v = &argv[i][2];
+                            else if ((i + 1) < argc && argv[i + 1][0] != '-') v = argv[++i];
+                            if (v) {
+                                if (strcasecmp(v, "h") == 0)         { cliArgs.h_flip = 1; cliArgs.v_flip = 0; }
+                                else if (strcasecmp(v, "v") == 0)    { cliArgs.h_flip = 0; cliArgs.v_flip = 1; }
+                                else if (strcasecmp(v, "hv") == 0)   { cliArgs.h_flip = 1; cliArgs.v_flip = 1; }
+                                else if (strcmp(v, "0") == 0)         { cliArgs.h_flip = 0; cliArgs.v_flip = 0; }
+                                else {
+                                    syslog(LOG_DAEMON | LOG_ERR, "Invalid flip mode: %s (use h, v, hv, or 0)", v);
+                                    return 1;
+                                }
+                            }
+                        }
+                        break;
+
+                    case 'G':
+                        cliArgs.rotation = atoi(&argv[i][2]);
+                        if (argv[i][2] == '\0' && (i + 1) < argc && argv[i + 1][0] != '-')
+                            cliArgs.rotation = atoi(argv[++i]);
+                        if (cliArgs.rotation != 0 && cliArgs.rotation != 90 &&
+                            cliArgs.rotation != 180 && cliArgs.rotation != 270) {
+                            syslog(LOG_DAEMON | LOG_ERR, "Rotation must be 0, 90, 180, or 270 (got %d)", cliArgs.rotation);
+                            return 1;
+                        }
+                        break;
+
+                    case 'V':
+                        {
+                            const char *v = NULL;
+                            if (argv[i][2] != '\0') v = &argv[i][2];
+                            else if ((i + 1) < argc && argv[i + 1][0] != '-') v = argv[++i];
+                            if (v) {
+                                if (strcasecmp(v, "baseline") == 0)      cliArgs.h264_profile = GM_H264E_BASELINE_PROFILE;
+                                else if (strcasecmp(v, "main") == 0)     cliArgs.h264_profile = GM_H264E_MAIN_PROFILE;
+                                else if (strcasecmp(v, "high") == 0)     cliArgs.h264_profile = GM_H264E_HIGH_PROFILE;
+                                else if (strcasecmp(v, "default") == 0)  cliArgs.h264_profile = GM_H264E_DEFAULT_PROFILE;
+                                else {
+                                    syslog(LOG_DAEMON | LOG_ERR, "Invalid H264 profile: %s", v);
+                                    return 1;
+                                }
+                            }
+                        }
+                        break;
+
+                    case 'L':
+                        cliArgs.h264_level = atoi(&argv[i][2]);
+                        if (argv[i][2] == '\0' && (i + 1) < argc && argv[i + 1][0] != '-')
+                            cliArgs.h264_level = atoi(argv[++i]);
+                        break;
+
+                    case 'E':
+                        {
+                            const char *v = NULL;
+                            if (argv[i][2] != '\0') v = &argv[i][2];
+                            else if ((i + 1) < argc && argv[i + 1][0] != '-') v = argv[++i];
+                            if (v) {
+                                if (strcasecmp(v, "cavlc") == 0)        cliArgs.h264_coding = GM_H264E_CAVLC_CODING;
+                                else if (strcasecmp(v, "cabac") == 0)   cliArgs.h264_coding = GM_H264E_CABAC_CODING;
+                                else if (strcasecmp(v, "default") == 0) cliArgs.h264_coding = GM_H264E_DEFAULT_CODING;
+                                else {
+                                    syslog(LOG_DAEMON | LOG_ERR, "Invalid H264 coding: %s", v);
+                                    return 1;
+                                }
+                            }
+                        }
+                        break;
+
+                    case 'I':
+                        {
+                            const char *v = NULL;
+                            if (argv[i][2] != '\0') v = &argv[i][2];
+                            else if ((i + 1) < argc && argv[i + 1][0] != '-') v = argv[++i];
+                            if (v) {
+                                if (strcasecmp(v, "perf") == 0)         cliArgs.h264_config = GM_H264E_PERFORMANCE_CONFIG;
+                                else if (strcasecmp(v, "light") == 0)   cliArgs.h264_config = GM_H264E_LIGHT_QUALITY_CONFIG;
+                                else if (strcasecmp(v, "quality") == 0) cliArgs.h264_config = GM_H264E_QUALITY_CONFIG;
+                                else if (strcasecmp(v, "default") == 0) cliArgs.h264_config = GM_H264E_DEFAULT_CONFIG;
+                                else {
+                                    syslog(LOG_DAEMON | LOG_ERR, "Invalid H264 config: %s", v);
+                                    return 1;
+                                }
+                            }
+                        }
+                        break;
+
+                    case 'U':
+                        cliArgs.vui_full_range = atoi(&argv[i][2]);
+                        if (argv[i][2] == '\0' && (i + 1) < argc && argv[i + 1][0] != '-')
+                            cliArgs.vui_full_range = atoi(argv[++i]);
+                        break;
+
+                    case 'N':
+                        {
+                            const char *v = NULL;
+                            if (argv[i][2] != '\0') v = &argv[i][2];
+                            else if ((i + 1) < argc && argv[i + 1][0] != '-') v = argv[++i];
+                            if (v) {
+                                if (sscanf(v, "%dx%d", &cliArgs.sar_width, &cliArgs.sar_height) != 2 &&
+                                    sscanf(v, "%d:%d", &cliArgs.sar_width, &cliArgs.sar_height) != 2) {
+                                    syslog(LOG_DAEMON | LOG_ERR, "Invalid SAR format: %s (use WxH e.g. 1x1 or 4:3)", v);
+                                    return 1;
+                                }
+                            }
+                        }
+                        break;
+
                     default:
                         log_error("Unknown argument: %s", argv[i]);
                         print_usage();
