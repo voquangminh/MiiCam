@@ -2161,6 +2161,7 @@ void *encode_thread(void *ptr)
     int diff;
 
     memset(poll_fds, 0, sizeof(poll_fds));
+    memset(first_play, -1, sizeof(first_play));
 
     for (cap_ch = 0; cap_ch < CAP_CH_NUM; cap_ch++) {
         for (cap_path = 0; cap_path < CAP_PATH_NUM; cap_path++) {
