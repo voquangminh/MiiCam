@@ -1970,8 +1970,8 @@ int main(int argc, char *argv[])
     cliArgs.h264_level   = 0;
     cliArgs.h264_config  = 0;
     cliArgs.h264_coding  = 0;
-    cliArgs.vui_colorspace = 0;
-    cliArgs.vui_full_range = 0;
+    cliArgs.vui_colorspace = 1;  /* BT.709 */
+    cliArgs.vui_full_range = 1;  /* full range 0-255 */
     cliArgs.sar_width    = 1;
     cliArgs.sar_height   = 1;
 

@@ -2807,8 +2807,8 @@ int main(int argc, char *argv[])
     cliArgs.h264_coding  = 0;
 
     /* VUI defaults */
-    cliArgs.vui_colorspace = 0;
-    cliArgs.vui_full_range = 0;
+    cliArgs.vui_colorspace = 1;  /* BT.709 */
+    cliArgs.vui_full_range = 1;  /* full range 0-255 for better color */
 
     /* SAR defaults: 1:1 */
     cliArgs.sar_width    = 1;
