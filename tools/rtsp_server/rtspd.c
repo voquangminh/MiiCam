@@ -314,6 +314,17 @@ struct CommandLineArguments {
     /* Sample aspect ratio (SAR) */
     int sar_width;
     int sar_height;
+
+    /* ROI encoding (gm_enc_roi_attr_t) */
+    int roi_enabled;
+    unsigned int roi_x, roi_y, roi_w, roi_h;
+
+    /* ROI QP regions (gm_h264_roiqp_attr_t) - 8 regions */
+    int roiqp_enabled;
+
+    /* Fractional framerate (gm_h264e_attr_t.fps_ratio) */
+    int fps_ratio_num;
+    int fps_ratio_den;
 } cliArgs;
 
 /* Read HOSTNAME from config file. Try common locations. */
@@ -1719,6 +1730,12 @@ void gm_enc_init(int cap_ch, int cap_path, int rec_track, int enc_type, int mode
             if (cliArgs.h264_coding)
                 h264e_attr.profile_setting.coding = (gm_h264e_coding_t) cliArgs.h264_coding;
 
+            /* Apply fractional framerate if configured */
+            if (cliArgs.fps_ratio_num > 0 && cliArgs.fps_ratio_den > 0) {
+                h264e_attr.frame_info.fps_ratio.numerator   = cliArgs.fps_ratio_num;
+                h264e_attr.frame_info.fps_ratio.denominator = cliArgs.fps_ratio_den;
+            }
+
             gm_set_attr(param->enc[rec_track].obj, &h264e_attr);
 
 /* H264 advanced */
@@ -1728,20 +1745,38 @@ void gm_enc_init(int cap_ch, int cap_path, int rec_track, int enc_type, int mode
 			h264_adv.gray_scale = 0;
 			gm_set_attr(param->enc[rec_track].obj, &h264_adv);
 
-            /* Apply VUI color info and SAR */
-            if (cliArgs.vui_colorspace || cliArgs.vui_full_range ||
-                cliArgs.sar_width != 1 || cliArgs.sar_height != 1) {
+            /* Always apply VUI color info and SAR */
+            {
                 DECLARE_ATTR(vui_attr, gm_h264_vui_attr_t);
                 vui_attr.param_info.param.matrix_coefficient = (char) cliArgs.vui_colorspace;
                 vui_attr.param_info.param.full_range = cliArgs.vui_full_range & 1;
-                if (cliArgs.sar_width > 0 && cliArgs.sar_height > 0) {
-                    vui_attr.sar_info.sar.sar_width = cliArgs.sar_width;
-                    vui_attr.sar_info.sar.sar_height = cliArgs.sar_height;
-                }
+                vui_attr.sar_info.sar.sar_width = cliArgs.sar_width;
+                vui_attr.sar_info.sar.sar_height = cliArgs.sar_height;
                 gm_set_attr(param->enc[rec_track].obj, &vui_attr);
-                log_info("H264 VUI: colorspace=%d full_range=%d SAR=%d:%d",
-                         cliArgs.vui_colorspace, cliArgs.vui_full_range,
-                         cliArgs.sar_width, cliArgs.sar_height);
+            }
+
+            /* Apply ROI encoding if configured */
+            if (cliArgs.roi_enabled) {
+                DECLARE_ATTR(roi_attr, gm_enc_roi_attr_t);
+                roi_attr.enabled = 1;
+                roi_attr.rect.x = cliArgs.roi_x;
+                roi_attr.rect.y = cliArgs.roi_y;
+                roi_attr.rect.width = cliArgs.roi_w;
+                roi_attr.rect.height = cliArgs.roi_h;
+                gm_set_attr(param->enc[rec_track].obj, &roi_attr);
+            }
+
+            /* Apply ROI QP 8-region mode if configured */
+            if (cliArgs.roiqp_enabled) {
+                DECLARE_ATTR(roiqp_attr, gm_h264_roiqp_attr_t);
+                roiqp_attr.enabled = 1;
+                /* Default: center 50% region gets lower QP (better quality) */
+                memset(roiqp_attr.rect, 0, sizeof(roiqp_attr.rect));
+                roiqp_attr.rect[0].x = width / 4;
+                roiqp_attr.rect[0].y = height / 4;
+                roiqp_attr.rect[0].width = width / 2;
+                roiqp_attr.rect[0].height = height / 2;
+                gm_set_attr(param->enc[rec_track].obj, &roiqp_attr);
             }
 
             memcpy(&param->enc[rec_track].codec.h264e_attr, &h264e_attr, sizeof(gm_h264e_attr_t));
@@ -2702,6 +2737,9 @@ static void print_usage(void)
         "-I [preset]    - H264 config: perf|light|quality|default  (default: default)\n"
         "-U [0|1]       - VUI full-range color (0=limited, 1=full)  (default: 0)\n"
         "-N [WxH]       - Sample aspect ratio (e.g. 1x1, 4:3)      (default: 1x1)\n"
+        "-Z [x,y,w,h]  - ROI encoding region in pixels (default: off)\n"
+        "-Q [on|off]    - Enable 8-region ROI QP (default: off)\n"
+        "-Y [num:den]   - Fractional framerate (e.g. 30000:1001 for 29.97)\n"
     );
 
 	exit(EXIT_FAILURE);
@@ -2771,6 +2809,17 @@ int main(int argc, char *argv[])
     /* SAR defaults: 1:1 */
     cliArgs.sar_width    = 1;
     cliArgs.sar_height   = 1;
+
+    /* ROI defaults: disabled */
+    cliArgs.roi_enabled  = 0;
+    cliArgs.roi_x = cliArgs.roi_y = cliArgs.roi_w = cliArgs.roi_h = 0;
+
+    /* ROI QP defaults: disabled */
+    cliArgs.roiqp_enabled = 0;
+
+    /* Fractional framerate defaults: 0 = use integer framerate */
+    cliArgs.fps_ratio_num = 0;
+    cliArgs.fps_ratio_den = 0;
 
     if (argc > 1) {
         for (i = 1; i < argc; i++) {
@@ -3031,6 +3080,54 @@ int main(int argc, char *argv[])
                             }
                         }
                         break;
+
+                    /* --- ROI encoding region (gm_enc_roi_attr_t) --- */
+                    case 'Z':
+                        {
+                            const char *v = NULL;
+                            if (argv[i][2] != '\0') v = &argv[i][2];
+                            else if ((i + 1) < argc && argv[i + 1][0] != '-') v = argv[++i];
+                            if (v && strcmp(v, "off") != 0 && strcmp(v, "0") != 0) {
+                                if (sscanf(v, "%u,%u,%u,%u", &cliArgs.roi_x, &cliArgs.roi_y, &cliArgs.roi_w, &cliArgs.roi_h) != 4) {
+                                    log_error("Invalid ROI format: %s (use x,y,w,h or off)", v);
+                                    return 1;
+                                }
+                                cliArgs.roi_enabled = 1;
+                            } else {
+                                cliArgs.roi_enabled = 0;
+                            }
+                        }
+                        break;
+
+                    /* --- ROI QP 8-region mode (gm_h264_roiqp_attr_t) --- */
+                    case 'Q':
+                        {
+                            const char *v = NULL;
+                            if (argv[i][2] != '\0') v = &argv[i][2];
+                            else if ((i + 1) < argc && argv[i + 1][0] != '-') v = argv[++i];
+                            if (v && (strcmp(v, "1") == 0 || strcasecmp(v, "on") == 0))
+                                cliArgs.roiqp_enabled = 1;
+                            else
+                                cliArgs.roiqp_enabled = 0;
+                        }
+                        break;
+
+                    /* --- Fractional framerate (fps_ratio) --- */
+                    case 'Y':
+                        {
+                            const char *v = NULL;
+                            if (argv[i][2] != '\0') v = &argv[i][2];
+                            else if ((i + 1) < argc && argv[i + 1][0] != '-') v = argv[++i];
+                            if (v) {
+                                if (sscanf(v, "%d:%d", &cliArgs.fps_ratio_num, &cliArgs.fps_ratio_den) != 2 ||
+                                    cliArgs.fps_ratio_num <= 0 || cliArgs.fps_ratio_den <= 0) {
+                                    log_error("Invalid fps_ratio: %s (use num:den e.g. 30000:1001)", v);
+                                    return 1;
+                                }
+                            }
+                        }
+                        break;
+
                     default:
                         log_error("Unknown argument: %s", argv[i]);
                         print_usage();
