@@ -1748,8 +1748,12 @@ void gm_enc_init(int cap_ch, int cap_path, int rec_track, int enc_type, int mode
             /* Always apply VUI color info and SAR */
             {
                 DECLARE_ATTR(vui_attr, gm_h264_vui_attr_t);
+                vui_attr.param_info.param.video_format = 5;   /* component */
+                vui_attr.param_info.param.colour_primaries = 1;   /* BT.709 */
+                vui_attr.param_info.param.transfer_characteristics = 1;   /* BT.709 */
                 vui_attr.param_info.param.matrix_coefficient = (char) cliArgs.vui_colorspace;
                 vui_attr.param_info.param.full_range = cliArgs.vui_full_range & 1;
+                vui_attr.param_info.param.timing_info_present_flag = 0;
                 vui_attr.sar_info.sar.sar_width = cliArgs.sar_width;
                 vui_attr.sar_info.sar.sar_height = cliArgs.sar_height;
                 gm_set_attr(param->enc[rec_track].obj, &vui_attr);
