@@ -2739,9 +2739,9 @@ static void print_usage(void)
         "-L [level]     - H264 level: 10-51 (e.g. 31=3.1, 40=4.0, 41=4.1)  (default: 0)\n"
         "-E [coding]    - H264 entropy coding: cavlc|cabac|default  (default: default)\n"
         "-I [preset]    - H264 config: perf|light|quality|default  (default: default)\n"
-        "-U [0|1]       - VUI full-range color (0=limited, 1=full)  (default: 0)\n"
+        "-U [0|1]       - VUI full-range color (0=limited, 1=full)  (default: 1)\n"
         "-N [WxH]       - Sample aspect ratio (e.g. 1x1, 4:3)      (default: 1x1)\n"
-        "-Z [x,y,w,h]  - ROI encoding region in pixels (default: off)\n"
+        "-Z [x,y,w,h]   - ROI encoding region in pixels (default: off)\n"
         "-Q [on|off]    - Enable 8-region ROI QP (default: off)\n"
         "-Y [num:den]   - Fractional framerate (e.g. 30000:1001 for 29.97)\n"
     );

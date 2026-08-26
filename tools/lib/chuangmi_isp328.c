@@ -850,13 +850,13 @@ int print_camera_info_json(void)
 {
         fprintf(stdout, "{");
         fprintf(stdout, "\"brightness\":%d,", brightness_get());
-        fprintf(stdout, "\"contrast\":%d,", contrast_get());
-        fprintf(stdout, "\"hue\":%d,", hue_get());
+        fprintf(stdout, "\"contrast  \":%d,", contrast_get());
+        fprintf(stdout, "\"hue       \":%d,", hue_get());
         fprintf(stdout, "\"saturation\":%d,", saturation_get());
-        fprintf(stdout, "\"denoise\":%d,", denoise_get());
-        fprintf(stdout, "\"sharpness\":%d,", sharpness_get());
+        fprintf(stdout, "\"denoise   \":%d,", denoise_get());
+        fprintf(stdout, "\"sharpness \":%d,", sharpness_get());
         fprintf(stdout, "\"gamma_type\":%d,", gamma_type_get());
-        fprintf(stdout, "\"dr_mode\":%d", dr_mode_get());
+        fprintf(stdout, "\"dr_mode   \":%d", dr_mode_get());
         fprintf(stdout, "}");
 
         return 0;
@@ -866,13 +866,13 @@ int print_camera_info_json(void)
 int print_camera_info_shell(void)
 {
         fprintf(stdout, "BRIGHTNESS=\"%d\"\n", brightness_get());
-        fprintf(stdout, "CONTRAST=\"%d\"\n",   contrast_get());
-        fprintf(stdout, "HUE=\"%d\"\n",        hue_get());
+        fprintf(stdout, "CONTRAST=  \"%d\"\n", contrast_get());
+        fprintf(stdout, "HUE=       \"%d\"\n", hue_get());
         fprintf(stdout, "SATURATION=\"%d\"\n", saturation_get());
-        fprintf(stdout, "DENOISE=\"%d\"\n",    denoise_get());
-        fprintf(stdout, "SHARPNESS=\"%d\"\n",   sharpness_get());
-        fprintf(stdout, "GAMMA=\"%d\"\n",   gamma_type_get());
-        fprintf(stdout, "DR_MODE=\"%d\"\n",   dr_mode_get());
+        fprintf(stdout, "DENOISE=   \"%d\"\n", denoise_get());
+        fprintf(stdout, "SHARPNESS= \"%d\"\n", sharpness_get());
+        fprintf(stdout, "GAMMA=     \"%d\"\n", gamma_type_get());
+        fprintf(stdout, "DR_MODE=   \"%d\"\n", dr_mode_get());
         return 0;
 }
 
@@ -886,8 +886,8 @@ int print_camera_info(void)
         fprintf(stdout, "- Saturation: %d\n", saturation_get());
         fprintf(stdout, "- Denoise:    %d\n", denoise_get());
         fprintf(stdout, "- Sharpness:  %d\n", sharpness_get());
-        fprintf(stdout, "- Gamma:  %d\n", gamma_type_get());
-        fprintf(stdout, "- DR_MODE:  %d\n", dr_mode_get());
+        fprintf(stdout, "- Gamma:      %d\n", gamma_type_get());
+        fprintf(stdout, "- DR_MODE:    %s\n", dr_mode_get());
         fprintf(stdout, "\n");
 
         return 0;

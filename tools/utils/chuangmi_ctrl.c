@@ -102,6 +102,7 @@ void show_help(void)
             "\tled:   0 = blue, 1 = orange\n"
             "\tvalue: 0 = on, 1 = off, 2 = blink\n"
             "GETSTAT\n"
+            "\tGet current EV and IR values\n"
             "MOTION,<param_id>,<value>\n"
             "\tSet motion detection parameter (param_id: 0=alpha, 1=threshold)\n"
             "TAMPER,<sensitive_b>,<threshold>,<sensitive_h>\n"

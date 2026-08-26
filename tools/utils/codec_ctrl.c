@@ -13,7 +13,7 @@ static void print_usage(void)
 {
     printf(
         "Usage:\n"
-        "  codec_ctl <command> [args]\n"
+        "  codec_ctrl <command> [args]\n"
         "\n"
         "Commands:\n"
         "  status          Show current encoder settings (human-readable)\n"
@@ -26,11 +26,11 @@ static void print_usage(void)
         "  zoom            Show current zoom/pan/tilt from shared state\n"
         "\n"
         "Examples:\n"
-        "  codec_ctl status        # show all encoder settings\n"
-        "  codec_ctl status -j     # show as JSON\n"
-        "  codec_ctl keyframe      # force keyframe now\n"
-        "  codec_ctl bitrate 2048  # change to 2048 kbps\n"
-        "  codec_ctl fps 25        # change to 25 fps\n"
+        "  codec_ctrl status        # show all encoder settings\n"
+        "  codec_ctrl status -j     # show as JSON\n"
+        "  codec_ctrl keyframe      # force keyframe now\n"
+        "  codec_ctrl bitrate 2048  # change to 2048 kbps\n"
+        "  codec_ctrl fps 25        # change to 25 fps\n"
     );
     exit(EXIT_FAILURE);
 }
@@ -234,19 +234,19 @@ int main(int argc, char *argv[])
         return write_ctrl("keyframe");
     }
     else if (strcmp(argv[argi], "bitrate") == 0) {
-        if (argi + 1 >= argc) { fprintf(stderr, "Usage: codec_ctl bitrate <kbps>\n"); return 1; }
+        if (argi + 1 >= argc) { fprintf(stderr, "Usage: codec_ctrl bitrate <kbps>\n"); return 1; }
         char cmd[64];
         snprintf(cmd, sizeof(cmd), "bitrate %s", argv[argi + 1]);
         return write_ctrl(cmd);
     }
     else if (strcmp(argv[argi], "fps") == 0) {
-        if (argi + 1 >= argc) { fprintf(stderr, "Usage: codec_ctl fps <num>\n"); return 1; }
+        if (argi + 1 >= argc) { fprintf(stderr, "Usage: codec_ctrl fps <num>\n"); return 1; }
         char cmd[64];
         snprintf(cmd, sizeof(cmd), "fps %s", argv[argi + 1]);
         return write_ctrl(cmd);
     }
     else if (strcmp(argv[argi], "gop") == 0) {
-        if (argi + 1 >= argc) { fprintf(stderr, "Usage: codec_ctl gop <num>\n"); return 1; }
+        if (argi + 1 >= argc) { fprintf(stderr, "Usage: codec_ctrl gop <num>\n"); return 1; }
         char cmd[64];
         snprintf(cmd, sizeof(cmd), "gop %s", argv[argi + 1]);
         return write_ctrl(cmd);

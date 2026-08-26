@@ -9,7 +9,7 @@
 static void print_usage_and_exit(void)
 {
     printf("Usage:\n");
-    printf("   camera_adjust [-s|-g] -t [brightness|contrast|hue|saturation|denoise|sharpness]\n");
+    printf("   camera_adjust [-s|-g] -t [brightness|contrast|hue|saturation|denoise|sharpness|gamma_type|dr_mode]\n");
     printf(
         "\nAvailable options:\n"
         "  -s    set\n"
@@ -143,8 +143,20 @@ int main(int argc, char *argv[])
         else if (get == 1)
             success = sharpness_print();
     }
+    else if (strcmp(setting, "gamma_type") == 0) {
+        if (set == 1)
+            success = gamma_type_set(value);
+        else if (get == 1)
+            success = gamma_type_print();
+    }
+    else if (strcmp(setting, "dr_mode") == 0) {
+        if (set == 1)
+            success = dr_mode_set(value);
+        else if (get == 1)
+            success = dr_mode_print();
+    }
     else {
-        fprintf(stderr, "Options for -t are: [brightness|contrast|hue|saturation|denoise|sharpness]!\n");
+        fprintf(stderr, "Options for -t are: [brightness|contrast|hue|saturation|denoise|sharpness|gamma_type|dr_mode]!\n");
         print_usage_and_exit();
     }
 
