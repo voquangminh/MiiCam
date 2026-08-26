@@ -292,20 +292,8 @@ $(UTILS): $(PREFIXDIR)/bin $(LIBS)
 		-lchuangmi_pwm    \
 		-lchuangmi_codec  \
 		-lchuangmi_sensor \
-		-L$(GMLIBDIR)/lib -lgm && \
+		-L$(GMLIBDIR)/lib -lgm -lpthread && \
 	touch $(BUILDDIR)/$(@F)
-
-$(BUILDDIR)/codec_ctl: $(PREFIXDIR)/bin $(LIBS)
-	@mkdir -p $(BUILDDIR) $(TOOLSDIR)/bin
-	$(TARGET)-gcc -Wall -o $(TOOLSDIR)/bin/codec_ctl \
-		$(UTILSDIR)/codec_ctl.c && \
-	touch $(BUILDDIR)/codec_ctl
-
-$(BUILDDIR)/motor_control: $(PREFIXDIR)/bin
-	@mkdir -p $(BUILDDIR) $(TOOLSDIR)/bin
-	$(TARGET)-gcc -Wall -o $(TOOLSDIR)/bin/motor_control \
-		$(UTILSDIR)/motor_control.c -lpthread && \
-	touch $(BUILDDIR)/motor_control
 
 
 #################################################################

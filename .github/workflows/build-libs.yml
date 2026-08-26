@@ -42,17 +42,17 @@ jobs:
           export PATH="$REAL_BIN_DIR:$PATH"
           REAL_TARGET_PREFIX=${REAL_BIN_DIR}/arm-unknown-linux-uclibcgnueabi
           make TARGET="$REAL_TARGET_PREFIX" libs
-          make TARGET="$REAL_TARGET_PREFIX" build/chuangmi_ctrl build/codec_ctl build/motor_control
+          make TARGET="$REAL_TARGET_PREFIX" utils
           echo "--- Kết quả ---"
           ls -la tools/lib/*.so
-          ls -la tools/bin/chuangmi_ctrl tools/bin/codec_ctl tools/bin/motor_control
+          ls -la tools/bin/
 
       - name: Commit và Push lên GitHub
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          git add -f tools/lib/*.so tools/bin/chuangmi_ctrl tools/bin/codec_ctl tools/bin/motor_control
+          git add -f tools/lib/*.so tools/bin/*
 
           git commit -m "Automated build: update camera libraries + binaries" || echo "No changes to commit"
           git pull origin HEAD --no-rebase || true
