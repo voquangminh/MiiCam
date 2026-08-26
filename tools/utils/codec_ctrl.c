@@ -16,21 +16,20 @@ static void print_usage(void)
         "  codec_ctrl <command> [args]\n"
         "\n"
         "Commands:\n"
-        "  status          Show current encoder settings (human-readable)\n"
-        "  status -j       Show current encoder settings (JSON)\n"
-        "  status -k       Show current encoder settings (shell key=value)\n"
-        "  keyframe        Request an immediate keyframe from the running encoder\n"
-        "  bitrate <kbps>  Signal rtspd to change video bitrate (requires rtspd)\n"
-        "  fps <num>       Signal rtspd to change framerate (requires rtspd)\n"
-        "  gop <num>       Signal rtspd to change GOP length (requires rtspd)\n"
-        "  zoom            Show current zoom/pan/tilt from shared state\n"
+        "  status              Show video + audio encoder settings\n"
+        "  status -j           Show as JSON\n"
+        "  status -k           Show as shell key=value\n"
+        "  keyframe            Request an immediate keyframe\n"
+        "  bitrate <kbps>      Change video bitrate (requires rtspd)\n"
+        "  fps <num>           Change framerate (requires rtspd)\n"
+        "  gop <num>           Change GOP length (requires rtspd)\n"
+        "  zoom                Show zoom/pan/tilt from shared state\n"
         "\n"
         "Examples:\n"
-        "  codec_ctrl status        # show all encoder settings\n"
-        "  codec_ctrl status -j     # show as JSON\n"
-        "  codec_ctrl keyframe      # force keyframe now\n"
-        "  codec_ctrl bitrate 2048  # change to 2048 kbps\n"
-        "  codec_ctrl fps 25        # change to 25 fps\n"
+        "  codec_ctrl status            # show all settings\n"
+        "  codec_ctrl status -j         # show as JSON\n"
+        "  codec_ctrl bitrate 4096      # change to 4096 kbps\n"
+        "  codec_ctrl fps 25            # change to 25 fps\n"
     );
     exit(EXIT_FAILURE);
 }
@@ -80,44 +79,84 @@ static void parse_value(const char *line, const char *key, int *out)
     *out = atoi(p);
 }
 
+#define PARSE_ALL_VIDEO(line, v) do { \
+    parse_value(line, "dim_width(",    &(v)->w);          \
+    parse_value(line, "dim_height(",   &(v)->h);          \
+    parse_value(line, "framerate(",    &(v)->fps);        \
+    parse_value(line, "gop(",          &(v)->gop);        \
+    parse_value(line, "init_quant(",   &(v)->init_q);     \
+    parse_value(line, "min_quant(",    &(v)->min_q);      \
+    parse_value(line, "max_quant(",    &(v)->max_q);      \
+    parse_value(line, "bitrate_max(",  &(v)->bitrate_max); \
+    parse_value(line, "multi_slice(",  &(v)->ms);         \
+    parse_value(line, "rate_mode(",    &(v)->rm);         \
+} while(0)
+
+#define PARSE_ALL_AUDIO(line, a) do { \
+    parse_value(line, "sample_rate(",   &(a)->sample_rate); \
+    parse_value(line, "sample_size(",   &(a)->sample_size); \
+    parse_value(line, "frame_samples(", &(a)->frame_samples); \
+    parse_value(line, "block_count(",   &(a)->block_count); \
+} while(0)
+
+struct video_info {
+    int w, h, fps, gop, bitrate, bitrate_max;
+    int init_q, min_q, max_q, ms, rm;
+};
+
+struct audio_info {
+    int sample_rate, sample_size, bitrate, frame_samples, block_count;
+};
+
+static void parse_proc(char *data, struct video_info *v, struct audio_info *a)
+{
+    int in_video = 0, in_audio = 0;
+    char *line = strtok(data, "\n");
+    while (line) {
+        if (strstr(line, "H264E("))  { in_video = 1; in_audio = 0; }
+        if (strstr(line, "AUDIO_ENC(")) { in_audio = 1; in_video = 0; }
+
+        if (in_video) {
+            PARSE_ALL_VIDEO(line, v);
+            parse_value(line, "bitrate(", &v->bitrate);
+        }
+        if (in_audio) {
+            PARSE_ALL_AUDIO(line, a);
+            parse_value(line, "bitrate(", &a->bitrate);
+        }
+        line = strtok(NULL, "\n");
+    }
+}
+
 static void cmd_status_json(void)
 {
     char *data = read_file(GMLIB_SETTING);
     if (!data) { fprintf(stderr, "Cannot read %s\n", GMLIB_SETTING); return; }
 
-    int w = 0, h = 0, fps = 0, gop = 0, bitrate = 0, bitrate_max = 0;
-    int init_q = 0, min_q = 0, max_q = 0, ms = 0, rm = 0;
-    int ev = 0, ir = 0;
-
-    char *line = strtok(data, "\n");
-    while (line) {
-        parse_value(line, "dim_width(", &w);
-        parse_value(line, "dim_height(", &h);
-        parse_value(line, "framerate(", &fps);
-        parse_value(line, "gop(", &gop);
-        parse_value(line, "init_quant(", &init_q);
-        parse_value(line, "min_quant(", &min_q);
-        parse_value(line, "max_quant(", &max_q);
-        parse_value(line, "bitrate(", &bitrate);
-        parse_value(line, "bitrate_max(", &bitrate_max);
-        parse_value(line, "multi_slice(", &ms);
-        parse_value(line, "rate_mode(", &rm);
-        line = strtok(NULL, "\n");
-    }
+    struct video_info v = {0};
+    struct audio_info a = {0};
+    parse_proc(data, &v, &a);
 
     printf("{\n");
     printf("  \"video\": {\n");
-    printf("    \"width\": %d,\n", w);
-    printf("    \"height\": %d,\n", h);
-    printf("    \"framerate\": %d,\n", fps);
-    printf("    \"gop\": %d,\n", gop);
-    printf("    \"bitrate\": %d,\n", bitrate);
-    printf("    \"bitrate_max\": %d,\n", bitrate_max);
-    printf("    \"init_quant\": %d,\n", init_q);
-    printf("    \"min_quant\": %d,\n", min_q);
-    printf("    \"max_quant\": %d,\n", max_q);
-    printf("    \"rate_mode\": %d,\n", rm);
-    printf("    \"multi_slice\": %d\n", ms);
+    printf("    \"width\": %d,\n", v.w);
+    printf("    \"height\": %d,\n", v.h);
+    printf("    \"framerate\": %d,\n", v.fps);
+    printf("    \"gop\": %d,\n", v.gop);
+    printf("    \"bitrate\": %d,\n", v.bitrate);
+    printf("    \"bitrate_max\": %d,\n", v.bitrate_max);
+    printf("    \"init_quant\": %d,\n", v.init_q);
+    printf("    \"min_quant\": %d,\n", v.min_q);
+    printf("    \"max_quant\": %d,\n", v.max_q);
+    printf("    \"rate_mode\": %d,\n", v.rm);
+    printf("    \"multi_slice\": %d\n", v.ms);
+    printf("  },\n");
+    printf("  \"audio\": {\n");
+    printf("    \"sample_rate\": %d,\n", a.sample_rate);
+    printf("    \"sample_size\": %d,\n", a.sample_size);
+    printf("    \"bitrate\": %d,\n", a.bitrate);
+    printf("    \"frame_samples\": %d,\n", a.frame_samples);
+    printf("    \"block_count\": %d\n", a.block_count);
     printf("  }\n");
     printf("}\n");
 
@@ -129,36 +168,26 @@ static void cmd_status_shell(void)
     char *data = read_file(GMLIB_SETTING);
     if (!data) { fprintf(stderr, "Cannot read %s\n", GMLIB_SETTING); return; }
 
-    int w = 0, h = 0, fps = 0, gop = 0, bitrate = 0, bitrate_max = 0;
-    int init_q = 0, min_q = 0, max_q = 0, ms = 0, rm = 0;
+    struct video_info v = {0};
+    struct audio_info a = {0};
+    parse_proc(data, &v, &a);
 
-    char *line = strtok(data, "\n");
-    while (line) {
-        parse_value(line, "dim_width(", &w);
-        parse_value(line, "dim_height(", &h);
-        parse_value(line, "framerate(", &fps);
-        parse_value(line, "gop(", &gop);
-        parse_value(line, "init_quant(", &init_q);
-        parse_value(line, "min_quant(", &min_q);
-        parse_value(line, "max_quant(", &max_q);
-        parse_value(line, "bitrate(", &bitrate);
-        parse_value(line, "bitrate_max(", &bitrate_max);
-        parse_value(line, "multi_slice(", &ms);
-        parse_value(line, "rate_mode(", &rm);
-        line = strtok(NULL, "\n");
-    }
-
-    printf("CODEC_WIDTH=%d\n", w);
-    printf("CODEC_HEIGHT=%d\n", h);
-    printf("CODEC_FRAMERATE=%d\n", fps);
-    printf("CODEC_GOP=%d\n", gop);
-    printf("CODEC_BITRATE=%d\n", bitrate);
-    printf("CODEC_BITRATE_MAX=%d\n", bitrate_max);
-    printf("CODEC_INIT_QUANT=%d\n", init_q);
-    printf("CODEC_MIN_QUANT=%d\n", min_q);
-    printf("CODEC_MAX_QUANT=%d\n", max_q);
-    printf("CODEC_RATE_MODE=%d\n", rm);
-    printf("CODEC_MULTI_SLICE=%d\n", ms);
+    printf("CODEC_WIDTH=%d\n", v.w);
+    printf("CODEC_HEIGHT=%d\n", v.h);
+    printf("CODEC_FRAMERATE=%d\n", v.fps);
+    printf("CODEC_GOP=%d\n", v.gop);
+    printf("CODEC_BITRATE=%d\n", v.bitrate);
+    printf("CODEC_BITRATE_MAX=%d\n", v.bitrate_max);
+    printf("CODEC_INIT_QUANT=%d\n", v.init_q);
+    printf("CODEC_MIN_QUANT=%d\n", v.min_q);
+    printf("CODEC_MAX_QUANT=%d\n", v.max_q);
+    printf("CODEC_RATE_MODE=%d\n", v.rm);
+    printf("CODEC_MULTI_SLICE=%d\n", v.ms);
+    printf("AUDIO_SAMPLE_RATE=%d\n", a.sample_rate);
+    printf("AUDIO_SAMPLE_SIZE=%d\n", a.sample_size);
+    printf("AUDIO_BITRATE=%d\n", a.bitrate);
+    printf("AUDIO_FRAME_SAMPLES=%d\n", a.frame_samples);
+    printf("AUDIO_BLOCK_COUNT=%d\n", a.block_count);
 
     free(data);
 }
@@ -168,33 +197,25 @@ static void cmd_status_human(void)
     char *data = read_file(GMLIB_SETTING);
     if (!data) { fprintf(stderr, "Cannot read %s\n", GMLIB_SETTING); return; }
 
-    int w = 0, h = 0, fps = 0, gop = 0, bitrate = 0, bitrate_max = 0;
-    int init_q = 0, min_q = 0, max_q = 0, ms = 0, rm = 0;
+    struct video_info v = {0};
+    struct audio_info a = {0};
+    parse_proc(data, &v, &a);
 
-    char *line = strtok(data, "\n");
-    while (line) {
-        parse_value(line, "dim_width(", &w);
-        parse_value(line, "dim_height(", &h);
-        parse_value(line, "framerate(", &fps);
-        parse_value(line, "gop(", &gop);
-        parse_value(line, "init_quant(", &init_q);
-        parse_value(line, "min_quant(", &min_q);
-        parse_value(line, "max_quant(", &max_q);
-        parse_value(line, "bitrate(", &bitrate);
-        parse_value(line, "bitrate_max(", &bitrate_max);
-        parse_value(line, "multi_slice(", &ms);
-        parse_value(line, "rate_mode(", &rm);
-        line = strtok(NULL, "\n");
-    }
-
-    printf("=== Video Encoder Status ===\n");
-    printf("  Resolution:   %dx%d\n", w, h);
-    printf("  Framerate:    %d fps\n", fps);
-    printf("  GOP:          %d\n", gop);
-    printf("  Bitrate:      %d kbps (max: %d)\n", bitrate, bitrate_max);
-    printf("  Quantizer:    init=%d  min=%d  max=%d\n", init_q, min_q, max_q);
-    printf("  Rate mode:    %s\n", rm ? "VBR" : "CBR");
-    printf("  Multi-slice:  %d\n", ms);
+    printf("=== Video Encoder ===\n");
+    printf("  Resolution:     %dx%d\n", v.w, v.h);
+    printf("  Framerate:      %d fps\n", v.fps);
+    printf("  GOP:            %d\n", v.gop);
+    printf("  Bitrate:        %d kbps (max: %d)\n", v.bitrate, v.bitrate_max);
+    printf("  Quantizer:      init=%d  min=%d  max=%d\n", v.init_q, v.min_q, v.max_q);
+    printf("  Rate mode:      %s\n", v.rm ? "VBR" : "CBR");
+    printf("  Multi-slice:    %d\n", v.ms);
+    printf("\n");
+    printf("=== Audio Encoder ===\n");
+    printf("  Sample rate:    %d Hz\n", a.sample_rate);
+    printf("  Sample size:    %d bit\n", a.sample_size);
+    printf("  Bitrate:        %d bps\n", a.bitrate);
+    printf("  Frame samples:  %d\n", a.frame_samples);
+    printf("  Block count:    %d\n", a.block_count);
 
     free(data);
 }
