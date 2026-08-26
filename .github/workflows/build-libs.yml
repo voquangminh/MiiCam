@@ -1,4 +1,4 @@
-name: Build MiiCam Libraries
+name: Build MiiCam Libraries + Binaries
 on:
   workflow_dispatch:
   push:
@@ -8,6 +8,7 @@ on:
       - master
     paths:
       - tools/lib/**
+      - tools/utils/**
       - Makefile
       - .github/workflows/build-libs.yml
 
@@ -32,7 +33,7 @@ jobs:
           sudo ln -sf /usr/lib/i386-linux-gnu/libmpfr.so.6 /usr/lib/i386-linux-gnu/libmpfr.so.4
           sudo ln -sf /usr/lib/i386-linux-gnu/libgmp.so.10 /usr/lib/i386-linux-gnu/libgmp.so.3
 
-      - name: Biên dịch các thư viện libchuangmi_*.so
+      - name: Biên dịch thư viện + binary
         run: |
           REAL_BIN_DIR=$(dirname $(find ${{ github.workspace }}/sdk -name "arm-unknown-linux-uclibcgnueabi-gcc" | head -n 1))
           echo "Đường dẫn Toolchain chuẩn: $REAL_BIN_DIR"
@@ -41,16 +42,18 @@ jobs:
           export PATH="$REAL_BIN_DIR:$PATH"
           REAL_TARGET_PREFIX=${REAL_BIN_DIR}/arm-unknown-linux-uclibcgnueabi
           make TARGET="$REAL_TARGET_PREFIX" libs
-          echo "--- Kết quả trong tools/lib ---"
+          make TARGET="$REAL_TARGET_PREFIX" build/chuangmi_ctrl build/codec_ctl build/motor_control
+          echo "--- Kết quả ---"
           ls -la tools/lib/*.so
+          ls -la tools/bin/chuangmi_ctrl tools/bin/codec_ctl tools/bin/motor_control
 
-      - name: Commit và Push thư viện lên GitHub
+      - name: Commit và Push lên GitHub
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          git add -f tools/lib/*.so
+          git add -f tools/lib/*.so tools/bin/chuangmi_ctrl tools/bin/codec_ctl tools/bin/motor_control
 
-          git commit -m "Automated build: update camera libraries" || echo "No changes to commit"
+          git commit -m "Automated build: update camera libraries + binaries" || echo "No changes to commit"
           git pull origin HEAD --no-rebase || true
           git push origin HEAD
