@@ -1713,7 +1713,7 @@ void gm_enc_init(int cap_ch, int cap_path, int rec_track, int enc_type, int mode
             h264e_attr.ratectl.mode          = mode;
             h264e_attr.ratectl.gop           = 20;			   // * I frame per second, default is 60
             h264e_attr.ratectl.bitrate       = bitrate;
-            h264e_attr.ratectl.bitrate_max   = bitrate;
+            h264e_attr.ratectl.bitrate_max   = 16384;
             h264e_attr.b_frame_num           = 0;              // * B-frames per GOP (H.264 high profile)
             h264e_attr.enable_mv_data        = 0;              // * Disable H.264 motion data output
             h264e_attr.ratectl.init_quant    = 25;
@@ -2185,6 +2185,62 @@ static void *rtspd_zoom_thread(void *arg)
     return NULL;
 }
 
+/* Ctrl thread: polls /tmp/rtspd.ctrl for commands from codec_ctrl.
+ * keyframe is applied live; bitrate/fps/gop trigger an rtspd restart. */
+#define RTSPD_CTRL_FILE    "/tmp/rtspd.ctrl"
+#define RTSPD_ARGS_FILE    "/tmp/rtspd_pending_args"
+static pthread_t ctrl_thread_id = 0;
+
+static void *rtspd_ctrl_thread(void *arg)
+{
+    char buf[128];
+    (void)arg;
+
+    while (rtspd_sysinit) {
+        FILE *f = fopen(RTSPD_CTRL_FILE, "r");
+        if (f) {
+            if (fgets(buf, sizeof(buf), f)) {
+                buf[strcspn(buf, "\r\n")] = '\0';
+
+                if (strcmp(buf, "keyframe") == 0) {
+                    if (bindfd) {
+                        int ret = gm_request_keyframe(bindfd);
+                        log_info("Ctrl: keyframe requested (ret=%d)", ret);
+                    }
+                }
+                else if (strncmp(buf, "bitrate ", 8) == 0) {
+                    int val = atoi(buf + 8);
+                    if (val > 0 && val <= 16384) {
+                        FILE *af = fopen(RTSPD_ARGS_FILE, "w");
+                        if (af) { fprintf(af, "bitrate=%d\n", val); fclose(af); }
+                        log_info("Ctrl: bitrate=%d pending restart", val);
+                    }
+                }
+                else if (strncmp(buf, "fps ", 4) == 0) {
+                    int val = atoi(buf + 4);
+                    if (val > 0 && val <= 30) {
+                        FILE *af = fopen(RTSPD_ARGS_FILE, "w");
+                        if (af) { fprintf(af, "fps=%d\n", val); fclose(af); }
+                        log_info("Ctrl: fps=%d pending restart", val);
+                    }
+                }
+                else if (strncmp(buf, "gop ", 4) == 0) {
+                    int val = atoi(buf + 4);
+                    if (val > 0 && val <= 120) {
+                        FILE *af = fopen(RTSPD_ARGS_FILE, "w");
+                        if (af) { fprintf(af, "gop=%d\n", val); fclose(af); }
+                        log_info("Ctrl: gop=%d pending restart", val);
+                    }
+                }
+            }
+            fclose(f);
+            remove(RTSPD_CTRL_FILE);
+        }
+        usleep(500000);   // * poll every 500ms
+    }
+    return NULL;
+}
+
 void *encode_thread(void *ptr)
 {
     int i, j, ch = 0, ret, cap_ch, cap_path, rec_track, rcv_nr, w, h;
@@ -2642,6 +2698,14 @@ static int rtspd_start(int port)
         pthread_attr_init(&attr);
         pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
         ret = pthread_create(&zoom_thread_id, &attr, &rtspd_zoom_thread, NULL);
+        pthread_attr_destroy(&attr);
+    }
+
+    // * Ctrl Thread (reads /tmp/rtspd.ctrl for codec_ctrl commands)
+    if (ctrl_thread_id == (pthread_t)NULL) {
+        pthread_attr_init(&attr);
+        pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+        ret = pthread_create(&ctrl_thread_id, &attr, &rtspd_ctrl_thread, NULL);
         pthread_attr_destroy(&attr);
     }
 
