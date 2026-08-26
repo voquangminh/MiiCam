@@ -113,7 +113,7 @@ static void parse_proc(char *data, struct video_info *v, struct audio_info *a)
     int in_video = 0, in_audio = 0;
     char *line = strtok(data, "\n");
     while (line) {
-        if (strstr(line, "H264E("))  { in_video = 1; in_audio = 0; }
+        if (strstr(line, "H264E("))      { in_video = 1; in_audio = 0; }
         if (strstr(line, "AUDIO_ENC(")) { in_audio = 1; in_video = 0; }
 
         if (in_video) {
@@ -123,6 +123,10 @@ static void parse_proc(char *data, struct video_info *v, struct audio_info *a)
         if (in_audio) {
             PARSE_ALL_AUDIO(line, a);
             parse_value(line, "bitrate(", &a->bitrate);
+        }
+        if (strstr(line, "AUDIO_GRAB(")) {
+            parse_value(line, "sample_rate(", &a->sample_rate);
+            parse_value(line, "sample_size(", &a->sample_size);
         }
         line = strtok(NULL, "\n");
     }
