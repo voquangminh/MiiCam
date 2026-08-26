@@ -214,42 +214,48 @@ static void cmd_zoom(void)
 
 int main(int argc, char *argv[])
 {
+    int json = 0, shell = 0, argi = 1;
+
     if (argc < 2) print_usage();
 
-    if (strcmp(argv[1], "status") == 0) {
-        if (argc > 2 && strcmp(argv[2], "-j") == 0)
-            cmd_status_json();
-        else if (argc > 2 && strcmp(argv[2], "-k") == 0)
-            cmd_status_shell();
-        else
-            cmd_status_human();
+    while (argi < argc && argv[argi][0] == '-') {
+        if (strcmp(argv[argi], "-j") == 0) json = 1;
+        else if (strcmp(argv[argi], "-k") == 0) shell = 1;
+        else break;
+        argi++;
     }
-    else if (strcmp(argv[1], "keyframe") == 0) {
+
+    if (strcmp(argv[argi], "status") == 0) {
+        if (json) cmd_status_json();
+        else if (shell) cmd_status_shell();
+        else cmd_status_human();
+    }
+    else if (strcmp(argv[argi], "keyframe") == 0) {
         return write_ctrl("keyframe");
     }
-    else if (strcmp(argv[1], "bitrate") == 0) {
-        if (argc < 3) { fprintf(stderr, "Usage: codec_ctl bitrate <kbps>\n"); return 1; }
+    else if (strcmp(argv[argi], "bitrate") == 0) {
+        if (argi + 1 >= argc) { fprintf(stderr, "Usage: codec_ctl bitrate <kbps>\n"); return 1; }
         char cmd[64];
-        snprintf(cmd, sizeof(cmd), "bitrate %s", argv[2]);
+        snprintf(cmd, sizeof(cmd), "bitrate %s", argv[argi + 1]);
         return write_ctrl(cmd);
     }
-    else if (strcmp(argv[1], "fps") == 0) {
-        if (argc < 3) { fprintf(stderr, "Usage: codec_ctl fps <num>\n"); return 1; }
+    else if (strcmp(argv[argi], "fps") == 0) {
+        if (argi + 1 >= argc) { fprintf(stderr, "Usage: codec_ctl fps <num>\n"); return 1; }
         char cmd[64];
-        snprintf(cmd, sizeof(cmd), "fps %s", argv[2]);
+        snprintf(cmd, sizeof(cmd), "fps %s", argv[argi + 1]);
         return write_ctrl(cmd);
     }
-    else if (strcmp(argv[1], "gop") == 0) {
-        if (argc < 3) { fprintf(stderr, "Usage: codec_ctl gop <num>\n"); return 1; }
+    else if (strcmp(argv[argi], "gop") == 0) {
+        if (argi + 1 >= argc) { fprintf(stderr, "Usage: codec_ctl gop <num>\n"); return 1; }
         char cmd[64];
-        snprintf(cmd, sizeof(cmd), "gop %s", argv[2]);
+        snprintf(cmd, sizeof(cmd), "gop %s", argv[argi + 1]);
         return write_ctrl(cmd);
     }
-    else if (strcmp(argv[1], "zoom") == 0) {
+    else if (strcmp(argv[argi], "zoom") == 0) {
         cmd_zoom();
     }
     else {
-        fprintf(stderr, "Unknown command: %s\n", argv[1]);
+        fprintf(stderr, "Unknown command: %s\n", argv[argi]);
         print_usage();
     }
 
