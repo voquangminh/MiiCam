@@ -66,11 +66,6 @@ struct isp_light_info {
     int ir;
 };
 
-struct isp_light_info {
-    int ev;
-    int ir;
-};
-
 extern struct isp_light_info light_info;
 
 int isp328_init(void);
