@@ -1,6 +1,8 @@
 #ifndef chuangmi_isp328_h
 #define chuangmi_isp328_h
 
+#include <sys/ioctl.h>
+
 typedef struct _zoom_info{
     int zoom_stage_cnt;     // * Zoom stage count
     int curr_zoom_index;    // * Current zoom stage index
@@ -64,7 +66,12 @@ struct isp_light_info {
     int ir;
 };
 
-struct isp_light_info light_info = {0,0};
+struct isp_light_info {
+    int ev;
+    int ir;
+};
+
+extern struct isp_light_info light_info;
 
 int isp328_init(void);
 int isp328_end(void);
@@ -128,6 +135,9 @@ int dr_mode_set(int value);
 int dr_mode_reset(void);
 int dr_mode_get(void);
 int dr_mode_print(void);
+int dr_mode_on(void);
+int dr_mode_off(void);
+int dr_mode_status(void);
 
 int print_camera_info_json(void);
 int print_camera_info_shell(void);

@@ -17,15 +17,18 @@
 int read_int(const char *filename)
 {
     int fd;
+    char value_str[6];
+
     fd = open(filename, O_RDONLY);
     if (fd == -1) {
         fprintf(stderr, "Failed to open %s for reading!\n", filename);
         return -1;
     }
 
-    char value_str[6];
-    if (read(fd, value_str, 3) == -1) {
+    memset(value_str, 0, sizeof(value_str));
+    if (read(fd, value_str, sizeof(value_str) - 1) == -1) {
         fprintf(stderr, "Failed to read value from %s!\n", filename);
+        close(fd);
         return -1;
     }
 
@@ -43,7 +46,7 @@ int write_file(const char *file_path, char *content)
         return -1;
     }
 
-    fprintf(fd, content);
+    fputs(content, fd);
     fclose(fd);
 
     return 0;
@@ -64,9 +67,14 @@ int get_last_file(const char * file_path)
 
     fseek(fh, 0, SEEK_END);
     length = ftell(fh);
+    if (length < 0) {
+        fprintf(stderr, "*** Error: Failed to retrieve file from %s.\n", file_path);
+        fclose(fh);
+        return -1;
+    }
     fseek(fh, 0, SEEK_SET);
 
-    buffer = malloc(length);
+    buffer = malloc(length + 1);
     if (buffer)
         fread(buffer, 1, length, fh);
 

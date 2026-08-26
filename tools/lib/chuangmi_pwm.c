@@ -14,7 +14,7 @@
 
 #include "chuangmi_pwm.h"
 
-static int pwm_fd;
+static int pwm_fd = -1;
 pwm_info_t pwm[2];
 
 
@@ -68,7 +68,7 @@ int pwm_init(void)
  */
 int pwm_is_initialized(void)
 {
-    if ( fcntl(pwm_fd, F_GETFD) < 0 ) {
+    if (pwm_fd < 0 || fcntl(pwm_fd, F_GETFD) < 0 ) {
         fprintf(stderr, "*** Error: PWM Library is uninitialized.\n");
         return -1;
     }
@@ -81,10 +81,11 @@ int pwm_is_initialized(void)
  */
 int pwm_end(void)
 {
-    if ( close(pwm_fd) > 0 )
-        return 0;
-    else
+    if (close(pwm_fd) < 0)
         return -1;
+
+    pwm_fd = -1;
+    return 0;
 }
 
 
@@ -112,9 +113,10 @@ int ir_led_set(unsigned int val)
         fprintf(stderr, "*** Setting IR led to %d\n", val);
         pwm_set(val);
         return 0;
-    } else
+    } else {
         fprintf(stderr, "*** Error: Use a value in between 0-255\n");
         return -1;
+    }
 }
 
 

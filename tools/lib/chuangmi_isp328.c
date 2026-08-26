@@ -17,7 +17,9 @@
 // ** ISP 328 Functions                                                    ** //
 // ************************************************************************** //
 
-int isp_fd;
+int isp_fd = -1;
+
+struct isp_light_info light_info = {0, 0};
 
 
 /*
@@ -46,7 +48,7 @@ int isp328_init(void)
  */
 int isp328_is_initialized(void)
 {
-    if (fcntl(isp_fd, F_GETFD) == -1) {
+    if (isp_fd < 0 || fcntl(isp_fd, F_GETFD) == -1) {
         fprintf(stderr, "*** Error: ISP328 Library is uninitialized.\n");
         return -1;
     }
@@ -59,10 +61,11 @@ int isp328_is_initialized(void)
  */
 int isp328_end(void)
 {
-    if (close(isp_fd) > 0)
-        return 0;
-    else
+    if (close(isp_fd) < 0)
         return -1;
+
+    isp_fd = -1;
+    return 0;
 }
 
 
@@ -78,7 +81,7 @@ int mirrormode_set(int value)
     if (isp328_is_initialized() < 0)
         return -1;
 
-    if (value <= 1) {
+    if (value == 0 || value == 1) {
         fprintf(stderr, "*** Setting mirror to %d\n", value);
         ioctl(isp_fd, ISP_IOC_SET_SENSOR_MIRROR, &value);
         return 0;
@@ -138,9 +141,9 @@ int nightmode_set(int value)
     if (isp328_is_initialized() < 0)
         return -1;
 
-    if ( value <= 1 ) {
+    if (value == 0 || value == 1) {
         fprintf(stderr, "*** Setting nightmode to %d\n", value);
-        ioctl(isp_fd, _IOW(0x6d, 0x0a, int), &value);
+        ioctl(isp_fd, ISP_IOC_SET_DAYNIGHT_MODE, &value);
         return 0;
     } else
         return -1;
@@ -206,7 +209,7 @@ int nightmode_status(void)
         return -1;
 
     int mode;
-    ioctl(isp_fd, _IOR(0x6d, 0x0a, int), &mode);
+    ioctl(isp_fd, ISP_IOC_GET_DAYNIGHT_MODE, &mode);
     fprintf(stdout, "*** Night mode is: %s\n", (mode == 1) ? "on" : "off");
 
     return 0;
@@ -258,7 +261,7 @@ int flipmode_set(int value)
     if (isp328_is_initialized() < 0)
         return -1;
 
-    if (value <= 1) {
+    if (value == 0 || value == 1) {
         fprintf(stderr, "*** Setting flip to %d\n", value);
         ioctl(isp_fd, ISP_IOC_SET_SENSOR_FLIP, &value);
         return 0;
@@ -315,7 +318,7 @@ int brightness_set(int value)
     if (isp328_is_initialized() < 0)
         return -1;
 
-    if (value < 0 && value > 255) {
+    if (value < 0 || value > 255) {
         fprintf(stderr, "*** Error: Cannot set brightness to %d: Use: (0-255)\n", value);
         return -1;
     }
@@ -378,7 +381,7 @@ int contrast_set(int value)
     if (isp328_is_initialized() < 0)
         return -1;
 
-    if (value < 0 && value > 255) {
+    if (value < 0 || value > 255) {
         fprintf(stderr, "*** Error: Cannot set contrast to %d: Use: (0-255)\n", value);
         return -1;
     }
@@ -442,7 +445,7 @@ int hue_set(int value)
     if (isp328_is_initialized() < 0)
         return -1;
 
-    if (value < 0 && value > 255) {
+    if (value < 0 || value > 255) {
         fprintf(stderr, "*** Error: Cannot set hue to %d: Use: (0-255)\n", value);
         return -1;
     }
@@ -507,7 +510,7 @@ int saturation_set(int value)
     if (isp328_is_initialized() < 0)
         return -1;
 
-    if (value < 0 && value > 255) {
+    if (value < 0 || value > 255) {
         fprintf(stderr, "*** Error: Cannot set saturation to %d: Use: (0-255)\n", value);
         return -1;
     }
@@ -571,7 +574,7 @@ int denoise_set(int value)
     if (isp328_is_initialized() < 0)
         return -1;
 
-    if (value < 0 && value > 255) {
+    if (value < 0 || value > 255) {
         fprintf(stderr, "*** Error: Cannot set denoise to %d: Use: (0-255)\n", value);
         return -1;
     }
@@ -633,7 +636,7 @@ int sharpness_set(int value)
     if (isp328_is_initialized() < 0)
         return -1;
 
-    if (value < 0 && value > 255) {
+    if (value < 0 || value > 255) {
         fprintf(stderr, "*** Error: Cannot set sharpness to %d: Use: (0-255)\n", value);
         return -1;
     }
@@ -697,7 +700,7 @@ int gamma_type_set(int value)
     if (isp328_is_initialized() < 0)
         return -1;
 
-    if (value < 0 && value > 255) {
+    if (value < 0 || value > 255) {
         fprintf(stderr, "*** Error: Cannot set gamma_type to %d: Use: (0-255)\n", value);
         return -1;
     }
@@ -731,7 +734,7 @@ int gamma_type_get(void)
     if (isp328_is_initialized() < 0)
         return -1;
 
-    int ret = ioctl(isp_fd, ISP_IOC_GET_GAMME_TYPE, &value);
+    int ret = ioctl(isp_fd, ISP_IOC_GET_GAMMA_TYPE, &value);
     if (ret < 0) {
         return -1;
     }
@@ -761,7 +764,7 @@ int dr_mode_set(int value)
     if (isp328_is_initialized() < 0)
         return -1;
 
-    if (value <= 1) {
+    if (value == 0 || value == 1) {
         fprintf(stderr, "*** Setting dr_mode to %d\n", value);
         ioctl(isp_fd, ISP_IOC_SET_DR_MODE, &value);
         return 0;
@@ -788,20 +791,53 @@ int dr_mode_off(void)
 }
 
 /*
+ * Get the dr_mode value, -1 on error
+ */
+int dr_mode_get(void)
+{
+    int value;
+
+    if (isp328_is_initialized() < 0)
+        return -1;
+
+    int ret = ioctl(isp_fd, ISP_IOC_GET_DR_MODE, &value);
+    if (ret < 0)
+        return -1;
+
+    return value;
+}
+
+/*
  * Get the status for dr_mode
  */
 int dr_mode_status(void)
 {
     int mode;
 
-    int ret = ioctl(isp_fd, ISP_IOC_GET_DR_MODE, &mode);
-    if (ret < 0) {
+    mode = dr_mode_get();
+    if (mode < 0) {
         fprintf(stdout, "*** Errror: Retrieving dr_mode values failed");
         return -1;
     }
 
     fprintf(stdout, "*** dr_mode is: %s\n", (mode == 1) ? "WDR" : "LINEAR");
 
+    return 0;
+}
+
+/*
+ * Print the dr_mode value
+ */
+int dr_mode_print(void)
+{
+    int value = dr_mode_get();
+
+    if (value < 0) {
+        fprintf(stderr, "*** Error: Cannot get value for dr_mode!\n");
+        return -1;
+    }
+
+    fprintf(stdout, "*** Value for dr_mode is %d\n", value);
     return 0;
 }
 
@@ -818,8 +854,8 @@ int print_camera_info_json(void)
         fprintf(stdout, "\"hue\":%d,", hue_get());
         fprintf(stdout, "\"saturation\":%d,", saturation_get());
         fprintf(stdout, "\"denoise\":%d,", denoise_get());
-        fprintf(stdout, "\"sharpness\":%d", sharpness_get());
-        fprintf(stdout, "\"gamma_type\":%d", gamma_type_get());
+        fprintf(stdout, "\"sharpness\":%d,", sharpness_get());
+        fprintf(stdout, "\"gamma_type\":%d,", gamma_type_get());
         fprintf(stdout, "\"dr_mode\":%d", dr_mode_get());
         fprintf(stdout, "}");
 

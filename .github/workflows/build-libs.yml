@@ -1,0 +1,47 @@
+name: Build MiiCam Libraries
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Giải nén SDK trực tiếp trên Linux
+        run: |
+          cd ${{ github.workspace }}/sdk
+          tar -xzf toolchain_gnueabi-4.4.0_ARMv5TE.tgz
+          tar -xzf gm_lib_2015-01-09-IPCAM.tgz
+
+      - name: Cài đặt thư viện 32-bit cho toolchain
+        run: |
+          sudo dpkg --add-architecture i386
+          sudo apt-get update || true
+          sudo apt-get install -y libc6:i386 libstdc++6:i386 lib32z1 libmpfr6:i386 libgmp10:i386
+          sudo ln -sf /usr/lib/i386-linux-gnu/libmpfr.so.6 /usr/lib/i386-linux-gnu/libmpfr.so.4
+          sudo ln -sf /usr/lib/i386-linux-gnu/libgmp.so.10 /usr/lib/i386-linux-gnu/libgmp.so.3
+
+      - name: Biên dịch các thư viện libchuangmi_*.so
+        run: |
+          REAL_BIN_DIR=$(dirname $(find ${{ github.workspace }}/sdk -name "arm-unknown-linux-uclibcgnueabi-gcc" | head -n 1))
+          echo "Đường dẫn Toolchain chuẩn: $REAL_BIN_DIR"
+          REAL_SDK_ROOT=$(dirname $(dirname $REAL_BIN_DIR))
+          chmod -R +x $REAL_SDK_ROOT/
+          export PATH="$REAL_BIN_DIR:$PATH"
+          REAL_TARGET_PREFIX=${REAL_BIN_DIR}/arm-unknown-linux-uclibcgnueabi
+          make TARGET="$REAL_TARGET_PREFIX" libs
+          echo "--- Kết quả trong tools/lib ---"
+          ls -la tools/lib/*.so
+
+      - name: Commit và Push thư viện lên GitHub
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add -f tools/lib/*.so
+
+          git commit -m "Automated build: update camera libraries" || echo "No changes to commit"
+          git pull origin HEAD --no-rebase || true
+          git push origin HEAD

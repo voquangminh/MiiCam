@@ -280,6 +280,8 @@ int led_status(void)
 
     fprintf(stdout, "*** Yellow led is %d\n", yellow);
     fprintf(stdout, "*** Blue led is %d\n", blue);
+
+    return 0;
 }
 
 int led_status_json(void)
@@ -292,6 +294,6 @@ int led_status_json(void)
         return -1;
     }
 
-    fprintf(stdout, "{\"yellow_led\":%s,\"blue_led\":%d}", yellow, blue);
+    fprintf(stdout, "{\"yellow_led\":%d,\"blue_led\":%d}", yellow, blue);
     return 0;
 }

@@ -46,7 +46,9 @@ LIBS :=                              \
 	$(BUILDDIR)/chuangmi_isp328      \
 	$(BUILDDIR)/chuangmi_pwm         \
 	$(BUILDDIR)/chuangmi_led         \
-	$(BUILDDIR)/chuangmi_utils
+	$(BUILDDIR)/chuangmi_utils       \
+	$(BUILDDIR)/chuangmi_codec       \
+	$(BUILDDIR)/chuangmi_sensor
 
 
 UTILS :=                             \
@@ -255,19 +257,40 @@ $(BUILDDIR)/chuangmi_led: $(BUILDDIR)/chuangmi_utils
 	$(TARGET)-gcc -shared -o $(TOOLSDIR)/lib/libchuangmi_led.so -fPIC $(TOOLSDIR)/lib/chuangmi_led.c && \
 	touch $@
 
+$(BUILDDIR)/chuangmi_codec: $(BUILDDIR)/chuangmi_utils
+	@mkdir -p $(BUILDDIR)
+	$(TARGET)-gcc -shared -o $(TOOLSDIR)/lib/libchuangmi_codec.so -fPIC \
+		-Wall \
+		-I$(TOOLSDIR)/lib -I$(GMLIBDIR)/inc \
+		$(TOOLSDIR)/lib/chuangmi_codec.c \
+		-L$(GMLIBDIR)/lib -lgm -lpthread && \
+	touch $@
+
+$(BUILDDIR)/chuangmi_sensor: $(BUILDDIR)/chuangmi_utils
+	@mkdir -p $(BUILDDIR)
+	$(TARGET)-gcc -shared -o $(TOOLSDIR)/lib/libchuangmi_sensor.so -fPIC \
+		-Wall \
+		-I$(TOOLSDIR)/lib -I$(GMLIBDIR)/inc \
+		$(TOOLSDIR)/lib/chuangmi_sensor.c \
+		-L$(GMLIBDIR)/lib -lgm && \
+	touch $@
+
 $(UTILS): $(PREFIXDIR)/bin $(LIBS)
 	@mkdir -p $(BUILDDIR) $(TOOLSDIR)/bin
-	CPPFLAGS="-I$(TOOLSDIR)/lib -L$(TOOLSDIR)/lib" \
-	LDFLAGS=" -I$(TOOLSDIR)/lib -L$(TOOLSDIR)/lib -Wl,-rpath -Wl,/tmp/sd/firmware/lib -Wl,--enable-new-dtags" \
+	CPPFLAGS="-I$(TOOLSDIR)/lib -I$(GMLIBDIR)/inc -L$(TOOLSDIR)/lib" \
+	LDFLAGS=" -I$(TOOLSDIR)/lib -I$(GMLIBDIR)/inc -L$(TOOLSDIR)/lib -Wl,-rpath -Wl,/tmp/sd/firmware/lib -Wl,--enable-new-dtags" \
 	$(TARGET)-gcc \
 		-Wall \
 		-o $(TOOLSDIR)/bin/$(@F) $(UTILSDIR)/$(@F).c \
-		-I$(TOOLSDIR)/lib -L$(TOOLSDIR)/lib \
+		-I$(TOOLSDIR)/lib -I$(GMLIBDIR)/inc -L$(TOOLSDIR)/lib \
 		-lchuangmi_ircut  \
 		-lchuangmi_utils  \
 		-lchuangmi_isp328 \
 		-lchuangmi_led    \
-		-lchuangmi_pwm && \
+		-lchuangmi_pwm    \
+		-lchuangmi_codec  \
+		-lchuangmi_sensor \
+		-L$(GMLIBDIR)/lib -lgm && \
 	touch $(BUILDDIR)/$(@F)
 
 

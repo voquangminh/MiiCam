@@ -47,17 +47,30 @@ int ircut_init(void)
 
 
 /*
+ *  Return 0 if the ircut gpio pins are exported else -1
+ */
+int ircut_is_initialized(void)
+{
+    if (gpio_active(GPIO_PIN_14) == 0 && gpio_active(GPIO_PIN_15) == 0)
+        return 0;
+
+    fprintf(stderr, "*** Error: IRCUT Library is uninitialized.\n");
+    return -1;
+}
+
+
+/*
  *  Close/shutdown the ircut lib
  */
 int ircut_end(void)
 {
     if (gpio_unexport(GPIO_PIN_14) < 0) {
-        fprintf(stderr, "*** Error: Failed to unexport %s", GPIO_PIN_14);
+        fprintf(stderr, "*** Error: Failed to unexport gpio pin %d\n", GPIO_PIN_14);
         return -1;
     }
 
     if (gpio_unexport(GPIO_PIN_15) < 0) {
-        fprintf(stderr, "*** Error: Failed to unexport %s", GPIO_PIN_15);
+        fprintf(stderr, "*** Error: Failed to unexport gpio pin %d\n", GPIO_PIN_15);
         return -1;
     }
 
