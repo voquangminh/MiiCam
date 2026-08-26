@@ -887,7 +887,7 @@ int print_camera_info(void)
         fprintf(stdout, "- Denoise:    %d\n", denoise_get());
         fprintf(stdout, "- Sharpness:  %d\n", sharpness_get());
         fprintf(stdout, "- Gamma:      %d\n", gamma_type_get());
-        fprintf(stdout, "- DR_MODE:    %s\n", dr_mode_get());
+        fprintf(stdout, "- DR_MODE:    %s\n", (dr_mode_get() == 1) ? "WDR" : "LINEAR");
         fprintf(stdout, "\n");
 
         return 0;
