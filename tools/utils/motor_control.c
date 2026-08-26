@@ -5,6 +5,7 @@
 #include <fcntl.h>
 #include <errno.h>
 #include <signal.h>
+#include <stdint.h>
 #include <sys/ioctl.h>
 #include <pthread.h>
 
@@ -189,10 +190,11 @@ static int motor_move(int dx, int dy)
 
 static void save_state(void)
 {
+    int i;
     FILE *f = fopen(STATE_FILE, "w");
     if (!f) return;
     fprintf(f, "%d %d\n", cur_x, cur_y);
-    for (int i = 0; i < PRESET_MAX; i++)
+    for (i = 0; i < PRESET_MAX; i++)
         if (presets[i].used)
             fprintf(f, "P %d %d %s\n", presets[i].x, presets[i].y, presets[i].name);
     fclose(f);
@@ -200,16 +202,15 @@ static void save_state(void)
 
 static void load_state(void)
 {
+    int i, x, y;
+    char line[256], name[64];
     FILE *f = fopen(STATE_FILE, "r");
     if (!f) return;
-    char line[256];
     if (fgets(line, sizeof(line), f))
         sscanf(line, "%d %d", &cur_x, &cur_y);
     while (fgets(line, sizeof(line), f)) {
-        int x, y;
-        char name[64];
         if (sscanf(line, "P %d %d %63s", &x, &y, name) == 3) {
-            for (int i = 0; i < PRESET_MAX; i++) {
+            for (i = 0; i < PRESET_MAX; i++) {
                 if (!presets[i].used) {
                     presets[i].used = 1;
                     presets[i].x = x;
@@ -239,14 +240,14 @@ static void cmd_pos(void)
 
 static void cmd_status_json(void)
 {
+    int i, first = 1;
     printf("{\n");
     printf("  \"x\": %d,\n", cur_x);
     printf("  \"y\": %d,\n", cur_y);
     printf("  \"x_max\": %d,\n", X_MAX);
     printf("  \"y_max\": %d,\n", Y_MAX);
     printf("  \"presets\": [\n");
-    int first = 1;
-    for (int i = 0; i < PRESET_MAX; i++) {
+    for (i = 0; i < PRESET_MAX; i++) {
         if (presets[i].used) {
             if (!first) printf(",\n");
             printf("    {\"slot\": %d, \"x\": %d, \"y\": %d, \"name\": \"%s\"}",
@@ -260,11 +261,11 @@ static void cmd_status_json(void)
 
 static void cmd_status_human(void)
 {
+    int i, found = 0;
     printf("=== Motor Status ===\n");
     printf("  Position:  X=%d Y=%d  (range: 0-%d x 0-%d)\n", cur_x, cur_y, X_MAX, Y_MAX);
     printf("  Presets:\n");
-    int found = 0;
-    for (int i = 0; i < PRESET_MAX; i++) {
+    for (i = 0; i < PRESET_MAX; i++) {
         if (presets[i].used) {
             printf("    [%d] %s  -> X=%d Y=%d\n", i, presets[i].name, presets[i].x, presets[i].y);
             found = 1;
@@ -312,8 +313,8 @@ static void cmd_preset_goto(int argc, char *argv[])
 
 static void cmd_preset_list(void)
 {
-    int found = 0;
-    for (int i = 0; i < PRESET_MAX; i++) {
+    int i, found = 0;
+    for (i = 0; i < PRESET_MAX; i++) {
         if (presets[i].used) {
             printf("[%d] %s  -> X=%d Y=%d\n", i, presets[i].name, presets[i].x, presets[i].y);
             found = 1;
