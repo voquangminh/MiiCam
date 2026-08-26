@@ -1,6 +1,10 @@
 name: Build MiiCam RTSPD
 on:
   workflow_dispatch:
+  push:
+    paths:
+      - 'tools/rtsp_server/**'
+      - 'Makefile'
 
 jobs:
   build:
