@@ -39,14 +39,22 @@ static char *read_file(const char *path)
 {
     int fd = open(path, O_RDONLY);
     if (fd < 0) return NULL;
-    struct stat st;
-    if (fstat(fd, &st) < 0) { close(fd); return NULL; }
-    char *buf = malloc(st.st_size + 1);
+    int cap = 4096;
+    int total = 0;
+    char *buf = malloc(cap);
     if (!buf) { close(fd); return NULL; }
-    int n = read(fd, buf, st.st_size);
+    for (;;) {
+        int n = read(fd, buf + total, cap - total - 1);
+        if (n <= 0) break;
+        total += n;
+        if (total >= cap - 1) {
+            cap *= 2;
+            buf = realloc(buf, cap);
+            if (!buf) break;
+        }
+    }
     close(fd);
-    if (n < 0) { free(buf); return NULL; }
-    buf[n] = '\0';
+    buf[total] = '\0';
     return buf;
 }
 

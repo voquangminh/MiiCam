@@ -340,6 +340,9 @@ int main(int argc, char *argv[])
 
     load_state();
 
+    if (strcmp(argv[1], "-h") == 0 || strcmp(argv[1], "--help") == 0)
+        print_usage();
+
     if (motor_open() < 0) {
         fprintf(stderr, "Motor device not available\n");
         return EXIT_FAILURE;

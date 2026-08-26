@@ -542,6 +542,7 @@ int main(int argc, char *argv[]) {
 
         int i;
 
+        buf[0] = '\0';
         for (i = 1; i < argc; i++) {
             sprintf(buf,"%s %s", buf, argv[i]);
         }
