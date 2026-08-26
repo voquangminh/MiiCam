@@ -14,6 +14,7 @@
 #include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <unistd.h>
+#include "gmlib.h"
 
 #define PWM_DEV_NAME                "/dev/ftpwmtmr010"
 #define ISP_DEV_NAME                "/dev/isp328"
@@ -101,6 +102,12 @@ void show_help(void)
             "\tled:   0 = blue, 1 = orange\n"
             "\tvalue: 0 = on, 1 = off, 2 = blink\n"
             "GETSTAT\n"
+            "MOTION,<param_id>,<value>\n"
+            "\tSet motion detection parameter (param_id: 0=alpha, 1=threshold)\n"
+            "TAMPER,<sensitive_b>,<threshold>,<sensitive_h>\n"
+            "\tSet tamper detection (0-100, 1-255, 0-100; 0=disable)\n"
+            "GETMOTION\n"
+            "\tGet current motion detection status\n"
     );
 }
 
@@ -378,6 +385,86 @@ int cmd_isp_sta(int argc, char *argv[], char *buf)
 }
 
 
+int cmd_motion(int argc, char *argv[], char *buf)
+{
+    unsigned int param_id, value;
+    gm_cap_motion_t cap_motion;
+
+    if (argc != 3) {
+        strcpy(buf, REPLY_WRONG_ARG_NUM);
+        return -1;
+    }
+
+    param_id = atoi(argv[1]);
+    value = atoi(argv[2]);
+
+    cap_motion.id = param_id;
+    cap_motion.value = value;
+
+    if (gm_set_cap_motion(0, &cap_motion) < 0) {
+        strcpy(buf, "FAIL,GM_SET_CAP_MOTION\n");
+        return -1;
+    }
+
+    sprintf(buf, "OK,MOTION PARAM=%d VALUE=%d\n", param_id, value);
+    return 0;
+}
+
+
+int cmd_tamper(int argc, char *argv[], char *buf)
+{
+    unsigned int sb, thresh, sh;
+    gm_cap_tamper_t cap_tamper;
+
+    if (argc != 4) {
+        strcpy(buf, REPLY_WRONG_ARG_NUM);
+        return -1;
+    }
+
+    sb = atoi(argv[1]);
+    thresh = atoi(argv[2]);
+    sh = atoi(argv[3]);
+
+    if (sb > 100 || thresh < 1 || thresh > 255 || sh > 100) {
+        strcpy(buf, REPLY_INVALID_ARG);
+        return -1;
+    }
+
+    memset(&cap_tamper, 0, sizeof(cap_tamper));
+    cap_tamper.tamper_sensitive_b = sb;
+    cap_tamper.tamper_threshold = thresh;
+    cap_tamper.tamper_sensitive_h = sh;
+
+    if (gm_set_cap_tamper(0, &cap_tamper) < 0) {
+        strcpy(buf, "FAIL,GM_SET_CAP_TAMPER\n");
+        return -1;
+    }
+
+    sprintf(buf, "OK,TAMPER SB=%d THRESH=%d SH=%d\n", sb, thresh, sh);
+    return 0;
+}
+
+
+int cmd_getmotion(int argc, char *argv[], char *buf)
+{
+    FILE *f;
+    char line[256];
+    int motion_count = 0;
+
+    f = fopen("/proc/videograph/capability", "r");
+    if (f) {
+        while (fgets(line, sizeof(line), f)) {
+            if (strstr(line, "motion"))
+                motion_count++;
+        }
+        fclose(f);
+    }
+
+    sprintf(buf, "OK,MOTION_STATUS=%s\n", motion_count > 0 ? "DETECTED" : "IDLE");
+    return 0;
+}
+
+
 cmd_list_t cmd_list[] =
 {
     {"IRLED", cmd_irled},
@@ -385,6 +472,9 @@ cmd_list_t cmd_list[] =
     {"DAYNIGHT", cmd_daynight},
     {"LEDSTATUS", cmd_ledstatus},
     {"GETSTAT", cmd_isp_sta},
+    {"MOTION", cmd_motion},
+    {"TAMPER", cmd_tamper},
+    {"GETMOTION", cmd_getmotion},
     {NULL, NULL}
 };
 

@@ -63,7 +63,9 @@ UTILS :=                             \
 	$(BUILDDIR)/nightmode            \
 	$(BUILDDIR)/flipmode             \
 	$(BUILDDIR)/camera_adjust        \
-	$(BUILDDIR)/auto_night_mode
+	$(BUILDDIR)/auto_night_mode      \
+	$(BUILDDIR)/codec_ctl            \
+	$(BUILDDIR)/motor_control
 
 #website: C:/GitHub/MiiCam/sdcard/firmware/www
 
@@ -292,6 +294,18 @@ $(UTILS): $(PREFIXDIR)/bin $(LIBS)
 		-lchuangmi_sensor \
 		-L$(GMLIBDIR)/lib -lgm && \
 	touch $(BUILDDIR)/$(@F)
+
+$(BUILDDIR)/codec_ctl: $(PREFIXDIR)/bin $(LIBS)
+	@mkdir -p $(BUILDDIR) $(TOOLSDIR)/bin
+	$(TARGET)-gcc -Wall -o $(TOOLSDIR)/bin/codec_ctl \
+		$(UTILSDIR)/codec_ctl.c && \
+	touch $(BUILDDIR)/codec_ctl
+
+$(BUILDDIR)/motor_control: $(PREFIXDIR)/bin
+	@mkdir -p $(BUILDDIR) $(TOOLSDIR)/bin
+	$(TARGET)-gcc -Wall -o $(TOOLSDIR)/bin/motor_control \
+		$(UTILSDIR)/motor_control.c -lpthread && \
+	touch $(BUILDDIR)/motor_control
 
 
 #################################################################
