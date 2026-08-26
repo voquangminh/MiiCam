@@ -635,9 +635,9 @@ int codec_audio_play_start(int sample_rate)
     memset(file_attr, 0, sizeof(file_attr));
     memset(render_attr, 0, sizeof(render_attr));
 
-    if (gm_init_attr(file_attr, "gm_file_attr_t", GM_FILE_ATTR_SIZE, GM_VERSION_CODE) < 0 ||
-        gm_init_attr(render_attr, "gm_audio_render_attr_t", GM_RENDER_ATTR_SIZE, GM_VERSION_CODE) < 0)
-        goto fail;
+    /* Header declares gm_init_attr as void; failures surface at gm_set_attr */
+    gm_init_attr(file_attr, "gm_file_attr_t", GM_FILE_ATTR_SIZE, GM_VERSION_CODE);
+    gm_init_attr(render_attr, "gm_audio_render_attr_t", GM_RENDER_ATTR_SIZE, GM_VERSION_CODE);
 
     play_put_u16(file_attr, FILE_SAMPLE_RATE_OFF, (unsigned short)sample_rate);
     play_put_u16(file_attr, FILE_SAMPLE_SIZE_OFF, 16);
@@ -690,7 +690,7 @@ int codec_audio_play_frame(const char *data, unsigned int len)
     play_put_u32(descriptor, STREAM_DATA_OFF, addr);
     play_put_u32(descriptor, STREAM_LENGTH_OFF, len);
 
-    return gm_send_multi_bitstreams(descriptor, 1, 500);
+    return gm_send_multi_bitstreams((gm_dec_multi_bitstream_t *)descriptor, 1, 500);
 }
 
 int codec_audio_play_stop(void)
