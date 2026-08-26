@@ -1713,7 +1713,7 @@ void gm_enc_init(int cap_ch, int cap_path, int rec_track, int enc_type, int mode
             h264e_attr.ratectl.mode          = mode;
             h264e_attr.ratectl.gop           = 20;			   // * I frame per second, default is 60
             h264e_attr.ratectl.bitrate       = bitrate;
-            h264e_attr.ratectl.bitrate_max   = 16384;
+            h264e_attr.ratectl.bitrate_max   = 16384;           // * Max bitrate ceiling (VBR upper bound)
             h264e_attr.b_frame_num           = 0;              // * B-frames per GOP (H.264 high profile)
             h264e_attr.enable_mv_data        = 0;              // * Disable H.264 motion data output
             h264e_attr.ratectl.init_quant    = 25;
