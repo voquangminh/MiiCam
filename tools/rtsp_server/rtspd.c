@@ -1677,6 +1677,7 @@ void gm_enc_init(int cap_ch, int cap_path, int rec_track, int enc_type, int mode
         // * GM813x capture path 0(liveview), 1(substream), 2(substream), 3(mainstream)
         cap_attr.path = cap_path;
         cap_attr.enable_mv_data = 1;
+        cap_attr.dma_path = 0;                 // * DMA path 0
         gm_set_attr(param->cap.obj, &cap_attr);                // * Set capture attribute
 
 		//enable 3dnr if resolution > capture dim / 2 
@@ -2314,14 +2315,16 @@ static int pid_is_rtspd(int pid)
 
 /* Called at startup: if a restart marker exists we were relaunched by
  * rtspd_reboot(). Wait for the old process to exit (so the encoder device
- * is released), then drop the inherited device fds before re-initializing. */
-static void restart_handoff(void)
+ * is released), then drop the inherited device fds before re-initializing.
+ * Returns 1 if this is a ctrl-initiated restart (caller then applies the
+ * persistent codec overrides), 0 for a fresh/boot start. */
+static int restart_handoff(void)
 {
     FILE *f = fopen(RTSPD_RESTART_FILE, "r");
     int oldpid = 0, valid = 0;
 
     if (!f)
-        return;
+        return 0;
     if (fscanf(f, "%d", &oldpid) != 1)
         oldpid = 0;
     fclose(f);
@@ -2358,6 +2361,7 @@ static void restart_handoff(void)
     }
 
     remove(RTSPD_RESTART_FILE);
+    return valid;
 }
 
 /* Apply key=value overrides stored by the ctrl thread (from codec_ctrl)
@@ -3050,8 +3054,11 @@ int main(int argc, char *argv[])
     setup_logging();    // * Setup logging
 
     /* If we were relaunched after a codec change, wait for the old process
-     * to release the encoder and drop inherited device fds. */
-    restart_handoff();
+     * to release the encoder and drop inherited device fds, then apply the
+     * persistent codec overrides. A fresh boot/manual start has no marker,
+     * so the command-line args (from /etc/init/S99rtsp) take precedence. */
+    if (restart_handoff())
+        apply_pending_args();
 
     saved_argc = argc;
     for (i = 0; i < argc && i < 64; i++)
@@ -3434,10 +3441,6 @@ int main(int argc, char *argv[])
         log_error("-d is required when using -s or -r");
         return 1;
     }
-
-    /* Apply pending codec overrides (from codec_ctrl) before validation so
-     * the encoder is created with the last requested bitrate/mode/fps/gop. */
-    apply_pending_args();
 
     if ((cliArgs.bitrate < 1) || (cliArgs.bitrate > 16384)) {
         log_error("Use a maximum bitrate of 16384 and a minimum of 1");
