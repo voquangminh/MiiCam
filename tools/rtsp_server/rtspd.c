@@ -2431,7 +2431,7 @@ static void *rtspd_ctrl_thread(void *arg)
                 }
                 else if (strncmp(buf, "fps ", 4) == 0) {
                     int val = atoi(buf + 4);
-                    if (val > 0 && val <= 30) {
+                    if (val > 0 && val <= MAX_FPS) {
                         write_pending_arg("fps", val);
                         log_info("Ctrl: fps=%d pending restart", val);
                         need_reboot = 1;
@@ -3050,18 +3050,18 @@ int main(int argc, char *argv[])
 {
     int i;
     int cap_ch, cap_path, rec_track;
+    int from_restart;
 
     setup_logging();    // * Setup logging
 
-    /* If we were relaunched after a codec change, wait for the old process
-     * to release the encoder and drop inherited device fds, then apply the
-     * persistent codec overrides. A fresh boot/manual start has no marker:
-     * the command-line args (from /etc/init/S99rtsp) take precedence, and any
-     * stale pending overrides from the previous daemon instance are dropped so
-     * the next codec_ctrl change applies on top of the launched values. */
-    if (restart_handoff())
-        apply_pending_args();
-    else
+    /* If we were relaunched after a codec change, hand off: wait for the old
+     * process to release the encoder and drop inherited device fds. A fresh
+     * boot/manual start has no marker: the command-line args (from
+     * /etc/init/S99rtsp) take precedence, so any stale overrides from the
+     * previous daemon instance are dropped. Pending overrides are applied
+     * AFTER arg parsing below (only on a ctrl-initiated restart). */
+    from_restart = restart_handoff();
+    if (!from_restart)
         remove(RTSPD_ARGS_FILE);
 
     saved_argc = argc;
@@ -3445,6 +3445,13 @@ int main(int argc, char *argv[])
         log_error("-d is required when using -s or -r");
         return 1;
     }
+
+    /* Apply pending codec overrides (from codec_ctrl) after command-line
+     * parsing so the encoder is created with the last requested
+     * bitrate/mode/fps. Only on a ctrl-initiated restart: a fresh
+     * boot/manual start runs exactly what it was launched with. */
+    if (from_restart)
+        apply_pending_args();
 
     if ((cliArgs.bitrate < 1) || (cliArgs.bitrate > 16384)) {
         log_error("Use a maximum bitrate of 16384 and a minimum of 1");
