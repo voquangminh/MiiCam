@@ -2289,7 +2289,9 @@ static void rtspd_reboot(void)
 }
 
 /* Apply key=value overrides stored by the ctrl thread (from codec_ctrl)
- * into cliArgs. Called at startup so changes survive a restart. */
+ * into cliArgs. Called at startup so changes survive a restart. The file is
+ * NOT deleted: it is the persistent desired config, so consecutive changes
+ * (e.g. bitrate then mode) stack instead of losing earlier values. */
 static void apply_pending_args(void)
 {
     FILE *f = fopen(RTSPD_ARGS_FILE, "r");
@@ -2310,8 +2312,6 @@ static void apply_pending_args(void)
     if (mode >= 1 && mode <= 4)           { cliArgs.bitrateMode = mode; log_info("Pending args: mode=%d", mode); }
     if (fps > 0 && fps <= 30)             { cliArgs.framerate = fps;   log_info("Pending args: fps=%d", fps); }
     if (gop > 0 && gop <= 120)            { cliArgs.gop = gop;         log_info("Pending args: gop=%d", gop); }
-
-    remove(RTSPD_ARGS_FILE);
 }
 
 static void *rtspd_ctrl_thread(void *arg)
