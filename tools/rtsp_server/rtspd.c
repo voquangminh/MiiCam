@@ -2186,7 +2186,7 @@ static void *rtspd_zoom_thread(void *arg)
 }
 
 /* Ctrl thread: polls /tmp/rtspd.ctrl for commands from codec_ctrl.
- * keyframe is applied live; bitrate/fps/gop trigger an rtspd restart. */
+ * keyframe/bitrate applied live; fps/gop trigger an rtspd restart. */
 #define RTSPD_CTRL_FILE    "/tmp/rtspd.ctrl"
 #define RTSPD_ARGS_FILE    "/tmp/rtspd_pending_args"
 static pthread_t ctrl_thread_id = 0;
@@ -2211,9 +2211,16 @@ static void *rtspd_ctrl_thread(void *arg)
                 else if (strncmp(buf, "bitrate ", 8) == 0) {
                     int val = atoi(buf + 8);
                     if (val > 0 && val <= 16384) {
-                        FILE *af = fopen(RTSPD_ARGS_FILE, "w");
-                        if (af) { fprintf(af, "bitrate=%d\n", val); fclose(af); }
-                        log_info("Ctrl: bitrate=%d pending restart", val);
+                        gm_enc_t *ep = &enc_param[0][0];
+                        void *enc_obj = ep->enc[0].obj;
+                        if (enc_obj && ep->enc[0].enc_type == ENC_TYPE_H264) {
+                            DECLARE_ATTR(h264e_attr, gm_h264e_attr_t);
+                            h264e_attr.ratectl.bitrate     = val;
+                            h264e_attr.ratectl.bitrate_max = 16384;
+                            gm_set_attr(enc_obj, &h264e_attr);
+                        }
+                        cliArgs.bitrate = val;
+                        log_info("Ctrl: bitrate=%d applied live", val);
                     }
                 }
                 else if (strncmp(buf, "fps ", 4) == 0) {
@@ -2771,7 +2778,7 @@ static void print_usage(void)
     printf(" ./rtspd [-bfwhm] [-j|-4]\n");
     printf(
         "\nAvailable options:\n"
-        "-b [1-8192]    - Set the bitrate         (default: 4096)\n"
+        "-b [1-16384]   - Set the bitrate         (default: 8192)\n"
         "-f [1-15]      - Set the framerate       (default: 15)\n"
         "-w [1-1280]    - Set the image width     (default: 1280 pixels)\n"
         "-h [1-720]     - Set the image height    (default: 720 pixels)\n"
@@ -2835,11 +2842,11 @@ int main(int argc, char *argv[])
 
     setup_logging();    // * Setup logging
 
-    cliArgs.bitrate     = 4096;
+    cliArgs.bitrate     = 8192;
     cliArgs.framerate   = 15;
     cliArgs.width       = 1280;
     cliArgs.height      = 720;
-    cliArgs.bitrateMode = GM_CBR;
+    cliArgs.bitrateMode = GM_EVBR;
     cliArgs.encoderType = ENC_TYPE_H264;
 
     cliArgs.snapshot    = 0;// * disable by default
@@ -3210,8 +3217,8 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    if ((cliArgs.bitrate < 1) || (cliArgs.bitrate > 8192)) {
-        log_error("Use a maximum bitrate of 8192 and a minimum of 1");
+    if ((cliArgs.bitrate < 1) || (cliArgs.bitrate > 16384)) {
+        log_error("Use a maximum bitrate of 16384 and a minimum of 1");
         return 1;
     }
 
