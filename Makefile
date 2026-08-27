@@ -65,7 +65,7 @@ UTILS :=                             \
 	$(BUILDDIR)/camera_adjust        \
 	$(BUILDDIR)/auto_night_mode      \
 	$(BUILDDIR)/codec_ctrl           \
-	$(BUILDDIR)/motor_control
+	$(BUILDDIR)/motor_ctrl
 
 #website: C:/GitHub/MiiCam/sdcard/firmware/www
 

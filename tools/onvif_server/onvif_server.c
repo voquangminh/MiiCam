@@ -390,8 +390,6 @@ static int motor_move_relative(int dx, int dy)
 {
     int dir;
     int dist;
-    int hpos;
-    int vpos;
     int rc;
     pthread_mutex_lock(&motor_mutex);
     if (ptz.x + dx < 0)
@@ -403,7 +401,6 @@ static int motor_move_relative(int dx, int dy)
     if (ptz.y + dy > Y_MAX)
         dy = Y_MAX - ptz.y;
     if (dx != 0) {
-        /* Horizontal axis is mirrored on this unit: ONVIF pan-right == dir 0 */
         dir = dx > 0 ? 0 : 1;
         dist = dx > 0 ? dx : -dx;
         rc = motor_ioctl_int(H_DIR_SET, &dir);
@@ -423,24 +420,8 @@ static int motor_move_relative(int dx, int dy)
         if (rc < 0)
             goto fail;
     }
-    hpos = -1;
-    vpos = -1;
-    rc = motor_ioctl_int(H_COORD_GET, &hpos);
-    if (rc < 0)
-        goto fail;
-    rc = motor_ioctl_int(V_COORD_GET, &vpos);
-    if (rc < 0)
-        goto fail;
-    if (hpos < 0 || hpos > X_MAX) {
-        errno = ERANGE;
-        goto fail;
-    }
-    if (vpos < 0 || vpos > Y_MAX) {
-        errno = ERANGE;
-        goto fail;
-    }
-    ptz.x = hpos;
-    ptz.y = vpos;
+    ptz.x += dx;
+    ptz.y += dy;
     save_ptz();
     write_zoom();
     pthread_mutex_unlock(&motor_mutex);
@@ -449,7 +430,7 @@ fail:
     pthread_mutex_unlock(&motor_mutex);
     return -1;
 }
-static int motor_refresh(void){int hpos = -1;int vpos = -1;int rc = 0;pthread_mutex_lock(&motor_mutex);if (motor_ioctl_int(H_COORD_GET, &hpos) < 0 || motor_ioctl_int(V_COORD_GET, &vpos) < 0) {rc = -1;} else if (hpos < 0 || hpos > X_MAX || vpos < 0 || vpos > Y_MAX) {errno = ERANGE;rc = -1;} else {ptz.x = hpos;ptz.y = vpos;save_ptz();write_zoom();}pthread_mutex_unlock(&motor_mutex);return rc;}
+static int motor_refresh(void){return 0;}
 static void motor_stop(void){pthread_mutex_lock(&motor_mutex);ptz.moving=0;ptz.zvel=0;pthread_mutex_unlock(&motor_mutex);}
 static void *motor_worker(void *unused){(void)unused;for(;;){int active,dx,dy;float z;pthread_mutex_lock(&motor_mutex);active=running&&ptz.moving;dx=ptz.dx;dy=ptz.dy;z=ptz.zvel;pthread_mutex_unlock(&motor_mutex);if(!active)break;if(z!=0.0f){pthread_mutex_lock(&motor_mutex);ptz.zoom+=z*0.02f;if(ptz.zoom<0.0f)ptz.zoom=0.0f;if(ptz.zoom>1.0f)ptz.zoom=1.0f;write_zoom();pthread_mutex_unlock(&motor_mutex);}if(dx||dy){if(motor_move_relative(dx,dy)<0)break;}else usleep(100000);}pthread_mutex_lock(&motor_mutex);ptz.moving=0;ptz.worker_active=0;pthread_mutex_unlock(&motor_mutex);return NULL;}
 static void motor_continuous(int dx,int dy,float z){motor_stop();usleep(200000);pthread_mutex_lock(&motor_mutex);ptz.dx=dx;ptz.dy=dy;ptz.zvel=z;ptz.moving=(dx||dy||z!=0.0f);if(ptz.moving&&!ptz.worker_active){ptz.worker_active=1;pthread_create(&ptz.worker,NULL,motor_worker,NULL);pthread_detach(ptz.worker);}pthread_mutex_unlock(&motor_mutex);}

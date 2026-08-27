@@ -52,7 +52,7 @@ static void print_usage(void)
 {
     printf(
         "Usage:\n"
-        "  motor_control <command> [args]\n"
+        "  motor_ctrl <command> [args]\n"
         "\n"
         "Commands:\n"
         "  left [steps]       Pan left (default 1 step)\n"
@@ -70,16 +70,18 @@ static void print_usage(void)
         "  preset list        List all saved presets\n"
         "  preset clear <n>   Delete preset <n>\n"
         "  zoom               Show current zoom level (from rtspd shared state)\n"
+        "  sync               Re-read position from hardware (H_COORD_GET)\n"
+        "  calibrate <x> <y>  Set logical position without moving\n"
         "\n"
         "Coordinate ranges:\n"
         "  Horizontal (x): 0 to %d (center: %d)\n"
         "  Vertical (y):   0 to %d (center: %d)\n"
         "\n"
         "Examples:\n"
-        "  motor_control right 5       # pan right 5 steps\n"
-        "  motor_control goto 15 7     # move to center\n"
-        "  motor_control preset save 0 home   # save center as preset 0\n"
-        "  motor_control preset goto 0         # go to preset 0\n",
+        "  motor_ctrl right 5       # pan right 5 steps\n"
+        "  motor_ctrl goto 15 7     # move to center\n"
+        "  motor_ctrl preset save 0 home   # save center as preset 0\n"
+        "  motor_ctrl preset goto 0         # go to preset 0\n",
         X_MAX, Y_MAX, PRESET_MAX,
         X_MAX, X_MAX / 2, Y_MAX, Y_MAX / 2
     );
@@ -185,7 +187,9 @@ static int motor_move(int dx, int dy)
     if (rc < 0) return -1;
 
     usleep(300000);
-    return motor_refresh();
+    cur_x += dx;
+    cur_y += dy;
+    return 0;
 }
 
 static void save_state(void)
@@ -286,7 +290,7 @@ static void cmd_zoom(void)
 
 static void cmd_preset_save(int argc, char *argv[])
 {
-    if (argc < 4) { fprintf(stderr, "Usage: motor_control preset save <n> <name>\n"); return; }
+    if (argc < 4) { fprintf(stderr, "Usage: motor_ctrl preset save <n> <name>\n"); return; }
     int n = atoi(argv[2]);
     if (n < 0 || n >= PRESET_MAX) { fprintf(stderr, "Preset slot must be 0-%d\n", PRESET_MAX - 1); return; }
     presets[n].used = 1;
@@ -299,7 +303,7 @@ static void cmd_preset_save(int argc, char *argv[])
 
 static void cmd_preset_goto(int argc, char *argv[])
 {
-    if (argc < 3) { fprintf(stderr, "Usage: motor_control preset goto <n>\n"); return; }
+    if (argc < 3) { fprintf(stderr, "Usage: motor_ctrl preset goto <n>\n"); return; }
     int n = atoi(argv[2]);
     if (n < 0 || n >= PRESET_MAX || !presets[n].used) {
         fprintf(stderr, "Preset %d not found\n", n);
@@ -325,7 +329,7 @@ static void cmd_preset_list(void)
 
 static void cmd_preset_clear(int argc, char *argv[])
 {
-    if (argc < 3) { fprintf(stderr, "Usage: motor_control preset clear <n>\n"); return; }
+    if (argc < 3) { fprintf(stderr, "Usage: motor_ctrl preset clear <n>\n"); return; }
     int n = atoi(argv[2]);
     if (n < 0 || n >= PRESET_MAX) { fprintf(stderr, "Preset slot must be 0-%d\n", PRESET_MAX - 1); return; }
     presets[n].used = 0;
@@ -347,9 +351,6 @@ int main(int argc, char *argv[])
         fprintf(stderr, "Motor device not available\n");
         return EXIT_FAILURE;
     }
-
-    if (motor_refresh() < 0)
-        fprintf(stderr, "WARN: Could not read initial position\n");
 
     if (strcmp(argv[1], "left") == 0) {
         int steps = argc > 2 ? atoi(argv[2]) : 1;
@@ -381,7 +382,7 @@ int main(int argc, char *argv[])
         else printf("OK,HOME -> X=%d Y=%d\n", cur_x, cur_y);
     }
     else if (strcmp(argv[1], "goto") == 0) {
-        if (argc < 4) { fprintf(stderr, "Usage: motor_control goto <x> <y>\n"); return 1; }
+        if (argc < 4) { fprintf(stderr, "Usage: motor_ctrl goto <x> <y>\n"); return 1; }
         int tx = atoi(argv[2]);
         int ty = atoi(argv[3]);
         if (tx < 0 || tx > X_MAX || ty < 0 || ty > Y_MAX) {
@@ -392,18 +393,16 @@ int main(int argc, char *argv[])
         else printf("OK,GOTO -> X=%d Y=%d\n", cur_x, cur_y);
     }
     else if (strcmp(argv[1], "pos") == 0) {
-        motor_refresh();
         cmd_pos();
     }
     else if (strcmp(argv[1], "status") == 0) {
-        motor_refresh();
         if (argc > 2 && strcmp(argv[2], "-j") == 0)
             cmd_status_json();
         else
             cmd_status_human();
     }
     else if (strcmp(argv[1], "preset") == 0) {
-        if (argc < 3) { fprintf(stderr, "Usage: motor_control preset <save|goto|list|clear> ...\n"); return 1; }
+        if (argc < 3) { fprintf(stderr, "Usage: motor_ctrl preset <save|goto|list|clear> ...\n"); return 1; }
         if (strcmp(argv[2], "save") == 0) cmd_preset_save(argc, argv);
         else if (strcmp(argv[2], "goto") == 0) cmd_preset_goto(argc, argv);
         else if (strcmp(argv[2], "list") == 0) cmd_preset_list();
@@ -412,6 +411,22 @@ int main(int argc, char *argv[])
     }
     else if (strcmp(argv[1], "zoom") == 0) {
         cmd_zoom();
+    }
+    else if (strcmp(argv[1], "sync") == 0) {
+        if (motor_refresh() < 0) fprintf(stderr, "Failed to read position from hardware\n");
+        else cmd_pos();
+    }
+    else if (strcmp(argv[1], "calibrate") == 0) {
+        if (argc < 4) { fprintf(stderr, "Usage: motor_ctrl calibrate <x> <y>\n"); return 1; }
+        int cx = atoi(argv[2]);
+        int cy = atoi(argv[3]);
+        if (cx < 0 || cx > X_MAX || cy < 0 || cy > Y_MAX) {
+            fprintf(stderr, "Position out of range (x: 0-%d, y: 0-%d)\n", X_MAX, Y_MAX);
+            return 1;
+        }
+        cur_x = cx;
+        cur_y = cy;
+        printf("OK,CALIBRATE -> X=%d Y=%d\n", cur_x, cur_y);
     }
     else {
         fprintf(stderr, "Unknown command: %s\n", argv[1]);
