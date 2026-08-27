@@ -22,7 +22,7 @@ static void print_usage(void)
         "  keyframe            Request an immediate keyframe\n"
         "  bitrate <kbps>      Change video bitrate (requires rtspd)\n"
         "  mode <1-4>          Change bitrate mode: 1=CBR 2=VBR 3=ECBR 4=EVBR (requires rtspd)\n"
-        "  fps <num>           Change framerate (requires rtspd)\n"
+        "  fps <num>           Change framerate 1-15, this camera's max (requires rtspd)\n"
         "  gop <num>           Change GOP length (requires rtspd)\n"
         "  zoom                Show zoom/pan/tilt from shared state\n"
         "\n"
@@ -31,7 +31,7 @@ static void print_usage(void)
         "  codec_ctrl status -j         # show as JSON\n"
         "  codec_ctrl bitrate 4096      # change to 4096 kbps\n"
         "  codec_ctrl mode 4            # change to EVBR\n"
-        "  codec_ctrl fps 25            # change to 25 fps\n"
+        "  codec_ctrl fps 15            # change to 15 fps (max)\n"
     );
     exit(EXIT_FAILURE);
 }
@@ -290,8 +290,13 @@ int main(int argc, char *argv[])
     }
     else if (strcmp(argv[argi], "fps") == 0) {
         if (argi + 1 >= argc) { fprintf(stderr, "Usage: codec_ctrl fps <num>\n"); return 1; }
+        int f = atoi(argv[argi + 1]);
+        if (f < 1 || f > 15) {
+            fprintf(stderr, "fps must be 1-15 (this camera's capture maximum)\n");
+            return 1;
+        }
         char cmd[64];
-        snprintf(cmd, sizeof(cmd), "fps %s", argv[argi + 1]);
+        snprintf(cmd, sizeof(cmd), "fps %d", f);
         return write_ctrl(cmd);
     }
     else if (strcmp(argv[argi], "gop") == 0) {

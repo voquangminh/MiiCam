@@ -92,6 +92,10 @@
 #define MAX_ZOOM_FACTOR          4.0f
 #define ZOOM_SMOOTH_STEP         0.05f
 
+/* Highest framerate this camera's sensor/capture supports. Requesting more
+ * makes gm_bind() fail silently, leaving a running daemon with no encoder. */
+#define MAX_FPS                  15
+
 #define OSD_PALETTE_COLOR_AQUA              0xCA48CA93        /* YCrYCb */
 #define OSD_PALETTE_COLOR_BLACK             0x10801080
 #define OSD_PALETTE_COLOR_BLUE              0x296e29f0
@@ -1971,6 +1975,17 @@ void gm_graph_init(void)
     gm_init();
     gm_get_sysinfo(&gm_system);
 
+    /* This camera's capture runs at gm_system.cap[0].framerate fps; asking
+     * for more makes gm_bind() fail silently so no encoder object appears in
+     * /proc/videograph/gmlib_setting and the stream stays empty. Clamp. */
+    if (gm_system.cap[0].framerate > 0 &&
+        cliArgs.framerate > gm_system.cap[0].framerate) {
+        log_error("Framerate %d exceeds capture maximum %d, clamping to %d",
+                  cliArgs.framerate, gm_system.cap[0].framerate,
+                  gm_system.cap[0].framerate);
+        cliArgs.framerate = gm_system.cap[0].framerate;
+    }
+
     if (cliArgs.osd)
         rtspd_set_osd_palette();
     if (cliArgs.framerate > 0)
@@ -2367,7 +2382,11 @@ static void apply_pending_args(void)
 
     if (bitrate > 0 && bitrate <= 16384) { cliArgs.bitrate = bitrate; log_info("Pending args: bitrate=%d", bitrate); }
     if (mode >= 1 && mode <= 4)           { cliArgs.bitrateMode = mode; log_info("Pending args: mode=%d", mode); }
-    if (fps > 0 && fps <= 30)             { cliArgs.framerate = fps;   log_info("Pending args: fps=%d", fps); }
+    if (fps > 0 && fps <= MAX_FPS)        { cliArgs.framerate = fps;   log_info("Pending args: fps=%d", fps); }
+    else if (fps > MAX_FPS) {
+        log_error("Pending fps=%d exceeds this camera's max (%d), using %d", fps, MAX_FPS, MAX_FPS);
+        cliArgs.framerate = MAX_FPS;
+    }
     if (gop > 0 && gop <= 120)            { cliArgs.gop = gop;         log_info("Pending args: gop=%d", gop); }
 }
 
@@ -3425,8 +3444,8 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    if ((cliArgs.framerate < 1) || (cliArgs.framerate > 30)) {
-        log_error("A framerate below 1 or higher than 30 fps is not supported.");
+    if ((cliArgs.framerate < 1) || (cliArgs.framerate > MAX_FPS)) {
+        log_error("A framerate below 1 or higher than %d fps is not supported (this camera's capture max).", MAX_FPS);
         return 1;
     }
 
