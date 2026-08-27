@@ -14,6 +14,7 @@
 #include <string.h>
 #include <strings.h>
 #include <signal.h>
+#include <fcntl.h>
 #include <time.h>
 #include <unistd.h>
 #include <math.h>
@@ -276,6 +277,7 @@ struct CommandLineArguments {
     int width;
     int bitrate;
     int bitrateMode;
+    int gop;
     int encoderType;
     int snapshot;
     int record;
@@ -1711,7 +1713,7 @@ void gm_enc_init(int cap_ch, int cap_path, int rec_track, int enc_type, int mode
             h264e_attr.dim.height            = height;
             h264e_attr.frame_info.framerate  = framerate;
             h264e_attr.ratectl.mode          = mode;
-            h264e_attr.ratectl.gop           = 20;			   // * I frame per second, default is 60
+            h264e_attr.ratectl.gop           = cliArgs.gop;	   // * I frame per second
             h264e_attr.ratectl.bitrate       = bitrate;
             h264e_attr.ratectl.bitrate_max   = 16384;          // * Max bitrate ceiling (VBR upper bound)
             h264e_attr.b_frame_num           = 0;              // * B-frames per GOP (H.264 high profile)
@@ -2186,14 +2188,136 @@ static void *rtspd_zoom_thread(void *arg)
 }
 
 /* Ctrl thread: polls /tmp/rtspd.ctrl for commands from codec_ctrl.
- * keyframe/bitrate applied live; fps/gop trigger an rtspd restart. */
+ * keyframe is applied live; bitrate/mode/fps/gop are staged in
+ * /tmp/rtspd_pending_args and applied via a self-restart, because the
+ * GM driver ignores gm_set_attr() changes after the encoder is running. */
 #define RTSPD_CTRL_FILE    "/tmp/rtspd.ctrl"
 #define RTSPD_ARGS_FILE    "/tmp/rtspd_pending_args"
+#define RTSPD_ARGS_FILE_TMP "/tmp/rtspd_pending_args.tmp"
 static pthread_t ctrl_thread_id = 0;
+
+static int  saved_argc = 0;
+static char *saved_argv[64];
+
+/* Merge key=val into RTSPD_ARGS_FILE, preserving other keys. */
+static void write_pending_arg(const char *key, int val)
+{
+    char line[32], buf[128];
+    FILE *af, *tmp;
+    int replaced = 0;
+
+    snprintf(line, sizeof(line), "%s=%d\n", key, val);
+    tmp = fopen(RTSPD_ARGS_FILE_TMP, "w");
+    if (!tmp)
+        return;
+    af = fopen(RTSPD_ARGS_FILE, "r");
+    if (af) {
+        while (fgets(buf, sizeof(buf), af)) {
+            size_t klen = strlen(key);
+            if (strncmp(buf, key, klen) == 0 && buf[klen] == '=') {
+                fputs(line, tmp);
+                replaced = 1;
+            } else {
+                fputs(buf, tmp);
+            }
+        }
+        fclose(af);
+    }
+    if (!replaced)
+        fputs(line, tmp);
+    fclose(tmp);
+    rename(RTSPD_ARGS_FILE_TMP, RTSPD_ARGS_FILE);
+}
+
+/* Fork a detached child that waits for us to exit, then execs the same
+ * binary with the same argv. The parent then kills itself so the encoder
+ * is torn down cleanly and the new process applies the pending args. */
+static void rtspd_reboot(void)
+{
+    pid_t parent = getpid();
+    pid_t pid = fork();
+
+    if (pid < 0) {
+        log_error("Ctrl: fork failed, cannot restart (%s)", strerror(errno));
+        return;
+    }
+    if (pid > 0) {
+        log_info("Ctrl: restarting rtspd...");
+        kill(parent, SIGTERM);
+        return;
+    }
+
+    /* child: detach, release inherited device fds at exec, and wait for
+     * the parent to fully exit */
+    setsid();
+    {
+        FILE *null = fopen("/dev/null", "r+");
+        if (null) {
+            dup2(fileno(null), 0);
+            dup2(fileno(null), 1);
+            dup2(fileno(null), 2);
+            if (fileno(null) > 2)
+                fclose(null);
+        }
+        DIR *fd_dir = opendir("/proc/self/fd");
+        if (fd_dir) {
+            struct dirent *de;
+            while ((de = readdir(fd_dir)) != NULL) {
+                int fdnum = atoi(de->d_name);
+                if (fdnum > 2)
+                    fcntl(fdnum, F_SETFD, FD_CLOEXEC);
+            }
+            closedir(fd_dir);
+        }
+    }
+    {
+        int i = 0;
+        while (i++ < 100) {
+            usleep(100000);
+            if (kill(parent, 0) < 0 && errno == ESRCH)
+                break;
+        }
+        char exe[256];
+        int len = readlink("/proc/self/exe", exe, sizeof(exe) - 1);
+        if (len > 0) {
+            exe[len] = '\0';
+            execv(exe, saved_argv);
+            _exit(127);
+        }
+    }
+    _exit(127);
+}
+
+/* Apply key=value overrides stored by the ctrl thread (from codec_ctrl)
+ * into cliArgs. Called at startup so changes survive a restart. */
+static void apply_pending_args(void)
+{
+    FILE *f = fopen(RTSPD_ARGS_FILE, "r");
+    int bitrate = -1, mode = -1, fps = -1, gop = -1;
+    char buf[128];
+
+    if (!f)
+        return;
+    while (fgets(buf, sizeof(buf), f)) {
+        if (sscanf(buf, "bitrate=%d", &bitrate) == 1) {}
+        else if (sscanf(buf, "mode=%d", &mode) == 1) {}
+        else if (sscanf(buf, "fps=%d", &fps) == 1) {}
+        else if (sscanf(buf, "gop=%d", &gop) == 1) {}
+    }
+    fclose(f);
+
+    if (bitrate > 0 && bitrate <= 16384) { cliArgs.bitrate = bitrate; log_info("Pending args: bitrate=%d", bitrate); }
+    if (mode >= 1 && mode <= 4)           { cliArgs.bitrateMode = mode; log_info("Pending args: mode=%d", mode); }
+    if (fps > 0 && fps <= 30)             { cliArgs.framerate = fps;   log_info("Pending args: fps=%d", fps); }
+    if (gop > 0 && gop <= 120)            { cliArgs.gop = gop;         log_info("Pending args: gop=%d", gop); }
+
+    remove(RTSPD_ARGS_FILE);
+}
 
 static void *rtspd_ctrl_thread(void *arg)
 {
     char buf[128];
+    int need_reboot = 0;
     (void)arg;
 
     while (rtspd_sysinit) {
@@ -2201,6 +2325,7 @@ static void *rtspd_ctrl_thread(void *arg)
         if (f) {
             if (fgets(buf, sizeof(buf), f)) {
                 buf[strcspn(buf, "\r\n")] = '\0';
+                need_reboot = 0;
 
                 if (strcmp(buf, "keyframe") == 0) {
                     if (bindfd) {
@@ -2211,53 +2336,43 @@ static void *rtspd_ctrl_thread(void *arg)
                 else if (strncmp(buf, "bitrate ", 8) == 0) {
                     int val = atoi(buf + 8);
                     if (val > 0 && val <= 16384) {
-                        gm_enc_t *ep = &enc_param[0][0];
-                        void *enc_obj = ep->enc[0].obj;
-                        if (enc_obj && ep->enc[0].enc_type == ENC_TYPE_H264) {
-                            gm_h264e_attr_t h264e_attr = ep->enc[0].codec.h264e_attr;
-                            h264e_attr.ratectl.bitrate     = val;
-                            h264e_attr.ratectl.bitrate_max = 16384;
-                            gm_set_attr(enc_obj, &h264e_attr);
-                            ep->enc[0].codec.h264e_attr = h264e_attr;
-                        }
-                        cliArgs.bitrate = val;
-                        log_info("Ctrl: bitrate=%d applied live", val);
+                        write_pending_arg("bitrate", val);
+                        log_info("Ctrl: bitrate=%d pending restart", val);
+                        need_reboot = 1;
                     }
                 }
                 else if (strncmp(buf, "mode ", 5) == 0) {
                     int val = atoi(buf + 5);
                     if (val >= 1 && val <= 4) {
-                        gm_enc_t *ep = &enc_param[0][0];
-                        void *enc_obj = ep->enc[0].obj;
-                        if (enc_obj && ep->enc[0].enc_type == ENC_TYPE_H264) {
-                            gm_h264e_attr_t h264e_attr = ep->enc[0].codec.h264e_attr;
-                            h264e_attr.ratectl.mode     = (gm_enc_ratecontrol_mode_t) val;
-                            gm_set_attr(enc_obj, &h264e_attr);
-                            ep->enc[0].codec.h264e_attr = h264e_attr;
-                        }
-                        cliArgs.bitrateMode = val;
-                        log_info("Ctrl: mode=%d applied live", val);
+                        write_pending_arg("mode", val);
+                        log_info("Ctrl: mode=%d pending restart", val);
+                        need_reboot = 1;
                     }
                 }
                 else if (strncmp(buf, "fps ", 4) == 0) {
                     int val = atoi(buf + 4);
                     if (val > 0 && val <= 30) {
-                        FILE *af = fopen(RTSPD_ARGS_FILE, "w");
-                        if (af) { fprintf(af, "fps=%d\n", val); fclose(af); }
+                        write_pending_arg("fps", val);
                         log_info("Ctrl: fps=%d pending restart", val);
+                        need_reboot = 1;
                     }
                 }
                 else if (strncmp(buf, "gop ", 4) == 0) {
                     int val = atoi(buf + 4);
                     if (val > 0 && val <= 120) {
-                        FILE *af = fopen(RTSPD_ARGS_FILE, "w");
-                        if (af) { fprintf(af, "gop=%d\n", val); fclose(af); }
+                        write_pending_arg("gop", val);
                         log_info("Ctrl: gop=%d pending restart", val);
+                        need_reboot = 1;
                     }
                 }
             }
             fclose(f);
             remove(RTSPD_CTRL_FILE);
+        }
+        if (need_reboot) {
+            log_info("Ctrl: restarting rtspd to apply changes");
+            rtspd_reboot();
+            usleep(200000);
         }
         usleep(500000);   // * poll every 500ms
     }
@@ -2858,11 +2973,18 @@ int main(int argc, char *argv[])
 
     setup_logging();    // * Setup logging
 
+    saved_argc = argc;
+    for (i = 0; i < argc && i < 64; i++)
+        saved_argv[i] = argv[i];
+    if (argc < 64)
+        saved_argv[argc] = NULL;
+
     cliArgs.bitrate     = 8192;
     cliArgs.framerate   = 15;
     cliArgs.width       = 1280;
     cliArgs.height      = 720;
     cliArgs.bitrateMode = GM_EVBR;
+    cliArgs.gop         = 20;
     cliArgs.encoderType = ENC_TYPE_H264;
 
     cliArgs.snapshot    = 0;    // * disable by default
@@ -3232,6 +3354,10 @@ int main(int argc, char *argv[])
         log_error("-d is required when using -s or -r");
         return 1;
     }
+
+    /* Apply pending codec overrides (from codec_ctrl) before validation so
+     * the encoder is created with the last requested bitrate/mode/fps/gop. */
+    apply_pending_args();
 
     if ((cliArgs.bitrate < 1) || (cliArgs.bitrate > 16384)) {
         log_error("Use a maximum bitrate of 16384 and a minimum of 1");
