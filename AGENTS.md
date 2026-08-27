@@ -16,6 +16,14 @@ Alternate firmware for the Xiaomi Chuangmi 720p IP camera (Grain Media GM8136S S
 - `tools/lib/*.c` — shared `libchuangmi_*.so` libs (ircut, led, pwm, isp328, utils); `tools/utils/*.c` — one-off camera utilities. Both build against GM libs in `tools/gm_lib/` (headers in `inc/`, shared libs in `lib/`).
 - `tools/gm8136-rtsp-audio/` is a standalone parallel subtree (own `Dockerfile`/`Makefile`/`build.sh`, vendored SDK under its `sdk/`). It is NOT wired into the top-level Makefile and its `gm_lib/` is untracked locally. Don't assume edits there affect `tools/bin/rtspd`.
 
+## Motor control
+
+- `tools/utils/motor_ctrl.c` — CLI tool for PTZ motor control (renamed from `motor_control`). Build → `tools/bin/motor_ctrl`. Commands: `left`, `right`, `up`, `down`, `home`, `goto <x> <y>`, `pos`, `status`, `preset`, `calibrate`, `sync`.
+- `tools/onvif_server/onvif_server.c` has inline motor control (does NOT use `motor_driver.c`).
+- `tools/onvif_server/motor_driver.c` + `motor_driver.h` — standalone motor library compiled into onvif_server but **never called** (dead code). `onvif_server.c` has its own inline motor ioctl code.
+- **Hardware quirk**: `H_COORD_GET`/`V_COORD_GET` ioctls always return 0 on this SoC. Both `motor_ctrl.c` and `onvif_server.c` track position via software deltas (`cur_x += dx`) instead of reading hardware. The `sync` command in motor_ctrl can re-read from hardware if needed.
+- Direction mapping (same in all three files): horizontal `dx>0→dir=0` (right), `dx<0→dir=1` (left); vertical `dy>0→dir=1` (up), `dy<0→dir=0` (down).
+
 ## Building locally (what CI does — fastest path for a single binary)
 
 1. Extract `sdk/toolchain_gnueabi-4.4.0_ARMv5TE.tgz` and `sdk/gm_lib_2015-01-09-IPCAM.tgz`, then `chmod -R +x` the SDK.
@@ -31,11 +39,12 @@ WSL quirk: the 32-bit toolchain cannot read sources on Windows drvfs (`/mnt/c`) 
 ## Git / CI quirks
 
 - `tools/bin/*`, `tools/lib/*.so`, and `sdcard/firmware/bin/*` are gitignored, yet some binaries are committed. CI force-adds them (`git add -f tools/bin/rtspd`, etc.). If you edit C code and rebuild, commit the binary with `git add -f tools/bin/<name>`, not plain `git add`.
-- Manual workflows (`.github/workflows/build-rtspd.yml`, `build-onvif.yml`, `build-aac-play.yml`) are `workflow_dispatch` only (manual trigger). They reproduce the local-build steps on `ubuntu-latest` and auto-commit the binary (message style: "Automated build: update camera binary rtspd2MP/rtspd/rtspd-v5" or "Automated build: update onvif_server" / "Automated build: update aac_player").
-- `build-rtspd.yml` builds rtspd but force-adds all four committed binaries (`rtspd`, `rtspd2MP`, `rtspd-v5`, `rtspd2MP00`).
+- `codespace` branch has additional CI workflows not on `master`: `build-libs.yml` (auto-triggers on push for `tools/lib/**`, `tools/utils/**`, `Makefile`), `build-onvif.yml`, `build-aac-play.yml`, `opencode.yml` (responds to `/oc` or `/opencode` in PR comments).
+- `build-rtspd.yml` (on `master`) is `workflow_dispatch` only and force-adds all four committed binaries (`rtspd`, `rtspd2MP`, `rtspd-v5`, `rtspd2MP00`).
 - `build-aac-play.yml` works around the `aac_player.c` filename bug by compiling `aac_play.c` directly with `$(TOOLCHAIN_PREFIX)-gcc` instead of using `make build/aac_play`.
 
 ## Deploying to a camera
 
 - Camera mounts the SD at `/tmp/sd`; binaries live at `/tmp/sd/firmware/bin`. `tools/dev/helpers.sh` (sourced inside the build container) provides `rb <target>` and `upload_rtsp`/`upload_binary` via `scp root@$CAMERA_HOSTNAME`; requires `tools/dev/host.cfg` (gitignored) with the camera hostname.
+- `tools/deploy_camera.js` — Node.js script that SSHs to the camera and uploads binaries + libs. Uses `ssh2` package. Hardcoded to deploy `chuangmi_ctrl`, `codec_ctrl`, `motor_ctrl`, `camera_adjust`, `rtspd` and `libchuangmi_*.so` libs.
 - `sdcard/config.cfg` is the camera config and is generated (not hand-edited) by `sdcard/firmware/scripts/update/configupdate`; the target device reads `/tmp/sd/config.cfg`.
