@@ -3055,10 +3055,14 @@ int main(int argc, char *argv[])
 
     /* If we were relaunched after a codec change, wait for the old process
      * to release the encoder and drop inherited device fds, then apply the
-     * persistent codec overrides. A fresh boot/manual start has no marker,
-     * so the command-line args (from /etc/init/S99rtsp) take precedence. */
+     * persistent codec overrides. A fresh boot/manual start has no marker:
+     * the command-line args (from /etc/init/S99rtsp) take precedence, and any
+     * stale pending overrides from the previous daemon instance are dropped so
+     * the next codec_ctrl change applies on top of the launched values. */
     if (restart_handoff())
         apply_pending_args();
+    else
+        remove(RTSPD_ARGS_FILE);
 
     saved_argc = argc;
     for (i = 0; i < argc && i < 64; i++)
