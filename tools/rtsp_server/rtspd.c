@@ -2194,6 +2194,7 @@ static void *rtspd_zoom_thread(void *arg)
 #define RTSPD_CTRL_FILE    "/tmp/rtspd.ctrl"
 #define RTSPD_ARGS_FILE    "/tmp/rtspd_pending_args"
 #define RTSPD_ARGS_FILE_TMP "/tmp/rtspd_pending_args.tmp"
+#define RTSPD_RESTART_FILE "/tmp/rtspd_restart_oldpid"
 static pthread_t ctrl_thread_id = 0;
 
 static int  saved_argc = 0;
@@ -2229,16 +2230,25 @@ static void write_pending_arg(const char *key, int val)
     rename(RTSPD_ARGS_FILE_TMP, RTSPD_ARGS_FILE);
 }
 
-/* Fork a detached child that waits for us to exit, then execs the same
- * binary with the same argv. The parent then kills itself so the encoder
- * is torn down cleanly and the new process applies the pending args. */
+/* Fork a detached child that re-execs the same binary with the same argv.
+ * The child must only use async-signal-safe calls (no fopen/opendir/malloc)
+ * because other threads may hold internal locks at fork time, which would
+ * deadlock the child. The parent then kills itself so the encoder is torn
+ * down cleanly; the new process picks up the restart marker and waits for
+ * this one to exit before re-initializing. */
 static void rtspd_reboot(void)
 {
     pid_t parent = getpid();
-    pid_t pid = fork();
+    FILE *mf = fopen(RTSPD_RESTART_FILE, "w");
+    if (mf) {
+        fprintf(mf, "%d", (int)parent);
+        fclose(mf);
+    }
 
+    pid_t pid = fork();
     if (pid < 0) {
         log_error("Ctrl: fork failed, cannot restart (%s)", strerror(errno));
+        remove(RTSPD_RESTART_FILE);
         return;
     }
     if (pid > 0) {
@@ -2247,45 +2257,92 @@ static void rtspd_reboot(void)
         return;
     }
 
-    /* child: detach, release inherited device fds at exec, and wait for
-     * the parent to fully exit */
+    /* child: async-signal-safe only */
     setsid();
     {
-        FILE *null = fopen("/dev/null", "r+");
-        if (null) {
-            dup2(fileno(null), 0);
-            dup2(fileno(null), 1);
-            dup2(fileno(null), 2);
-            if (fileno(null) > 2)
-                fclose(null);
-        }
-        DIR *fd_dir = opendir("/proc/self/fd");
-        if (fd_dir) {
-            struct dirent *de;
-            while ((de = readdir(fd_dir)) != NULL) {
-                int fdnum = atoi(de->d_name);
-                if (fdnum > 2)
-                    fcntl(fdnum, F_SETFD, FD_CLOEXEC);
-            }
-            closedir(fd_dir);
-        }
-    }
-    {
-        int i = 0;
-        while (i++ < 100) {
-            usleep(100000);
-            if (kill(parent, 0) < 0 && errno == ESRCH)
-                break;
+        int fd = open("/dev/null", O_RDWR);
+        if (fd >= 0) {
+            dup2(fd, 0);
+            dup2(fd, 1);
+            dup2(fd, 2);
+            if (fd > 2)
+                close(fd);
         }
         char exe[256];
         int len = readlink("/proc/self/exe", exe, sizeof(exe) - 1);
         if (len > 0) {
             exe[len] = '\0';
             execv(exe, saved_argv);
-            _exit(127);
         }
     }
     _exit(127);
+}
+
+/* True if /proc/<pid>/cmdline mentions rtspd (guards against PID reuse
+ * making us wait on an unrelated process). */
+static int pid_is_rtspd(int pid)
+{
+    char path[64], buf[64];
+    int fd, n;
+
+    snprintf(path, sizeof(path), "/proc/%d/cmdline", pid);
+    fd = open(path, O_RDONLY);
+    if (fd < 0)
+        return 0;
+    n = read(fd, buf, sizeof(buf) - 1);
+    close(fd);
+    if (n <= 0)
+        return 0;
+    buf[n] = '\0';
+    return strstr(buf, "rtspd") != NULL;
+}
+
+/* Called at startup: if a restart marker exists we were relaunched by
+ * rtspd_reboot(). Wait for the old process to exit (so the encoder device
+ * is released), then drop the inherited device fds before re-initializing. */
+static void restart_handoff(void)
+{
+    FILE *f = fopen(RTSPD_RESTART_FILE, "r");
+    int oldpid = 0, valid = 0;
+
+    if (!f)
+        return;
+    if (fscanf(f, "%d", &oldpid) != 1)
+        oldpid = 0;
+    fclose(f);
+
+    if (oldpid > 0 && pid_is_rtspd(oldpid)) {
+        int i;
+        valid = 1;
+        log_info("Restart: inherited from old rtspd (pid %d), waiting for it to exit", oldpid);
+        for (i = 0; i < 100; i++) {
+            usleep(100000);
+            if (kill(oldpid, 0) < 0 && errno == ESRCH)
+                break;
+        }
+    } else if (oldpid > 0) {
+        log_info("Restart: ignoring stale marker (pid %d not rtspd)", oldpid);
+    }
+
+    if (valid) {
+        int fds[128], n = 0, i;
+        int logfd = logfile ? fileno(logfile) : -1;
+        DIR *d = opendir("/proc/self/fd");
+        if (d) {
+            struct dirent *de;
+            while (n < 128 && (de = readdir(d)) != NULL) {
+                int fdnum = atoi(de->d_name);
+                if (fdnum > 2 && fdnum != logfd)
+                    fds[n++] = fdnum;
+            }
+            closedir(d);
+        }
+        for (i = 0; i < n; i++)
+            close(fds[i]);
+        log_info("Restart: handoff complete");
+    }
+
+    remove(RTSPD_RESTART_FILE);
 }
 
 /* Apply key=value overrides stored by the ctrl thread (from codec_ctrl)
@@ -2972,6 +3029,10 @@ int main(int argc, char *argv[])
     int cap_ch, cap_path, rec_track;
 
     setup_logging();    // * Setup logging
+
+    /* If we were relaunched after a codec change, wait for the old process
+     * to release the encoder and drop inherited device fds. */
+    restart_handoff();
 
     saved_argc = argc;
     for (i = 0; i < argc && i < 64; i++)
