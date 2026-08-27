@@ -1713,7 +1713,7 @@ void gm_enc_init(int cap_ch, int cap_path, int rec_track, int enc_type, int mode
             h264e_attr.ratectl.mode          = mode;
             h264e_attr.ratectl.gop           = 20;			   // * I frame per second, default is 60
             h264e_attr.ratectl.bitrate       = bitrate;
-            h264e_attr.ratectl.bitrate_max   = 16384;           // * Max bitrate ceiling (VBR upper bound)
+            h264e_attr.ratectl.bitrate_max   = 16384;          // * Max bitrate ceiling (VBR upper bound)
             h264e_attr.b_frame_num           = 0;              // * B-frames per GOP (H.264 high profile)
             h264e_attr.enable_mv_data        = 0;              // * Disable H.264 motion data output
             h264e_attr.ratectl.init_quant    = 25;
@@ -1738,7 +1738,7 @@ void gm_enc_init(int cap_ch, int cap_path, int rec_track, int enc_type, int mode
 
             gm_set_attr(param->enc[rec_track].obj, &h264e_attr);
 
-/* H264 advanced */
+            /* H264 advanced */
 			DECLARE_ATTR(h264_adv, gm_h264_advanced_attr_t);
 			h264_adv.multi_slice = 4;
 			h264_adv.field_coding = 0;
@@ -2214,13 +2214,29 @@ static void *rtspd_ctrl_thread(void *arg)
                         gm_enc_t *ep = &enc_param[0][0];
                         void *enc_obj = ep->enc[0].obj;
                         if (enc_obj && ep->enc[0].enc_type == ENC_TYPE_H264) {
-                            DECLARE_ATTR(h264e_attr, gm_h264e_attr_t);
+                            gm_h264e_attr_t h264e_attr = ep->enc[0].codec.h264e_attr;
                             h264e_attr.ratectl.bitrate     = val;
                             h264e_attr.ratectl.bitrate_max = 16384;
                             gm_set_attr(enc_obj, &h264e_attr);
+                            ep->enc[0].codec.h264e_attr = h264e_attr;
                         }
                         cliArgs.bitrate = val;
                         log_info("Ctrl: bitrate=%d applied live", val);
+                    }
+                }
+                else if (strncmp(buf, "mode ", 5) == 0) {
+                    int val = atoi(buf + 5);
+                    if (val >= 1 && val <= 4) {
+                        gm_enc_t *ep = &enc_param[0][0];
+                        void *enc_obj = ep->enc[0].obj;
+                        if (enc_obj && ep->enc[0].enc_type == ENC_TYPE_H264) {
+                            gm_h264e_attr_t h264e_attr = ep->enc[0].codec.h264e_attr;
+                            h264e_attr.ratectl.mode     = (gm_enc_ratecontrol_mode_t) val;
+                            gm_set_attr(enc_obj, &h264e_attr);
+                            ep->enc[0].codec.h264e_attr = h264e_attr;
+                        }
+                        cliArgs.bitrateMode = val;
+                        log_info("Ctrl: mode=%d applied live", val);
                     }
                 }
                 else if (strncmp(buf, "fps ", 4) == 0) {
@@ -2849,12 +2865,12 @@ int main(int argc, char *argv[])
     cliArgs.bitrateMode = GM_EVBR;
     cliArgs.encoderType = ENC_TYPE_H264;
 
-    cliArgs.snapshot    = 0;// * disable by default
-    cliArgs.record      = 0;// * disable by default
-    cliArgs.motion      = 0;// * disable by default
-    cliArgs.osd         = 1;// * enabled by default
-    cliArgs.font_zoom   = 1;// * small=GM_OSD_FONT_ZOOM_NONE, 1=minimum, 2=normal
-    cliArgs.osd_bg_color= 1;// * default is black
+    cliArgs.snapshot    = 0;    // * disable by default
+    cliArgs.record      = 0;    // * disable by default
+    cliArgs.motion      = 0;    // * disable by default
+    cliArgs.osd         = 1;    // * enabled by default
+    cliArgs.font_zoom   = 1;    // * small=GM_OSD_FONT_ZOOM_NONE, 1=minimum, 2=normal
+    cliArgs.osd_bg_color= 1;    // * default is black
     cliArgs.osd_text[0] = '\0';
 
     /* Audio defaults: AAC-LC 16000 Hz 16-bit mono (same as original firmware) */

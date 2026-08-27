@@ -21,6 +21,7 @@ static void print_usage(void)
         "  status -k           Show as shell key=value\n"
         "  keyframe            Request an immediate keyframe\n"
         "  bitrate <kbps>      Change video bitrate (requires rtspd)\n"
+        "  mode <1-4>          Change bitrate mode: 1=CBR 2=VBR 3=ECBR 4=EVBR (requires rtspd)\n"
         "  fps <num>           Change framerate (requires rtspd)\n"
         "  gop <num>           Change GOP length (requires rtspd)\n"
         "  zoom                Show zoom/pan/tilt from shared state\n"
@@ -29,6 +30,7 @@ static void print_usage(void)
         "  codec_ctrl status            # show all settings\n"
         "  codec_ctrl status -j         # show as JSON\n"
         "  codec_ctrl bitrate 4096      # change to 4096 kbps\n"
+        "  codec_ctrl mode 4            # change to EVBR\n"
         "  codec_ctrl fps 25            # change to 25 fps\n"
     );
     exit(EXIT_FAILURE);
@@ -196,6 +198,17 @@ static void cmd_status_shell(void)
     free(data);
 }
 
+static const char *rate_mode_name(int rm)
+{
+    switch (rm) {
+        case 1: return "CBR";
+        case 2: return "VBR";
+        case 3: return "ECBR";
+        case 4: return "EVBR";
+        default: return "?";
+    }
+}
+
 static void cmd_status_human(void)
 {
     char *data = read_file(GMLIB_SETTING);
@@ -211,7 +224,7 @@ static void cmd_status_human(void)
     printf("  GOP:            %d\n", v.gop);
     printf("  Bitrate:        %d kbps (max: %d)\n", v.bitrate, v.bitrate_max);
     printf("  Quantizer:      init=%d  min=%d  max=%d\n", v.init_q, v.min_q, v.max_q);
-    printf("  Rate mode:      %s\n", v.rm ? "VBR" : "CBR");
+    printf("  Rate mode:      %s (%d)\n", rate_mode_name(v.rm), v.rm);
     printf("  Multi-slice:    %d\n", v.ms);
     printf("\n");
     printf("=== Audio Encoder ===\n");
@@ -262,6 +275,17 @@ int main(int argc, char *argv[])
         if (argi + 1 >= argc) { fprintf(stderr, "Usage: codec_ctrl bitrate <kbps>\n"); return 1; }
         char cmd[64];
         snprintf(cmd, sizeof(cmd), "bitrate %s", argv[argi + 1]);
+        return write_ctrl(cmd);
+    }
+    else if (strcmp(argv[argi], "mode") == 0) {
+        if (argi + 1 >= argc) { fprintf(stderr, "Usage: codec_ctrl mode <1-4> (1=CBR 2=VBR 3=ECBR 4=EVBR)\n"); return 1; }
+        int m = atoi(argv[argi + 1]);
+        if (m < 1 || m > 4) {
+            fprintf(stderr, "mode must be 1-4 (1=CBR 2=VBR 3=ECBR 4=EVBR)\n");
+            return 1;
+        }
+        char cmd[64];
+        snprintf(cmd, sizeof(cmd), "mode %d", m);
         return write_ctrl(cmd);
     }
     else if (strcmp(argv[argi], "fps") == 0) {
