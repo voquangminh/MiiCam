@@ -47,6 +47,7 @@ jobs:
           # 5. Kích hoạt lệnh make biên dịch riêng rtspd
           make TARGET="$REAL_TARGET_PREFIX" build/rtspd
           make TARGET="$REAL_TARGET_PREFIX" build/rtspd-v5
+          make TARGET="$REAL_TARGET_PREFIX" build/rtsp_audio_in
 
       - name: Commit và Push file Binary trực tiếp lên GitHub (Siêu tốc 1 giây)
         run: |
@@ -59,9 +60,10 @@ jobs:
           git add -f tools/bin/rtspd
           git add -f tools/bin/rtspd-v5
           git add -f tools/bin/rtspd2MP00
+          git add -f tools/bin/rtsp_audio_in
           
-          # 3. Tiến hành commit file chạy
-          git commit -m "Automated build: update camera binary rtspd2MP/rtspd/rtspd-v5" || echo "No changes to commit"
+          # 3. Ti?n h�nh commit file ch?y
+          git commit -m "Automated build: update camera binary rtspd2MP/rtspd/rtspd-v5/rtsp_audio_in" || echo "No changes to commit"
           
           # 4. Kéo code mới nhất từ GitHub về gộp tự động trước khi đẩy (Tránh lỗi fetch first)
           git pull origin HEAD --no-rebase || true

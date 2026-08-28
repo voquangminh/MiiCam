@@ -73,6 +73,12 @@ utils: $(UTILS)
 
 libs: $(LIBS)
 
+## Web content is committed under sdcard/firmware/www and packed into the SD
+## image by "images". This rule exists so `make all`/`images` has a real
+## `website` prerequisite (previously referenced with no rule, which failed).
+website: $(WEBCONTENTDIR)/public/index.html $(WEBCONTENTDIR)/public/api/index.php
+	@echo "*** Web content present in $(WEBCONTENTDIR)"
+
 all:                                 \
 	libs                             \
 	utils                            \
@@ -81,6 +87,7 @@ all:                                 \
 	sdcard/manufacture.bin           \
 	$(BUILDDIR)/rtspd                \
 	$(BUILDDIR)/rtspd-v5             \
+	$(BUILDDIR)/rtsp_audio_in        \
 	$(BUILDDIR)/onvif_server         \
 	$(BUILDDIR)/zlib                 \
 	$(BUILDDIR)/libxml2              \
@@ -192,6 +199,26 @@ $(BUILDDIR)/aac_play: $(PREFIXDIR)/bin
 	@touch $@
 
 build/aac_play: $(BUILDDIR)/aac_play
+	@:
+
+
+#################################################################
+## RTSP-AUDIO-IN (two-way / downlink audio receiver)		   ##
+#################################################################
+$(BUILDDIR)/rtsp_audio_in: $(PREFIXDIR)/bin
+	@mkdir -p $(BUILDDIR) $(TOOLSDIR)/bin
+	cd $(RTSPDDIR) 				&& \
+	$(TARGET)-gcc 				\
+		-Os 					\
+		-Wall					\
+		-I$(GMLIBDIR)/inc		\
+		$(RTSPDDIR)/rtsp_audio_in.c	\
+		-L$(GMLIBDIR)/lib		\
+		-lpthread -lm -lrt -lgm -o $(TOOLSDIR)/bin/rtsp_audio_in && \
+		$(TARGET)-strip $(TOOLSDIR)/bin/rtsp_audio_in
+	@touch $@
+
+build/rtsp_audio_in: $(BUILDDIR)/rtsp_audio_in
 	@:
 
 
