@@ -74,6 +74,9 @@
 #define MOTION_ON_SCRIPT         "/tmp/sd/firmware/scripts/motion_on.sh"
 #define MOTION_OFF_SCRIPT        "/tmp/sd/firmware/scripts/motion_off.sh"
 
+#define TAMPER_ON_SCRIPT         "/tmp/sd/firmware/scripts/tamper_on.sh"
+#define TAMPER_OFF_SCRIPT        "/tmp/sd/firmware/scripts/tamper_off.sh"
+
 #define RTSPD_LOGFILE            "/tmp/sd/log/rtspd.log"
 
 #define CREATE_SNAPSHOT_FILE     "/dev/shm/rtspd_snapshot"
@@ -226,6 +229,10 @@ static int rtspd_sysinit      = 0;
 static int rtspd_set_event    = 0;
 static int rtspd_avail_ch     = 0;
 
+/* Tamper detection state */
+static volatile int tamper_alarm = 0;
+static volatile int tamper_ready = 0;
+
 char *snapshot_buf            = 0;
 static int snapshot_create    = 0;
 static int video_create       = 0;
@@ -293,6 +300,12 @@ struct CommandLineArguments {
     int font_zoom;
     int osd_bg_color;
     char osd_text[32];
+
+    /* Tamper detection */
+    int tamper_enabled;         /* 0 = disabled, 1 = enabled */
+    int tamper_threshold;       /* 1..255 luminance index (above = tamper) */
+    int tamper_sensitive_b;     /* 0..100 black sensitivity (0 = disable) */
+    int tamper_sensitive_h;     /* 0..100 homogenous sensitivity (0 = disable) */
 
     /* Audio configuration (all types / sample rates supported by gmlib) */
     int audio_sample_rate;    /* 8000, 16000, 32000, 44100, 48000... */
@@ -704,6 +717,77 @@ err_ext:
     if (mdt_alg.mb_cell_en)
         free(mdt_alg.mb_cell_en);
     return ret;
+}
+
+
+/* Notification callback fired by gmlib when a tamper event is triggered. */
+static void rtspd_notify_tamper(gm_obj_type_t obj_type, int vch, gm_notify_t notify)
+{
+    (void) obj_type;
+    (void) vch;
+
+    if (notify == GM_NOTIFY_TAMPER_ALARM) {
+        if (tamper_alarm == 0) {
+            tamper_alarm = 1;
+            log_info("Tamper ON - camera is being tampered with");
+            system(TAMPER_ON_SCRIPT);
+        }
+    } else if (notify == GM_NOTIFY_TAMPER_ALARM_RELEASE) {
+        if (tamper_alarm == 1) {
+            tamper_alarm = 0;
+            log_info("Tamper OFF - camera tamper released");
+            system(TAMPER_OFF_SCRIPT);
+        }
+    }
+}
+
+/* Configure tamper detection and register the notification handlers.
+ * Must be called after gm_init()/gm_get_sysinfo() and after gm_apply(). */
+static int set_cap_tamper(int cap_vch)
+{
+    int ret;
+    gm_cap_tamper_t cap_tamper;
+
+    if (!cliArgs.tamper_enabled)
+        return 0;
+
+    memset(&cap_tamper, 0, sizeof(cap_tamper));
+    cap_tamper.tamper_sensitive_b  = cliArgs.tamper_sensitive_b;
+    cap_tamper.tamper_threshold    = cliArgs.tamper_threshold;
+    cap_tamper.tamper_sensitive_h  = cliArgs.tamper_sensitive_h;
+
+    ret = gm_set_cap_tamper(cap_vch, &cap_tamper);
+    if (ret < 0) {
+        log_error("Failed to run gm_set_cap_tamper (ret=%d), tamper detection disabled", ret);
+        return -1;
+    }
+
+    ret = gm_register_notify_handler(GM_NOTIFY_TAMPER_ALARM, rtspd_notify_tamper);
+    if (ret < 0) {
+        log_error("Failed to register tamper alarm handler (ret=%d)", ret);
+        return -1;
+    }
+    ret = gm_register_notify_handler(GM_NOTIFY_TAMPER_ALARM_RELEASE, rtspd_notify_tamper);
+    if (ret < 0) {
+        log_error("Failed to register tamper release handler (ret=%d)", ret);
+        return -1;
+    }
+
+    log_info("Tamper detection enabled: threshold=%d sensitive_b=%d sensitive_h=%d",
+             cliArgs.tamper_threshold, cliArgs.tamper_sensitive_b, cliArgs.tamper_sensitive_h);
+    tamper_ready = 1;
+    return 0;
+}
+
+static void unset_cap_tamper(void)
+{
+    if (!tamper_ready)
+        return;
+    gm_register_notify_handler(GM_NOTIFY_TAMPER_ALARM, NULL);
+    gm_register_notify_handler(GM_NOTIFY_TAMPER_ALARM_RELEASE, NULL);
+    tamper_ready = 0;
+    /* Restore the alarm state file / flag so a later restart can re-trigger */
+    tamper_alarm = 0;
 }
 
 
@@ -1380,8 +1464,19 @@ static int cmd_cb(char *name, int sno, int cmd, void *p)
             if ( strncmp(name, "live/", 5) == 0 ) {
                 if ((pb = find_file_sr(name, sno)) == NULL)
                     ERR_GOTO(-1, cmd_cb_err);
-                if (pb->video.qno >= 0)
+                if (pb->video.qno >= 0) {
+                    /* Request a keyframe so a new client starts a stream
+                     * immediately instead of waiting for the next I-frame. */
+                    int need_key = (pb->play == 0);
                     pb->play = 1;
+                    if (need_key) {
+                        gm_enc_t *param = &enc_param[pb->video.cap_ch][pb->video.cap_path];
+                        if (param->bindfd[pb->video.rec_track]) {
+                            if (gm_request_keyframe(param->bindfd[pb->video.rec_track]) < 0)
+                                log_error("gm_request_keyframe failed on %s", name);
+                        }
+                    }
+                }
             }
             ret = 0;
             break;
@@ -2011,6 +2106,12 @@ void gm_graph_init(void)
     gm_enc_init(0, 0, 0, cliArgs.encoderType, cliArgs.bitrateMode, cliArgs.framerate, cliArgs.bitrate, cliArgs.width, cliArgs.height);
     gm_apply(enc_groupfd); // * Activate settings
 	audio_init();		   // * Activate Audio
+
+    /* Tamper detection must be configured after the capture graph is active */
+    if (cliArgs.tamper_enabled) {
+        if (set_cap_tamper(0) < 0)
+            log_error("Tamper detection setup failed");
+    }
 }
 
 void gm_graph_release(void)
@@ -2032,7 +2133,9 @@ void gm_graph_release(void)
     gm_apply(enc_groupfd);
     if (audio_bindfd)
         gm_apply(enc_audio_groupfd);
-	
+
+    unset_cap_tamper();
+
     for (cap_ch = 0; cap_ch < CAP_CH_NUM; cap_ch++) {
         for (cap_path = 0; cap_path < CAP_PATH_NUM; cap_path++) {
             param = &enc_param[cap_ch][cap_path];
@@ -2989,7 +3092,7 @@ char *get_local_ip(void)
 static void print_usage(void)
 {
     printf("Usage:\n");
-    printf(" ./rtspd [-bfwhmotzB] [-j|-4|-d|-s|-r] [-XARSCPq] [-FGVLEIUNZQY]\n");
+    printf(" ./rtspd [-bfwhmotzB] [-j|-4|-d|-s|-r] [-XARSCPq] [-FGVLEIUNZQY] [-TW]\n");
     printf(
         "\nAvailable options:\n"
         "-b [1-16384]   - Set the bitrate         (default: 8192)\n"
@@ -3031,6 +3134,10 @@ static void print_usage(void)
         "-Y [num:den]   - Fractional framerate (e.g. 30000:1001 for 29.97)\n"
         "-K [min:max:init] - Rate control QP bounds (default: 26:51:28;\n"
         "                  min below ~24 can overflow the encoder BS buffer)\n"
+        "-T [0|1]       - Enable tamper detection (default: off)\n"
+        "-W [th:sb[:sh]] - Tamper params: threshold(1-255), sensitive_b(0-100),\n"
+        "                  sensitive_h(0-100), 0 sensitivity disables it\n"
+        "                  (default: 128:50:50, implies -T on)\n"
     );
 
 	exit(EXIT_FAILURE);
@@ -3137,6 +3244,12 @@ int main(int argc, char *argv[])
     /* Fractional framerate defaults: 0 = use integer framerate */
     cliArgs.fps_ratio_num = 0;
     cliArgs.fps_ratio_den = 0;
+
+    /* Tamper detection defaults: disabled */
+    cliArgs.tamper_enabled   = 0;
+    cliArgs.tamper_threshold = 128;
+    cliArgs.tamper_sensitive_b = 50;
+    cliArgs.tamper_sensitive_h = 50;
 
     if (argc > 1) {
         for (i = 1; i < argc; i++) {
@@ -3463,6 +3576,43 @@ int main(int argc, char *argv[])
                         }
                         break;
 
+                    /* --- Tamper detection (gm_cap_tamper_t) --- */
+                    case 'T':
+                        {
+                            const char *v = NULL;
+                            if (argv[i][2] != '\0') v = &argv[i][2];
+                            else if ((i + 1) < argc && argv[i + 1][0] != '-') v = argv[++i];
+                            if (v && (strcmp(v, "1") == 0 || strcasecmp(v, "on") == 0)) {
+                                cliArgs.tamper_enabled = 1;
+                            } else if (v && (strcmp(v, "0") == 0 || strcasecmp(v, "off") == 0)) {
+                                cliArgs.tamper_enabled = 0;
+                            } else {
+                                log_error("Invalid tamper value: %s (use 0/1 or on/off)", v);
+                                return 1;
+                            }
+                        }
+                        break;
+
+                    /* --- Tamper parameters (threshold:sens_b[:sens_h]) --- */
+                    case 'W':
+                        {
+                            const char *v = NULL;
+                            if (argv[i][2] != '\0') v = &argv[i][2];
+                            else if ((i + 1) < argc && argv[i + 1][0] != '-') v = argv[++i];
+                            if (v) {
+                                int n = sscanf(v, "%d:%d:%d",
+                                               &cliArgs.tamper_threshold,
+                                               &cliArgs.tamper_sensitive_b,
+                                               &cliArgs.tamper_sensitive_h);
+                                if (n < 2) {
+                                    log_error("Invalid tamper params: %s (use threshold:sens_b[:sens_h])", v);
+                                    return 1;
+                                }
+                                cliArgs.tamper_enabled = 1;
+                            }
+                        }
+                        break;
+
                     default:
                         log_error("Unknown argument: %s", argv[i]);
                         print_usage();
@@ -3547,6 +3697,19 @@ int main(int argc, char *argv[])
                 log_error("G711/G726 audio requires 8000 Hz sample rate");
                 return 1;
             }
+        }
+    }
+
+    /* Tamper parameter validation */
+    if (cliArgs.tamper_enabled) {
+        if (cliArgs.tamper_threshold < 1 || cliArgs.tamper_threshold > 255) {
+            log_error("Tamper threshold must be 1..255");
+            return 1;
+        }
+        if (cliArgs.tamper_sensitive_b < 0 || cliArgs.tamper_sensitive_b > 100 ||
+            cliArgs.tamper_sensitive_h < 0 || cliArgs.tamper_sensitive_h > 100) {
+            log_error("Tamper sensitivity must be 0..100 (0 disables that detector)");
+            return 1;
         }
     }
 
