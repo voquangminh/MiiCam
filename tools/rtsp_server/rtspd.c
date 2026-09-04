@@ -282,6 +282,9 @@ struct CommandLineArguments {
     int bitrate;
     int bitrateMode;
     int gop;
+    int quant_min;            /* rate control QP floor (driver BS buffer is w*h*3/20 bytes) */
+    int quant_max;
+    int quant_init;
     int encoderType;
     int snapshot;
     int record;
@@ -1723,8 +1726,8 @@ void gm_enc_init(int cap_ch, int cap_path, int rec_track, int enc_type, int mode
             h264e_attr.ratectl.bitrate_max   = 16384;          // * Max bitrate ceiling (VBR upper bound)
             h264e_attr.b_frame_num           = 0;              // * B-frames per GOP (H.264 high profile)
             h264e_attr.enable_mv_data        = 0;              // * Disable H.264 motion data output
-            h264e_attr.ratectl.init_quant    = 25;
-            h264e_attr.ratectl.min_quant     = 20;
+            h264e_attr.ratectl.init_quant    = 28;
+            h264e_attr.ratectl.min_quant     = 26;
             h264e_attr.ratectl.max_quant     = 51;
 
             /* Apply H264 profile/level/config/coding if configured */
@@ -2986,7 +2989,7 @@ char *get_local_ip(void)
 static void print_usage(void)
 {
     printf("Usage:\n");
-    printf(" ./rtspd [-bfwhm] [-j|-4]\n");
+    printf(" ./rtspd [-bfwhmotzB] [-j|-4|-d|-s|-r] [-XARSCPq] [-FGVLEIUNZQY]\n");
     printf(
         "\nAvailable options:\n"
         "-b [1-16384]   - Set the bitrate         (default: 8192)\n"
@@ -3026,6 +3029,8 @@ static void print_usage(void)
         "-Z [x,y,w,h]   - ROI encoding region in pixels (default: off)\n"
         "-Q [on|off]    - Enable 8-region ROI QP (default: off)\n"
         "-Y [num:den]   - Fractional framerate (e.g. 30000:1001 for 29.97)\n"
+        "-K [min:max:init] - Rate control QP bounds (default: 26:51:28;\n"
+        "                  min below ~24 can overflow the encoder BS buffer)\n"
     );
 
 	exit(EXIT_FAILURE);
@@ -3077,6 +3082,14 @@ int main(int argc, char *argv[])
     cliArgs.bitrateMode = GM_EVBR;
     cliArgs.gop         = 20;
     cliArgs.encoderType = ENC_TYPE_H264;
+
+    /* QP bounds: floor of 26 keeps single frames under the fixed favce
+     * bitstream buffer (w*h*3/20 = ~135KB at 720p). Lower floors let the
+     * rate controller inflate I-frames past the buffer -> "bitstream
+     * overflow" spam and corrupted frames. */
+    cliArgs.quant_min  = 26;
+    cliArgs.quant_max  = 51;
+    cliArgs.quant_init = 28;
 
     cliArgs.snapshot    = 0;    // * disable by default
     cliArgs.record      = 0;    // * disable by default
@@ -3432,6 +3445,24 @@ int main(int argc, char *argv[])
                         }
                         break;
 
+                    /* --- Rate control QP bounds (min:max[:init]) --- */
+                    case 'K':
+                        {
+                            const char *v = NULL;
+                            if (argv[i][2] != '\0') v = &argv[i][2];
+                            else if ((i + 1) < argc && argv[i + 1][0] != '-') v = argv[++i];
+                            if (v) {
+                                int n = sscanf(v, "%d:%d:%d", &cliArgs.quant_min, &cliArgs.quant_max, &cliArgs.quant_init);
+                                if (n < 2) {
+                                    log_error("Invalid quant bounds: %s (use min:max or min:max:init e.g. 26:51:28)", v);
+                                    return 1;
+                                }
+                                if (n == 2)
+                                    cliArgs.quant_init = cliArgs.quant_min + 2;
+                            }
+                        }
+                        break;
+
                     default:
                         log_error("Unknown argument: %s", argv[i]);
                         print_usage();
@@ -3475,6 +3506,13 @@ int main(int argc, char *argv[])
 
     if ((cliArgs.bitrateMode < 1) || (cliArgs.bitrateMode > 4)) {
         log_error("Bitrate mode should be in between 1 and 4");
+        return 1;
+    }
+
+    if (cliArgs.quant_min < 2 || cliArgs.quant_max > 51 || cliArgs.quant_min > cliArgs.quant_max ||
+        cliArgs.quant_init < cliArgs.quant_min || cliArgs.quant_init > cliArgs.quant_max) {
+        log_error("Quant bounds invalid: min=%d max=%d init=%d (need 2<=min<=init<=max<=51)",
+                  cliArgs.quant_min, cliArgs.quant_max, cliArgs.quant_init);
         return 1;
     }
 
@@ -3543,6 +3581,7 @@ int main(int argc, char *argv[])
     log_info("Framerate    	: %d", cliArgs.framerate);
     log_info("Bitrate      	: %d", cliArgs.bitrate);
     log_info("Bitrate Mode 	: %d", cliArgs.bitrateMode);
+    log_info("Quant (init/min/max): %d/%d/%d", cliArgs.quant_init, cliArgs.quant_min, cliArgs.quant_max);
 	log_info("IP Local		: %s", get_local_ip());	
 
     // * Use our handler for the signals so we can do some cleanup at quit

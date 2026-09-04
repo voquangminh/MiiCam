@@ -255,8 +255,34 @@ static int status_led_set(int led,int brightness,int mode,int delay_on_ms,int de
 static int read_file(const char *path,char *buf,size_t size){int fd;ssize_t n;if(!buf||size<2){errno=EINVAL;return-1;}fd=open(path,O_RDONLY);if(fd<0)return-1;do n=read(fd,buf,size-1);while(n<0&&errno==EINTR);close(fd);if(n<0)return-1;buf[n]=0;return 0;}
 static int last_integer(const char *s,int *value){const char*p=s;char*e;long found=0;int have=0;while(*p){if(*p=='-'||isdigit((unsigned char)*p)){errno=0;long v=strtol(p,&e,0);if(e!=p&&errno==0){found=v;have=1;p=e;continue;}}p++;}if(!have){errno=EPROTO;return-1;}*value=(int)found;return 0;}
 static int valid_isp_name(const char *s){if(!s||!*s)return 0;for(;*s;s++)if(!(isalnum((unsigned char)*s)||*s=='_'))return 0;return 1;}
-static int isp_get(const char *name,int *value){char cmd[128],reply[512];int rc=-1;if(!valid_isp_name(name)||!value){errno=EINVAL;return-1;}snprintf(cmd,sizeof(cmd),"r %s\n",name);pthread_mutex_lock(&isp_mutex);if(write_all_file(ISP_COMMAND,cmd)==0&&read_file(ISP_COMMAND,reply,sizeof(reply))==0)rc=last_integer(reply,value);pthread_mutex_unlock(&isp_mutex);return rc;}
-static int isp_set(const char *name,int value){char cmd[128];int rc;if(!valid_isp_name(name)){errno=EINVAL;return-1;}snprintf(cmd,sizeof(cmd),"w %s %d\n",name,value);pthread_mutex_lock(&isp_mutex);rc=write_all_file(ISP_COMMAND,cmd);pthread_mutex_unlock(&isp_mutex);return rc;}
+/* Parse an ISP proc reply ("128", "DR_LINEAR", "DAY_MODE", "enable", ...) to an
+ * integer; -1 when the format is unknown. Numeric replies win over symbols. */
+static int isp_reply_val(const char *reply){int v;static const char *one[]={"DR_WDR","NIGHT_MODE","NIGHT","enable","ON"},*zero[]={"DR_LINEAR","DAY_MODE","DAY","disable","OFF"};unsigned i;
+	if(last_integer(reply,&v)==0)return v;
+	for(i=0;i<sizeof(one)/sizeof(*one);i++){if(strstr(reply,one[i]))return 1;if(strstr(reply,zero[i]))return 0;}
+	return -1;}
+static int isp_get(const char *name,int *value){char cmd[128],reply[512];int rc=-1,v;if(!valid_isp_name(name)||!value){errno=EINVAL;return-1;}snprintf(cmd,sizeof(cmd),"r %s\n",name);pthread_mutex_lock(&isp_mutex);if(write_all_file(ISP_COMMAND,cmd)==0&&read_file(ISP_COMMAND,reply,sizeof(reply))==0&&(v=isp_reply_val(reply))>=0){*value=v;rc=0;}pthread_mutex_unlock(&isp_mutex);return rc;}
+/* Write an ISP parameter and VERIFY the driver actually applied it. Some
+ * parameters (dr_mode=1/WDR on this sensor) are rejected by the kernel with a
+ * noisy "[ISP_ERR]: failed to execute" per attempt; refused (param,value)
+ * pairs are remembered and short-circuited so we never re-trigger that spam,
+ * while the ONVIF client gets an honest fault instead of fake success. */
+static int isp_set(const char *name,int value){static struct{char n[24];int rej;}refused[16];static int rn;char cmd[128],rep[128]={0};int rc,i,ent=-1,cur;
+	if(!valid_isp_name(name)){errno=EINVAL;return-1;}
+	pthread_mutex_lock(&isp_mutex);
+	for(i=0;i<rn;i++)if(strcmp(refused[i].n,name)==0){ent=i;break;}
+	if(ent>=0&&refused[ent].rej==value){pthread_mutex_unlock(&isp_mutex);errno=EOPNOTSUPP;return-1;}
+	snprintf(cmd,sizeof(cmd),"w %s %d\n",name,value);
+	rc=write_all_file(ISP_COMMAND,cmd);
+	if(rc==0){	/* proc gives no reply for writes - issue an explicit read to verify */
+		snprintf(cmd,sizeof(cmd),"r %s\n",name);
+		if(write_all_file(ISP_COMMAND,cmd)==0&&read_file(ISP_COMMAND,rep,sizeof(rep))==0){
+			cur=isp_reply_val(rep);
+			if(cur>=0&&cur!=value){if(ent<0&&rn<(int)(sizeof(refused)/sizeof(*refused))){ent=rn++;snprintf(refused[ent].n,sizeof(refused[ent].n),"%s",name);}refused[ent].rej=value;rc=-1;log_message("ISP","driver refused %s=%d (reply='%s', cached)",name,value,rep);}
+		}
+	}
+	pthread_mutex_unlock(&isp_mutex);
+	return rc;}
 // * LED functions 
 static int blue_led_set(int enabled){return status_led_set(STATUS_LED_BLUE,enabled ? 100 : 0,enabled ? STATUS_LED_SOLID : STATUS_LED_OFF,0,0);}
 static int yellow_led_set(int enabled){return status_led_set(STATUS_LED_RED,enabled ? 100 : 0,enabled ? STATUS_LED_SOLID : STATUS_LED_OFF,0,0);}
