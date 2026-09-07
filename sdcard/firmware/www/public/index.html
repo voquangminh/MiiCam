@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MiiCam</title>
+  <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+  <nav class="topnav">
+    <a href="#" data-tab="home" class="active">Home</a>
+    <a href="#" data-tab="settings">Settings</a>
+    <a href="#" data-tab="config">Config</a>
+    <a href="#" data-tab="info">Info</a>
+    <a href="#" data-tab="sdcard">SDCard</a>
+    <span class="topnav-right" id="connstate">…</span>
+  </nav>
+
+  <!-- ============ HOME ============ -->
+  <section id="tab-home" class="panel active">
+    <h1>Live View</h1>
+    <div class="live-container">
+      <img id="live-stream" src="" alt="live">
+      <div class="live-ctrl">
+        <button id="btn-stream-start">Start stream</button>
+        <button id="btn-stream-stop" disabled>Stop stream</button>
+        <a id="link-snapshot" href="/api/snapshot?ts=0" class="button" target="_blank" rel="noopener">Take snapshot</a>
+      </div>
+    </div>
+    <p class="hint">
+      RTSP: <code id="rtsp-url">rtsp://&lt;camera&gt;:554/live/ch00_0</code>
+    </p>
+  </section>
+
+  <!-- ============ SETTINGS (video customization) ============ -->
+  <section id="tab-settings" class="panel">
+    <h1>Video Settings</h1>
+    <p class="hint">Changes are saved to <code>/tmp/sd/config.cfg</code>. Some take effect only after an RTSP restart.</p>
+
+    <h2>Format</h2>
+    <div class="form-grid" id="settings-format"></div>
+    <div class="btn-row">
+      <button id="btn-format-save" class="primary">Save format</button>
+      <button id="btn-format-apply">Apply bitrate/fps now</button>
+    </div>
+
+    <h2>Security</h2>
+    <div class="form-grid" id="settings-security"></div>
+    <div class="btn-row">
+      <button id="btn-security-save" class="primary">Save security</button>
+    </div>
+
+    <h2>Day / Night</h2>
+    <div class="form-grid" id="settings-daynight"></div>
+    <div class="btn-row">
+      <button id="btn-daynight-save" class="primary">Save day/night</button>
+    </div>
+
+    <h2>Audio</h2>
+    <div class="form-grid" id="settings-audio"></div>
+    <div class="btn-row">
+      <button id="btn-audio-save" class="primary">Save audio</button>
+    </div>
+
+    <h2>OSD</h2>
+    <div class="form-grid" id="settings-osd"></div>
+    <div class="btn-row">
+      <button id="btn-osd-save" class="primary">Save OSD</button>
+    </div>
+
+    <h2>Network</h2>
+    <div class="form-grid" id="settings-network"></div>
+    <div class="btn-row">
+      <button id="btn-network-save" class="primary">Save network</button>
+    </div>
+
+    <h2>Apply now</h2>
+    <p class="hint">Restarting the RTSP daemon applies all saved format/security/audio/OSD settings.</p>
+    <div class="btn-row">
+      <button id="btn-rtsp-restart">Restart RTSP</button>
+    </div>
+  </section>
+
+  <!-- ============ CONFIG (legacy device settings + editor) ============ -->
+  <section id="tab-config" class="panel">
+    <h1>Device Settings</h1>
+
+    <h2>Image</h2>
+    <div class="form-grid" id="settings-image"></div>
+
+    <h2>LEDs</h2>
+    <div class="form-grid" id="settings-leds"></div>
+
+    <h2>Camera adjustment</h2>
+    <div class="form-grid" id="settings-adjust"></div>
+
+    <h2>Encoder</h2>
+    <div class="form-grid" id="settings-codec"></div>
+
+    <h2>PTZ</h2>
+    <div id="settings-motor">
+      <div class="ptz-pad">
+        <button data-motor="up">▲</button>
+        <button data-motor="left">◀</button>
+        <button data-motor="home">●</button>
+        <button data-motor="right">▶</button>
+        <button data-motor="down">▼</button>
+      </div>
+      <div>
+        <label>X: <span id="pz-x">-</span></label>
+        <label>Y: <span id="pz-y">-</span></label>
+        <input type="number" id="pz-goto-x" placeholder="x"> <input type="number" id="pz-goto-y" placeholder="y">
+        <button id="pz-goto">Goto</button>
+      </div>
+    </div>
+
+    <h2>Services</h2>
+    <table id="services-table">
+      <thead><tr><th>Service</th><th>Status</th><th>Action</th></tr></thead>
+      <tbody></tbody>
+    </table>
+
+    <h2>config.cfg</h2>
+    <p class="hint">Edit <code>/tmp/sd/config.cfg</code>. Applied on next boot / service restart.</p>
+    <textarea id="config-area" rows="24" spellcheck="false"></textarea>
+    <div class="btn-row">
+      <button id="config-reload">Reload</button>
+      <button id="config-save">Save</button>
+    </div>
+    <p id="config-msg" class="msg"></p>
+  </section>
+
+  <!-- ============ INFO (dashboard) ============ -->
+  <section id="tab-info" class="panel">
+    <h1>Dashboard</h1>
+    <p class="hint"><button id="info-refresh">Refresh</button></p>
+
+    <h2>Camera status</h2>
+    <table class="kv-table" id="info-camera"><tbody></tbody></table>
+
+    <h2>System status</h2>
+    <table class="kv-table" id="info-system"><tbody></tbody></table>
+
+    <h2>Network status</h2>
+    <table class="kv-table" id="info-network"><tbody></tbody></table>
+  </section>
+
+  <!-- ============ SDCARD ============ -->
+  <section id="tab-sdcard" class="panel">
+    <h1>SD Card</h1>
+    <pre id="sdcard-pre">Loading…</pre>
+    <h2>Recent media</h2>
+    <div id="sdcard-media"></div>
+  </section>
+
+  <div id="toast" class="toast"></div>
+
+  <script src="/static/js/app.js"></script>
+</body>
+</html>
