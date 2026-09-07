@@ -224,6 +224,28 @@ RTSP_BITRATE_MODE="${RTSP_BITRATE_MODE:-4}"
 ## Extra command line arguments for the RTSP daemon
 RTSP_EXTRA_ARGS="${RTSP_EXTRA_ARGS:-""}"
 
+############################################################
+## Audio and OSD settings                                  ##
+############################################################
+
+## Two-way audio downlink receive port (rtsp_audio_in -p)
+## (values below map to rtspd audio options, applied at start)
+
+## Audio encode type for the RTSP uplink: aac|pcm|g726|alaw|ulaw (empty = off)
+RTSP_AUDIO_TYPE="${RTSP_AUDIO_TYPE:-""}"
+
+## Audio sample rate for the RTSP uplink (e.g. 16000, empty = default)
+RTSP_AUDIO_RATE="${RTSP_AUDIO_RATE:-""}"
+
+## Custom OSD text line (empty = default "chuangmi")
+RTSP_OSD_TEXT="${RTSP_OSD_TEXT:-""}"
+
+## OSD background palette color index (0-15, 1 = default)
+RTSP_OSD_COLOR="${RTSP_OSD_COLOR:-""}"
+
+## OSD font zoom (0-12, empty = default)
+RTSP_OSD_SIZE="${RTSP_OSD_SIZE:-""}"
+
 
 ############################################################
 ## Motion Settings                                        ##

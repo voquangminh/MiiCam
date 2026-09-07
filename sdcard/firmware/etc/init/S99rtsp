@@ -24,6 +24,25 @@ PIDFILE="/var/run/${NAME}.pid"
 
 DAEMON_OPTS=" -f$RTSP_FRAMERATE -w$RTSP_WIDTH -h$RTSP_HEIGHT -b$RTSP_BITRATE -m$RTSP_BITRATE_MODE $RTSP_EXTRA_ARGS"
 
+## Audio (uplink): -X encode type, -A sample rate
+if [ -n "$RTSP_AUDIO_TYPE" ] ; then
+    DAEMON_OPTS="${DAEMON_OPTS} -X${RTSP_AUDIO_TYPE}"
+fi
+if [ -n "$RTSP_AUDIO_RATE" ] ; then
+    DAEMON_OPTS="${DAEMON_OPTS} -A${RTSP_AUDIO_RATE}"
+fi
+
+## OSD: -t text, -B background color, -z font zoom
+if [ -n "$RTSP_OSD_TEXT" ] ; then
+    DAEMON_OPTS="${DAEMON_OPTS} -t${RTSP_OSD_TEXT}"
+fi
+if [ -n "$RTSP_OSD_COLOR" ] ; then
+    DAEMON_OPTS="${DAEMON_OPTS} -B${RTSP_OSD_COLOR}"
+fi
+if [ -n "$RTSP_OSD_SIZE" ] ; then
+    DAEMON_OPTS="${DAEMON_OPTS} -z${RTSP_OSD_SIZE}"
+fi
+
 ## Find last created snapshot and print to file
 get_last_image > /dev/shm/rtspd_last_snapshot_path
 
