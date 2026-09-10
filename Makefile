@@ -88,6 +88,7 @@ all:                                 \
 	$(BUILDDIR)/rtspd                \
 	$(BUILDDIR)/rtspd-v5             \
 	$(BUILDDIR)/rtsp_audio_in        \
+	$(BUILDDIR)/tracking             \
 	$(BUILDDIR)/onvif_server         \
 	$(BUILDDIR)/zlib                 \
 	$(BUILDDIR)/libxml2              \
@@ -219,6 +220,24 @@ $(BUILDDIR)/rtsp_audio_in: $(PREFIXDIR)/bin
 	@touch $@
 
 build/rtsp_audio_in: $(BUILDDIR)/rtsp_audio_in
+	@:
+
+
+#################################################################
+## TRACKING (motion-tracking daemon)						  ##
+#################################################################
+$(BUILDDIR)/tracking: $(PREFIXDIR)/bin
+	@mkdir -p $(BUILDDIR) $(TOOLSDIR)/bin
+	cd $(RTSPDDIR) 				&& \
+	$(TARGET)-gcc 				\
+		-Os 					\
+		-Wall					\
+		$(RTSPDDIR)/tracking.c	\
+		-lpthread -lm -o $(TOOLSDIR)/bin/tracking && \
+		$(TARGET)-strip $(TOOLSDIR)/bin/tracking
+	@touch $@
+
+build/tracking: $(BUILDDIR)/tracking
 	@:
 
 

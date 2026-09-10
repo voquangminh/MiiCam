@@ -48,6 +48,7 @@ jobs:
           make TARGET="$REAL_TARGET_PREFIX" build/rtspd
           make TARGET="$REAL_TARGET_PREFIX" build/rtspd-v5
           make TARGET="$REAL_TARGET_PREFIX" build/rtsp_audio_in
+          make TARGET="$REAL_TARGET_PREFIX" build/tracking
 
       - name: Commit và Push file Binary trực tiếp lên GitHub (Siêu tốc 1 giây)
         run: |
@@ -61,6 +62,7 @@ jobs:
           git add -f tools/bin/rtspd-v5
           git add -f tools/bin/rtspd2MP00
           git add -f tools/bin/rtsp_audio_in
+          git add -f tools/bin/tracking
           
           # 3. Ti?n h�nh commit file ch?y
           git commit -m "Automated build: update camera binary rtspd2MP/rtspd/rtspd-v5/rtsp_audio_in" || echo "No changes to commit"

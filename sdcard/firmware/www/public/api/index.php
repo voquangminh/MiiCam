@@ -159,6 +159,12 @@ function ep_status() {
         ],
         'codec'  => ep_codec_status(),
         'motion' => ep_motion_status(),
+        'tracking' => [
+            'running' => file_exists('/var/run/tracking.pid'),
+            'state'   => file_exists('/dev/shm/rtspd_tracking_state')
+                ? trim((string)@file_get_contents('/dev/shm/rtspd_tracking_state'))
+                : 'stopped',
+        ],
         'image'  => ep_last_media('image'),
         'video'  => ep_last_media('video'),
     ]);
@@ -514,6 +520,54 @@ try {
             $b = need_binary('codec_ctrl');
             run_cmd([$b, 'keyframe'], $rc);
             json(['keyframe' => true]);
+            break;
+
+        case 'tracking':
+            $b = need_binary('tracking');
+            $script = '/tmp/sd/firmware/scripts/tracking.sh';
+            $cmd = $segments[1] ?? 'status';
+            switch ($cmd) {
+                case 'status':
+                    $out = run_cmd([$script, 'status'], $rc);
+                    $state = trim(implode('', $out));
+                    [$st, $sx, $sy] = array_pad(preg_split('/\s+/', $state), 3, '0');
+                    json(['tracking' => [
+                        'state'   => $st,
+                        'x'       => (int)$sx,
+                        'y'       => (int)$sy,
+                        'running' => file_exists('/var/run/tracking.pid'),
+                    ]]);
+                case 'start':
+                    if (!file_exists('/var/run/tracking.pid')) {
+                        $dz = (int)sget('deadzone', 2);
+                        $sp = (int)sget('speed', 3);
+                        $cmd = escapeshellarg($b) . ' -d ' . $dz . ' -s ' . $sp
+                             . ' >/dev/null 2>&1 & echo $!';
+                        exec($cmd, $out, $rc);
+                        $pid = (int)($out[0] ?? 0);
+                        if ($pid > 0) {
+                            @file_put_contents('/var/run/tracking.pid', (string)$pid);
+                        }
+                    }
+                    json(['tracking' => 'started', 'pid' => (int)($out[0] ?? 0), 'rc' => $rc]);
+                case 'stop':
+                    if (file_exists('/var/run/tracking.pid')) {
+                        $pid = trim((string)@file_get_contents('/var/run/tracking.pid'));
+                        if ($pid !== '' && is_numeric($pid)) {
+                            exec('kill ' . (int)$pid, $out, $rc);
+                        }
+                    }
+                    @unlink('/var/run/tracking.pid');
+                    json(['tracking' => 'stopped', 'rc' => $rc]);
+                case 'blink':
+                    run_cmd([$script, 'blink'], $rc);
+                    json(['tracking' => 'blink', 'rc' => $rc]);
+                case 'stop_blink':
+                    run_cmd([$script, 'stop_blink'], $rc);
+                    json(['tracking' => 'blink_stopped', 'rc' => $rc]);
+                default:
+                    fail('Unknown tracking command: ' . $cmd, 404);
+            }
             break;
 
         case 'motor':

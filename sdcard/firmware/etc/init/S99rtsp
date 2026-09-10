@@ -72,6 +72,14 @@ if [ "$MOTION_RECORD" -eq 1 ] ; then
     DAEMON_OPTS="${DAEMON_OPTS} -r"
 fi
 
+## Enable motion tracking (PTZ auto-follow)
+if [ "$MOTION_TRACKING" -eq 1 ] ; then
+    DAEMON_OPTS="${DAEMON_OPTS} -d -J"
+    TRACKING_SPEED="${TRACKING_SPEED:-3}"
+    TRACKING_DEADZONE="${TRACKING_DEADZONE:-2}"
+    TRACKING_OPTS="-s ${TRACKING_SPEED} -d ${TRACKING_DEADZONE}"
+fi
+
 ## export RTSP settings for subshells
 if [ "x${RTSP_USER}" != "x" ] && [ "x${RTSP_PASS}" != "x" ]
 then
@@ -84,9 +92,21 @@ check_daemon_bin "${DAEMON}" "${DESC}"
 case "$1" in
   start)
     start_daemon_background
+    if [ "$MOTION_TRACKING" -eq 1 ] ; then
+        echo "*** Starting tracking daemon..."
+        if [ -x "${SD_MOUNTDIR}/firmware/bin/tracking" ]; then
+            start-stop-daemon --start --quiet --oknodo --pidfile /var/run/tracking.pid \
+                --background --exec "${SD_MOUNTDIR}/firmware/bin/tracking" -- ${TRACKING_OPTS}
+        else
+            echo "tracking binary not found"
+        fi
+    fi
     ;;
   stop)
     stop_daemon_background
+    echo "*** Stopping tracking daemon..."
+    start-stop-daemon --stop --quiet --oknodo --pidfile /var/run/tracking.pid
+    rm -f /var/run/tracking.pid
     ;;
   restart|reload)
     "$0" stop

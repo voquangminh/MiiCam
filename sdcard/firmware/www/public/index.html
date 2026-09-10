@@ -30,6 +30,22 @@
     <p class="hint">
       RTSP: <code id="rtsp-url">rtsp://&lt;camera&gt;:554/live/ch00_0</code>
     </p>
+
+    <h2>Motion Tracking</h2>
+    <p class="hint">Auto-follow moving objects with the PTZ motor (requires motion detection).</p>
+    <div class="form-grid-tracking" id="tracking-control">
+      <div class="field">
+        <label>Tracking</label>
+        <div class="toggle" id="tracking-toggle">
+          <button id="tracking-on">On</button>
+          <button id="tracking-off">Off</button>
+        </div>
+      </div>
+      <div class="field">
+        <label>State</label>
+        <div class="field-value" id="tracking-state">unknown</div>
+      </div>
+    </div>
   </section>
 
   <!-- ============ SETTINGS (video customization) ============ -->

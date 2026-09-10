@@ -67,6 +67,41 @@ function stopStream() {
   document.getElementById('btn-stream-stop').disabled = true;
 }
 
+/* ---------------- Motion tracking controls ---------------- */
+async function trackingState() {
+  try {
+    const r = await api('/tracking/status');
+    const t = r.tracking || {};
+    const st = document.getElementById('tracking-state');
+    if (st) {
+      st.textContent = (t.running ? 'running/' : 'stopped/') + (t.state || '?') +
+        ((t.x || t.y) ? ' (X:' + t.x + ' Y:' + t.y + ')' : '');
+    }
+    const on = document.getElementById('tracking-on');
+    const off = document.getElementById('tracking-off');
+    if (on && off) {
+      on.classList.toggle('on-state', !!t.running);
+      off.classList.toggle('off-state', !t.running);
+    }
+  } catch (e) { /* ignore */ }
+}
+function wireTracking() {
+  const on = document.getElementById('tracking-on');
+  const off = document.getElementById('tracking-off');
+  if (on) on.addEventListener('click', async () => {
+    const r = await api('/tracking/start', { method: 'POST' });
+    toast((r.message || 'Tracking started'), r.status === 'error' ? 'err' : '');
+    trackingState();
+  });
+  if (off) off.addEventListener('click', async () => {
+    const r = await api('/tracking/stop', { method: 'POST' });
+    toast((r.message || 'Tracking stopped'), r.status === 'error' ? 'err' : '');
+    trackingState();
+  });
+}
+wireTracking();
+trackingState();
+
 /* ---------------- Form field builders ---------------- */
 /* Each builder appends a .field into a .form-grid element.
  * `keys` is the parsed config.cfg map; `cfgKey` (optional) is the config

@@ -66,6 +66,7 @@ code { background: var(--panel); padding: 2px 5px; border-radius: 3px; }
 
 /* forms */
 .form-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
+.form-grid-tracking { display: flex; gap: 24px; flex-wrap: wrap; }
 .field { display: flex; flex-direction: column; gap: 4px; }
 .field label { color: var(--muted); font-size: 12px; }
 .field input, .field select {
@@ -74,6 +75,14 @@ code { background: var(--panel); padding: 2px 5px; border-radius: 3px; }
   color: var(--text);
   padding: 7px 8px;
   border-radius: 4px;
+}
+.field-value {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 7px 8px;
+  color: var(--text);
+  min-width: 180px;
 }
 .btn-row { display: flex; gap: 8px; margin-top: 10px; }
 button, .button {

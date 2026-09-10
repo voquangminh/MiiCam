@@ -77,6 +77,9 @@
 #define TAMPER_ON_SCRIPT         "/tmp/sd/firmware/scripts/tamper_on.sh"
 #define TAMPER_OFF_SCRIPT        "/tmp/sd/firmware/scripts/tamper_off.sh"
 
+#define TRACKING_FILE            "/dev/shm/rtspd_tracking"
+#define TRACKING_STATE_FILE      "/dev/shm/rtspd_tracking_state"
+
 #define RTSPD_LOGFILE            "/tmp/sd/log/rtspd.log"
 
 #define CREATE_SNAPSHOT_FILE     "/dev/shm/rtspd_snapshot"
@@ -287,6 +290,7 @@ struct CommandLineArguments {
     int height;
     int width;
     int bitrate;
+    int bitrate_max;
     int bitrateMode;
     int gop;
     int quant_min;            /* rate control QP floor (driver BS buffer is w*h*3/20 bytes) */
@@ -307,6 +311,11 @@ struct CommandLineArguments {
     int tamper_sensitive_b;     /* 0..100 black sensitivity (0 = disable) */
     int tamper_sensitive_h;     /* 0..100 homogenous sensitivity (0 = disable) */
 
+    /* Motion tracking (PTZ auto-follow) */
+    int tracking;               /* 0 = disabled, 1 = enabled */
+    int tracking_deadzone;      /* macroblocks from center to ignore (default 2) */
+    int tracking_speed;         /* max steps per move (default 3, 1-10) */
+
     /* Audio configuration (all types / sample rates supported by gmlib) */
     int audio_sample_rate;    /* 8000, 16000, 32000, 44100, 48000... */
     int audio_sample_size;    /* bits per sample: 8, 16 */
@@ -322,6 +331,14 @@ struct CommandLineArguments {
 
     /* Capture rotation (gm_rotation_attr_t) */
     int rotation;             /* 0, 90, 180, 270 */
+
+    /* Capture crop (gm_crop_attr_t) */
+    int crop_enabled;         /* 0 = no crop, 1 = crop src rect before encode */
+    int crop_x, crop_y, crop_w, crop_h;
+
+    /* Capture prescale reduce (gm_cap_attr_t prescale_reduce_*) */
+    int prescale_w;           /* 0 = off */
+    int prescale_h;           /* 0 = off */
 
     /* H264 profile_setting */
     int h264_profile;         /* 0=default, 66=baseline, 77=main, 100=high */
@@ -1618,8 +1635,8 @@ static void *motion_thread(void *arg)
 
             // * Motion ON
             else if (mdt_result[ch].result == MOTION_DETECTED) {
+                gettimeofday(&last_motion, NULL);
                 if (motion_detected == 0) {
-                    gettimeofday(&last_motion, NULL);
                     motion_detected = 1;
                     if (cliArgs.snapshot == 1)
                         snapshot_create = 1;
@@ -1627,6 +1644,35 @@ static void *motion_thread(void *arg)
                         video_create = 1;
                     log_info("Motion ON - executing motion on script");
                     system(MOTION_ON_SCRIPT);
+                }
+                /* Write motion centroid for tracking daemon */
+                if (cliArgs.tracking) {
+                    int mb_w = mdt_param[0].mdt_alg.mb_w_num;
+                    int mb_h = mdt_param[0].mdt_alg.mb_h_num;
+                    if (mb_w > 0 && mb_h > 0 && active[0].active_flag) {
+                        long sum_col = 0, sum_row = 0;
+                        int count = 0;
+                        int r, c;
+                        for (r = 0; r < mb_h; r++) {
+                            for (c = 0; c < mb_w; c++) {
+                                if (active[0].active_flag[r * mb_w + c] == 0) {
+                                    sum_col += c;
+                                    sum_row += r;
+                                    count++;
+                                }
+                            }
+                        }
+                        if (count > 0) {
+                            int center_col = sum_col / count;
+                            int center_row = sum_row / count;
+                            FILE *tf = fopen(TRACKING_FILE, "w");
+                            if (tf) {
+                                fprintf(tf, "%d %d %d %d %d\n",
+                                        center_col, center_row, mb_w, mb_h, count);
+                                fclose(tf);
+                            }
+                        }
+                    }
                 }
             }
 
@@ -1644,6 +1690,10 @@ static void *motion_thread(void *arg)
                     }
                     log_info("Motion OFF - executing motion off script");
                     system(MOTION_OFF_SCRIPT);
+                    /* Clear tracking file */
+                    if (cliArgs.tracking) {
+                        remove(TRACKING_FILE);
+                    }
                 }
             }
 
@@ -1776,6 +1826,11 @@ void gm_enc_init(int cap_ch, int cap_path, int rec_track, int enc_type, int mode
         cap_attr.path = cap_path;
         cap_attr.enable_mv_data = 1;
         cap_attr.dma_path = 0;                 // * DMA path 0
+        if (cliArgs.prescale_w > 0 && cliArgs.prescale_h > 0) {
+            cap_attr.prescale_reduce_width  = cliArgs.prescale_w;
+            cap_attr.prescale_reduce_height = cliArgs.prescale_h;
+            log_info("Capture prescale reduce: %dx%d", cliArgs.prescale_w, cliArgs.prescale_h);
+        }
         gm_set_attr(param->cap.obj, &cap_attr);                // * Set capture attribute
 
 		//enable 3dnr if resolution > capture dim / 2 
@@ -1804,6 +1859,19 @@ void gm_enc_init(int cap_ch, int cap_path, int rec_track, int enc_type, int mode
             log_info("Capture rotation: %d degrees", cliArgs.rotation);
         }
 
+        /* Apply capture crop if configured */
+        if (cliArgs.crop_enabled) {
+            DECLARE_ATTR(crop_attr, gm_crop_attr_t);
+            crop_attr.enabled = 1;
+            crop_attr.src_crop_rect.x      = cliArgs.crop_x;
+            crop_attr.src_crop_rect.y      = cliArgs.crop_y;
+            crop_attr.src_crop_rect.width  = cliArgs.crop_w;
+            crop_attr.src_crop_rect.height = cliArgs.crop_h;
+            gm_set_attr(param->cap.obj, &crop_attr);
+            log_info("Capture crop: %dx%d+%d+%d", cliArgs.crop_w, cliArgs.crop_h,
+                     cliArgs.crop_x, cliArgs.crop_y);
+        }
+
         memcpy(&param->cap.cap_attr, &cap_attr, sizeof(gm_cap_attr_t));
         memcpy(&param->cap.dnr_attr, &dnr_attr, sizeof(gm_3dnr_attr_t));
     }
@@ -1818,7 +1886,7 @@ void gm_enc_init(int cap_ch, int cap_path, int rec_track, int enc_type, int mode
             h264e_attr.ratectl.mode          = mode;
             h264e_attr.ratectl.gop           = cliArgs.gop;	   // * I frame per second
             h264e_attr.ratectl.bitrate       = bitrate;
-            h264e_attr.ratectl.bitrate_max   = 16384;          // * Max bitrate ceiling (VBR upper bound)
+            h264e_attr.ratectl.bitrate_max   = cliArgs.bitrate_max;   // * Max bitrate ceiling (VBR upper bound)
             h264e_attr.b_frame_num           = 0;              // * B-frames per GOP (H.264 high profile)
             h264e_attr.enable_mv_data        = 0;              // * Disable H.264 motion data output
             h264e_attr.ratectl.init_quant    = 28;
@@ -2478,6 +2546,10 @@ static void apply_pending_args(void)
 {
     FILE *f = fopen(RTSPD_ARGS_FILE, "r");
     int bitrate = -1, mode = -1, fps = -1, gop = -1;
+    int width = -1, height = -1, bitrate_max = -1;
+    int h264profile = -1, h264level = -1, vui_cs = -1, vui_fr = -1;
+    int hflip = -1, vflip = -1, rotation = -1;
+    int cropx = -1, cropy = -1, cropw = -1, croph = -1;
     char buf[128];
 
     if (!f)
@@ -2487,6 +2559,20 @@ static void apply_pending_args(void)
         else if (sscanf(buf, "mode=%d", &mode) == 1) {}
         else if (sscanf(buf, "fps=%d", &fps) == 1) {}
         else if (sscanf(buf, "gop=%d", &gop) == 1) {}
+        else if (sscanf(buf, "width=%d", &width) == 1) {}
+        else if (sscanf(buf, "height=%d", &height) == 1) {}
+        else if (sscanf(buf, "bitrate_max=%d", &bitrate_max) == 1) {}
+        else if (sscanf(buf, "h264profile=%d", &h264profile) == 1) {}
+        else if (sscanf(buf, "h264level=%d", &h264level) == 1) {}
+        else if (sscanf(buf, "vui_cs=%d", &vui_cs) == 1) {}
+        else if (sscanf(buf, "vui_fr=%d", &vui_fr) == 1) {}
+        else if (sscanf(buf, "hflip=%d", &hflip) == 1) {}
+        else if (sscanf(buf, "vflip=%d", &vflip) == 1) {}
+        else if (sscanf(buf, "rotation=%d", &rotation) == 1) {}
+        else if (sscanf(buf, "cropx=%d", &cropx) == 1) {}
+        else if (sscanf(buf, "cropy=%d", &cropy) == 1) {}
+        else if (sscanf(buf, "cropw=%d", &cropw) == 1) {}
+        else if (sscanf(buf, "croph=%d", &croph) == 1) {}
     }
     fclose(f);
 
@@ -2498,6 +2584,38 @@ static void apply_pending_args(void)
         cliArgs.framerate = MAX_FPS;
     }
     if (gop > 0 && gop <= 120)            { cliArgs.gop = gop;         log_info("Pending args: gop=%d", gop); }
+    if (width > 0 && width <= 1920)       { cliArgs.width = width;     log_info("Pending args: width=%d", width); }
+    if (height > 0 && height <= 1080)     { cliArgs.height = height;   log_info("Pending args: height=%d", height); }
+    if (bitrate_max > 0 && bitrate_max <= 16384) {
+        cliArgs.bitrate_max = bitrate_max;
+        log_info("Pending args: bitrate_max=%d", bitrate_max);
+    }
+    if (h264profile >= 0 && h264profile <= 100) {
+        cliArgs.h264_profile = h264profile;
+        log_info("Pending args: h264profile=%d", h264profile);
+    }
+    if (h264level >= 0 && h264level <= 100) {
+        cliArgs.h264_level = h264level;
+        log_info("Pending args: h264level=%d", h264level);
+    }
+    if (vui_cs >= 0) { cliArgs.vui_colorspace = vui_cs; log_info("Pending args: vui_cs=%d", vui_cs); }
+    if (vui_fr >= 0) { cliArgs.vui_full_range = vui_fr; log_info("Pending args: vui_fr=%d", vui_fr); }
+    if (hflip >= 0)  { cliArgs.h_flip = hflip; log_info("Pending args: hflip=%d", hflip); }
+    if (vflip >= 0)  { cliArgs.v_flip = vflip; log_info("Pending args: vflip=%d", vflip); }
+    if (rotation >= 0) {
+        cliArgs.rotation = rotation;
+        log_info("Pending args: rotation=%d", rotation);
+    }
+    if (cropw > 0 && croph > 0) {
+        cliArgs.crop_enabled = 1;
+        cliArgs.crop_w = cropw;
+        cliArgs.crop_h = croph;
+        if (cropx >= 0) cliArgs.crop_x = cropx;
+        if (cropy >= 0) cliArgs.crop_y = cropy;
+        log_info("Pending args: crop=%dx%d+%d+%d", cropw, croph, cliArgs.crop_x, cliArgs.crop_y);
+    } else if (cropw == 0) {
+        cliArgs.crop_enabled = 0;
+    }
 }
 
 static void *rtspd_ctrl_thread(void *arg)
@@ -2518,6 +2636,11 @@ static void *rtspd_ctrl_thread(void *arg)
                         int ret = gm_request_keyframe(bindfd);
                         log_info("Ctrl: keyframe requested (ret=%d)", ret);
                     }
+                }
+                else if (strcmp(buf, "restart") == 0) {
+                    /* Apply whatever pending args are already staged. */
+                    log_info("Ctrl: restart requested");
+                    need_reboot = 1;
                 }
                 else if (strncmp(buf, "bitrate ", 8) == 0) {
                     int val = atoi(buf + 8);
@@ -2548,6 +2671,94 @@ static void *rtspd_ctrl_thread(void *arg)
                     if (val > 0 && val <= 120) {
                         write_pending_arg("gop", val);
                         log_info("Ctrl: gop=%d pending restart", val);
+                        need_reboot = 1;
+                    }
+                }
+                else if (strncmp(buf, "resolution ", 11) == 0) {
+                    int w = 0, h = 0;
+                    if (sscanf(buf + 11, "%dx%d", &w, &h) == 2 && w > 0 && h > 0) {
+                        write_pending_arg("width", w);
+                        write_pending_arg("height", h);
+                        log_info("Ctrl: resolution=%dx%d pending restart", w, h);
+                        need_reboot = 1;
+                    } else {
+                        log_error("Ctrl: invalid resolution '%s' (use WxH)", buf + 11);
+                    }
+                }
+                else if (strncmp(buf, "bitrate_max ", 12) == 0) {
+                    int val = atoi(buf + 12);
+                    if (val > 0 && val <= 16384) {
+                        write_pending_arg("bitrate_max", val);
+                        log_info("Ctrl: bitrate_max=%d pending restart", val);
+                        need_reboot = 1;
+                    }
+                }
+                else if (strncmp(buf, "h264profile ", 12) == 0) {
+                    int val = atoi(buf + 12);
+                    if (val >= 0 && val <= 100) {
+                        write_pending_arg("h264profile", val);
+                        log_info("Ctrl: h264profile=%d pending restart", val);
+                        need_reboot = 1;
+                    }
+                }
+                else if (strncmp(buf, "h264level ", 10) == 0) {
+                    int val = atoi(buf + 10);
+                    if (val >= 0 && val <= 100) {
+                        write_pending_arg("h264level", val);
+                        log_info("Ctrl: h264level=%d pending restart", val);
+                        need_reboot = 1;
+                    }
+                }
+                else if (strncmp(buf, "vui_cs ", 7) == 0) {
+                    int val = atoi(buf + 7);
+                    if (val >= 0) {
+                        write_pending_arg("vui_cs", val);
+                        log_info("Ctrl: vui_cs=%d pending restart", val);
+                        need_reboot = 1;
+                    }
+                }
+                else if (strncmp(buf, "vui_fr ", 7) == 0) {
+                    int val = atoi(buf + 7);
+                    if (val >= 0) {
+                        write_pending_arg("vui_fr", val);
+                        log_info("Ctrl: vui_fr=%d pending restart", val);
+                        need_reboot = 1;
+                    }
+                }
+                else if (strncmp(buf, "flip ", 5) == 0) {
+                    const char *v = buf + 5;
+                    int hf = -1, vf = -1;
+                    if (strcasecmp(v, "h") == 0)      { hf = 1; vf = 0; }
+                    else if (strcasecmp(v, "v") == 0) { hf = 0; vf = 1; }
+                    else if (strcasecmp(v, "hv") == 0){ hf = 1; vf = 1; }
+                    else if (strcmp(v, "0") == 0)     { hf = 0; vf = 0; }
+                    if (hf >= 0 && vf >= 0) {
+                        write_pending_arg("hflip", hf);
+                        write_pending_arg("vflip", vf);
+                        log_info("Ctrl: flip h=%d v=%d pending restart", hf, vf);
+                        need_reboot = 1;
+                    }
+                }
+                else if (strncmp(buf, "rotation ", 9) == 0) {
+                    int val = atoi(buf + 9);
+                    if (val == 0 || val == 90 || val == 180 || val == 270) {
+                        write_pending_arg("rotation", val);
+                        log_info("Ctrl: rotation=%d pending restart", val);
+                        need_reboot = 1;
+                    }
+                }
+                else if (strncmp(buf, "crop ", 5) == 0) {
+                    int w = 0, h = 0, x = 0, y = 0;
+                    if (strcmp(buf + 5, "0") == 0) {
+                        write_pending_arg("cropw", 0);
+                        log_info("Ctrl: crop off pending restart");
+                        need_reboot = 1;
+                    } else if (sscanf(buf + 5, "%dx%d+%d+%d", &w, &h, &x, &y) == 4 && w > 0 && h > 0) {
+                        write_pending_arg("cropx", x);
+                        write_pending_arg("cropy", y);
+                        write_pending_arg("cropw", w);
+                        write_pending_arg("croph", h);
+                        log_info("Ctrl: crop=%dx%d+%d+%d pending restart", w, h, x, y);
                         need_reboot = 1;
                     }
                 }
@@ -3123,6 +3334,8 @@ static void print_usage(void)
         "Capture / Encoder options:\n"
         "-F [mode]      - Flip capture: h, v, hv, or 0 (default: none)\n"
         "-G [degrees]   - Rotate capture: 0, 90, 180, 270  (default: 0)\n"
+        "-c [crop]      - Capture crop: WxH+X+Y, or 0 to disable  (default: off)\n"
+        "-p [prescale]  - Capture prescale reduce: WxH, or 0  (default: off)\n"
         "-V [profile]   - H264 profile: baseline|main|high|default  (default: default)\n"
         "-L [level]     - H264 level: 10-51 (e.g. 31=3.1, 40=4.0, 41=4.1)  (default: 0)\n"
         "-E [coding]    - H264 entropy coding: cavlc|cabac|default  (default: default)\n"
@@ -3183,6 +3396,7 @@ int main(int argc, char *argv[])
         saved_argv[argc] = NULL;
 
     cliArgs.bitrate     = 8192;
+    cliArgs.bitrate_max = 16384;
     cliArgs.framerate   = 15;
     cliArgs.width       = 1280;
     cliArgs.height      = 720;
@@ -3215,10 +3429,14 @@ int main(int argc, char *argv[])
     cliArgs.audio_channel_type  = GM_MONO;
     cliArgs.audio_encode_type   = GM_AAC;
 
-    /* Capture defaults: no flip, no rotation */
+    /* Capture defaults: no flip, no rotation, no crop, no prescale */
     cliArgs.h_flip       = 0;
     cliArgs.v_flip       = 0;
     cliArgs.rotation     = 0;
+    cliArgs.crop_enabled = 0;
+    cliArgs.crop_x = cliArgs.crop_y = cliArgs.crop_w = cliArgs.crop_h = 0;
+    cliArgs.prescale_w   = 0;
+    cliArgs.prescale_h   = 0;
 
     /* H264 encoder defaults */
     cliArgs.h264_profile = 0;  /* default (let gmlib decide) */
@@ -3425,6 +3643,52 @@ int main(int argc, char *argv[])
                         }
                         break;
 
+                    /* --- Capture crop (gm_crop_attr_t): -c WxH+X+Y --- */
+                    case 'c':
+                        {
+                            const char *v = NULL;
+                            if (argv[i][2] != '\0') v = &argv[i][2];
+                            else if ((i + 1) < argc && argv[i + 1][0] != '-') v = argv[++i];
+                            if (v) {
+                                int w = 0, h = 0, x = 0, y = 0;
+                                if (sscanf(v, "%dx%d+%d+%d", &w, &h, &x, &y) == 4 && w > 0 && h > 0) {
+                                    cliArgs.crop_enabled = 1;
+                                    cliArgs.crop_w = w;
+                                    cliArgs.crop_h = h;
+                                    cliArgs.crop_x = x;
+                                    cliArgs.crop_y = y;
+                                } else if (strcmp(v, "0") == 0) {
+                                    cliArgs.crop_enabled = 0;
+                                } else {
+                                    log_error("Invalid crop: %s (use WxH+X+Y or 0)", v);
+                                    return 1;
+                                }
+                            }
+                        }
+                        break;
+
+                    /* --- Capture prescale reduce (gm_cap_attr_t): -p WxH --- */
+                    case 'p':
+                        {
+                            const char *v = NULL;
+                            if (argv[i][2] != '\0') v = &argv[i][2];
+                            else if ((i + 1) < argc && argv[i + 1][0] != '-') v = argv[++i];
+                            if (v) {
+                                int w = 0, h = 0;
+                                if (sscanf(v, "%dx%d", &w, &h) == 2 && w > 0 && h > 0) {
+                                    cliArgs.prescale_w = w;
+                                    cliArgs.prescale_h = h;
+                                } else if (strcmp(v, "0") == 0) {
+                                    cliArgs.prescale_w = 0;
+                                    cliArgs.prescale_h = 0;
+                                } else {
+                                    log_error("Invalid prescale: %s (use WxH or 0)", v);
+                                    return 1;
+                                }
+                            }
+                        }
+                        break;
+
                     /* --- H264 profile (gm_h264e_profile_t) --- */
                     case 'V':
                         {
@@ -3613,6 +3877,24 @@ int main(int argc, char *argv[])
                         }
                         break;
 
+                    /* --- Motion tracking (PTZ auto-follow) --- */
+                    case 'J':
+                        cliArgs.tracking = 1;
+                        {
+                            const char *v = NULL;
+                            if (argv[i][2] != '\0') v = &argv[i][2];
+                            else if ((i + 1) < argc && argv[i + 1][0] != '-') v = argv[++i];
+                            if (v) {
+                                int n = sscanf(v, "%d:%d",
+                                               &cliArgs.tracking_deadzone,
+                                               &cliArgs.tracking_speed);
+                                if (n >= 1 && cliArgs.tracking_deadzone < 0) cliArgs.tracking_deadzone = 2;
+                                if (n >= 2 && (cliArgs.tracking_speed < 1 || cliArgs.tracking_speed > 10))
+                                    cliArgs.tracking_speed = 3;
+                            }
+                        }
+                        break;
+
                     default:
                         log_error("Unknown argument: %s", argv[i]);
                         print_usage();
@@ -3624,6 +3906,11 @@ int main(int argc, char *argv[])
 
     if ((cliArgs.motion != 1) && (cliArgs.snapshot == 1 || cliArgs.record == 1)) {
         log_error("-d is required when using -s or -r");
+        return 1;
+    }
+
+    if (cliArgs.tracking && cliArgs.motion != 1) {
+        log_error("-d (motion detection) is required when using -J (tracking)");
         return 1;
     }
 
