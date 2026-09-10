@@ -538,16 +538,21 @@ try {
                         'running' => file_exists('/var/run/tracking.pid'),
                     ]]);
                 case 'start':
+                    $rc = 0;
+                    $out = [];
                     if (!file_exists('/var/run/tracking.pid')) {
                         $dz = (int)sget('deadzone', 2);
                         $sp = (int)sget('speed', 3);
                         $cmd = escapeshellarg($b) . ' -d ' . $dz . ' -s ' . $sp
                              . ' >/dev/null 2>&1 & echo $!';
                         exec($cmd, $out, $rc);
-                        $pid = (int)($out[0] ?? 0);
+                        $pid = !empty($out[0]) ? (int)$out[0] : 0;
                         if ($pid > 0) {
                             @file_put_contents('/var/run/tracking.pid', (string)$pid);
                         }
+                    } else {
+                        $out[0] = trim((string)@file_get_contents('/var/run/tracking.pid'));
+                        $rc = 0;
                     }
                     json(['tracking' => 'started', 'pid' => (int)($out[0] ?? 0), 'rc' => $rc]);
                 case 'stop':
