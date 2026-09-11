@@ -15,8 +15,8 @@ fi
 NAME="dropbear"
 DESC="SSH server"
 DAEMON="${SD_MOUNTDIR}/firmware/bin/${NAME}"
-DAEMON_OPTS="-R -p 22 $DROPBEAR_EXTRA_ARGS"
 PIDFILE="/var/run/${NAME}.pid"
+DAEMON_OPTS="-R -p 22 -P ${PIDFILE} $DROPBEAR_EXTRA_ARGS"
 
 check_daemon_bin "${DAEMON}" "${DESC}"
 
@@ -36,13 +36,16 @@ recover_key() {
 
 
 save_key() {
-    if [ ! -s "${SD_MOUNTDIR}/firmware/etc/dropbear/dropbear_ecdsa_host_key" ] && [ -s /etc/dropbear/dropbear_ecdsa_host_key ]
+    if [ ! -d "${SD_MOUNTDIR}/firmware/etc/dropbear" ]; then
+        mkdir -p "${SD_MOUNTDIR}/firmware/etc/dropbear"
+    fi
+    SD_HOSTKEYS=$(ls "${SD_MOUNTDIR}/firmware/etc/dropbear/dropbear_"*_host_key 2>/dev/null | wc -l)
+    ETC_HOSTKEYS=$(ls /etc/dropbear/dropbear_*_host_key 2>/dev/null | wc -l)
+    if [ "${SD_HOSTKEYS}" != "${ETC_HOSTKEYS}" ] 2>/dev/null || [ "${SD_HOSTKEYS}" = "0" ] 2>/dev/null
     then
-        [ ! -d "${SD_MOUNTDIR}/firmware/etc/dropbear" ] && mkdir -p ${SD_MOUNTDIR}/firmware/etc/dropbear
-
-        printf "*** Copying SSH key to sd card... "
-        cp /etc/dropbear/dropbear_ecdsa_host_key "${SD_MOUNTDIR}/firmware/etc/dropbear/"
-	    ok_fail "$?"
+        printf "*** Saving SSH host keys to sd card... "
+        cp /etc/dropbear/dropbear_*_host_key "${SD_MOUNTDIR}/firmware/etc/dropbear/" 2>/dev/null
+        ok_fail "$?"
     fi
 }
 
@@ -54,8 +57,11 @@ case "$1" in
         ## Recover previous files from sdcard
         recover_key
 
-        ## start the daemon
-        start_daemon
+        ## Start the daemon detached from this session (nohup makes it ignore the
+        ## SIGHUP an ssh-session close sends to its children). dropbear writes
+        ## its own pidfile via -P, so stop/restart always target the live
+        ## listener (start-stop-daemon --make-pidfile was writing stale pids).
+        nohup "${DAEMON}" ${DAEMON_OPTS} </dev/null >>/var/log/dropbear.log 2>&1 &
 
         ## Save the key to the sdcard
         save_key

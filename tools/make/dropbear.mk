@@ -2,11 +2,11 @@
 ## DROPBEAR                                                    ##
 #################################################################
 
-SFTPVERSION := 7.9p1
+SFTPVERSION := 10.5p1
 SFTPARCHIVE := openssh-$(SFTPVERSION).tar.gz
 SFTPURI     := https://ftp.nluug.nl/pub/OpenBSD/OpenSSH/portable/$(SFTPARCHIVE)
 
-DROPBEARVERSION := 2018.76
+DROPBEARVERSION := 2026.94
 DROPBEARARCHIVE := dropbear-$(DROPBEARVERSION).tar.bz2
 DROPBEARURI := https://matt.ucc.asn.au/dropbear/releases/$(DROPBEARARCHIVE)
 
@@ -56,9 +56,7 @@ $(BUILDDIR)/dropbear: $(SOURCEDIR)/$(DROPBEARARCHIVE) $(BUILDDIR)/zlib $(BUILDDI
 		./configure						\
 			--prefix=$(PREFIXDIR)		\
 			--host=$(TARGET)			\
-			--with-zlib=$(PREFIXDIR)	\
-			--disable-wtmp				\
-			--disable-lastlog		 && \
+			--with-zlib=$(PREFIXDIR) && \
 		make PROGRAMS="dropbear scp dbclient dropbearkey" MULTI=0 -j$(PROCS)		 && \
 		make PROGRAMS="dropbear scp dbclient dropbearkey" MULTI=0 -j$(PROCS) install && \
 	rm -rf $@-$(DROPBEARVERSION)
