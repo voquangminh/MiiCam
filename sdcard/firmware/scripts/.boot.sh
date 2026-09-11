@@ -64,7 +64,7 @@ ${SD_MOUNTDIR}/firmware/bin/ir_cut -d
 
 if [ "${RESTORE_STATE}" -eq 1 ]
 then
-    sh ${SD_MOUNTDIR}/firmware/etc/init/S99restore_state start
+    sh ${SD_MOUNTDIR}/firmware/etc/init/S10restore_state start
 fi
 
 ####################################
@@ -73,14 +73,14 @@ fi
 
 if [ "${ENABLE_TELNETD}" -eq 1 ] || [ "${ENABLE_SSHD}"  -eq 0 ]
 then
-    sh ${SD_MOUNTDIR}/firmware/etc/init/S99telnet start
+    sh ${SD_MOUNTDIR}/firmware/etc/init/S15telnet start
 
     if ! grep -q '^telnetd' /tmp/etc/restartd.conf
     then
-        echo "telnetd \"/usr/sbin/telnetd\" \"${SD_MOUNTDIR}/firmware/etc/init/S99telnet restart\" \"/bin/echo '*** telnetd was restarted from restartd... '\"" >> /tmp/etc/restartd.conf
+        echo "telnetd \"/usr/sbin/telnetd\" \"${SD_MOUNTDIR}/firmware/etc/init/S15telnet restart\" \"/bin/echo '*** telnetd was restarted from restartd... '\"" >> /tmp/etc/restartd.conf
     fi
 else
-    sh ${SD_MOUNTDIR}/firmware/etc/init/S99telnet stop
+    sh ${SD_MOUNTDIR}/firmware/etc/init/S15telnet stop
 fi
 
 ####################################
@@ -89,11 +89,11 @@ fi
 
 if [ "${ENABLE_SSHD}" -eq 1 ] || [ "${ENABLE_TELNETD}" -eq 0 ]
 then
-    sh ${SD_MOUNTDIR}/firmware/etc/init/S99dropbear start
+    sh ${SD_MOUNTDIR}/firmware/etc/init/S20dropbear start
 
     if ! grep -q '^dropbear' /tmp/etc/restartd.conf
     then
-        echo "dropbear \"${SD_MOUNTDIR}/firmware/bin/dropbear\" \"${SD_MOUNTDIR}/firmware/etc/init/S99dropbear restart\" \"/bin/echo '*** Dropbear SSH was restarted from restartd... '\"" >> /tmp/etc/restartd.conf
+        echo "dropbear \"${SD_MOUNTDIR}/firmware/bin/dropbear\" \"${SD_MOUNTDIR}/firmware/etc/init/S20dropbear restart\" \"/bin/echo '*** Dropbear SSH was restarted from restartd... '\"" >> /tmp/etc/restartd.conf
     fi
 fi
 
@@ -106,27 +106,27 @@ then
     ## Load the crontab file by restarting the daemon
     if [ -s "${SD_MOUNTDIR}/firmware/etc/crontab" ]
     then
-        sh ${SD_MOUNTDIR}/firmware/etc/init/S99crond restart
+        sh ${SD_MOUNTDIR}/firmware/etc/init/S25crond restart
     fi
 
     ## Setup restartd
     if ! grep -q '^crond' /tmp/etc/restartd.conf
     then
-        echo "crond \"/usr/sbin/crond\" \"${SD_MOUNTDIR}/firmware/etc/init/S99crond restart\" \"/bin/echo '*** crond was restarted from restartd... '\"" >> /tmp/etc/restartd.conf
+        echo "crond \"/usr/sbin/crond\" \"${SD_MOUNTDIR}/firmware/etc/init/S25crond restart\" \"/bin/echo '*** crond was restarted from restartd... '\"" >> /tmp/etc/restartd.conf
     fi
 else
-    sh ${SD_MOUNTDIR}/firmware/etc/init/S99crond stop
+    sh ${SD_MOUNTDIR}/firmware/etc/init/S25crond stop
 fi
 
 ####################################
 ## NTPd                           ##
 ####################################
 
-sh ${SD_MOUNTDIR}/firmware/etc/init/S51ntpd start
+sh ${SD_MOUNTDIR}/firmware/etc/init/S30ntpd start
 
 if ! grep -q '^ntpd' /tmp/etc/restartd.conf
 then
-    echo "ntpd \"/usr/sbin/ntpd\" \"${SD_MOUNTDIR}/firmware/etc/init/S51ntpd restart\" \"/bin/echo '*** NTPd was restarted from restartd... '\"" >> /tmp/etc/restartd.conf
+    echo "ntpd \"/usr/sbin/ntpd\" \"${SD_MOUNTDIR}/firmware/etc/init/S30ntpd restart\" \"/bin/echo '*** NTPd was restarted from restartd... '\"" >> /tmp/etc/restartd.conf
 fi
 
 ####################################
@@ -135,7 +135,7 @@ fi
 
 if [ "${ENABLE_HTTPD}" -eq 1 ]
 then
-    sh ${SD_MOUNTDIR}/firmware/etc/init/S99lighttpd start
+    sh ${SD_MOUNTDIR}/firmware/etc/init/S50lighttpd start
 fi
 
 ####################################
@@ -144,7 +144,7 @@ fi
 
 if [ "${ENABLE_FTPD}" -eq 1 ]
 then
-    sh ${SD_MOUNTDIR}/firmware/etc/init/S99ftpd start
+    sh ${SD_MOUNTDIR}/firmware/etc/init/S55ftpd start
 fi
 
 ####################################
@@ -153,7 +153,7 @@ fi
 
 if [ "${ENABLE_RTSP}" -eq 1 ]
 then
-    sh ${SD_MOUNTDIR}/firmware/etc/init/S99rtsp start
+    sh ${SD_MOUNTDIR}/firmware/etc/init/S60rtsp start
 fi
 
 ####################################
@@ -162,11 +162,11 @@ fi
 
 if [ "${ENABLE_ONVIF}" -eq 1 ]
 then
-    sh ${SD_MOUNTDIR}/firmware/etc/init/S99onvif start
+    sh ${SD_MOUNTDIR}/firmware/etc/init/S65onvif start
 
     if ! grep -q '^onvif_server' /tmp/etc/restartd.conf
     then
-        echo "onvif_server \"${SD_MOUNTDIR}/firmware/bin/onvif_server\" \"${SD_MOUNTDIR}/firmware/etc/init/S99onvif restart\" \"/bin/echo '*** ONVIF server was restarted from restartd... '\"" >> /tmp/etc/restartd.conf
+        echo "onvif_server \"${SD_MOUNTDIR}/firmware/bin/onvif_server\" \"${SD_MOUNTDIR}/firmware/etc/init/S65onvif restart\" \"/bin/echo '*** ONVIF server was restarted from restartd... '\"" >> /tmp/etc/restartd.conf
     fi
 fi
 
@@ -176,9 +176,9 @@ fi
 
 if [ "${AUTO_NIGHT_MODE}" -eq 1 ]
 then
-    sh ${SD_MOUNTDIR}/firmware/etc/init/S99auto_night_mode start
+    sh ${SD_MOUNTDIR}/firmware/etc/init/S70auto_night_mode start
 else
-    sh ${SD_MOUNTDIR}/firmware/etc/init/S99auto_night_mode stop
+    sh ${SD_MOUNTDIR}/firmware/etc/init/S70auto_night_mode stop
 
 fi
 
@@ -188,8 +188,8 @@ fi
 
 if [ "${ENABLE_MQTT}" -eq 1 ]
 then
-    sh ${SD_MOUNTDIR}/firmware/etc/init/S99mqtt-interval start
-    sh ${SD_MOUNTDIR}/firmware/etc/init/S99mqtt-control  start
+    sh ${SD_MOUNTDIR}/firmware/etc/init/S75mqtt-interval start
+    sh ${SD_MOUNTDIR}/firmware/etc/init/S80mqtt-control  start
 fi
 
 ####################################

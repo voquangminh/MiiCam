@@ -2399,10 +2399,10 @@ static void *rtspd_zoom_thread(void *arg)
 #define RTSPD_PIDFILE      "/var/run/rtspd.pid"
 static pthread_t ctrl_thread_id = 0;
 
-/* Keep /var/run/rtspd.pid in sync with the real daemon pid. S99rtsp writes it
+/* Keep /var/run/rtspd.pid in sync with the real daemon pid. S60rtsp writes it
  * at boot via start-stop-daemon --make-pidfile, but a ctrl-triggered
  * self-restart (rtspd_reboot) re-execs without going through start-stop-daemon,
- * leaving the pidfile pointing at the dead original pid. Then `S99rtsp stop`
+ * leaving the pidfile pointing at the dead original pid. Then `S60rtsp stop`
  * kills the wrong pid and the live instance is orphaned (PPid 1) -> repeated
  * ctrl restarts accumulate parallel encoder processes. Rewriting the pidfile on
  * every startup keeps stop/restart/status accurate. */
@@ -3432,7 +3432,7 @@ int main(int argc, char *argv[])
     /* If we were relaunched after a codec change, hand off: wait for the old
      * process to release the encoder and drop inherited device fds. A fresh
      * boot/manual start has no marker: the command-line args (from
-     * /etc/init/S99rtsp) take precedence, so any stale overrides from the
+     * /etc/init/S60rtsp) take precedence, so any stale overrides from the
      * previous daemon instance are dropped. Pending overrides are applied
      * AFTER arg parsing below (only on a ctrl-initiated restart). */
     from_restart = restart_handoff();

@@ -199,14 +199,14 @@ fi
 
 if [ "${DISABLE_CLOUD}" -eq 1 ]
 then
-    sh "${SD_MOUNTDIR}/firmware/etc/init/S50disable_cloud" start
-    sh "${SD_MOUNTDIR}/firmware/etc/init/S50disable_ota" start
+    sh "${SD_MOUNTDIR}/firmware/etc/init/S35disable_cloud" start
+    sh "${SD_MOUNTDIR}/firmware/etc/init/S40disable_ota" start
 
 elif [ "${DISABLE_OTA}" -eq 1 ]
 then
-    sh "${SD_MOUNTDIR}/firmware/etc/init/S50disable_ota" start
+    sh "${SD_MOUNTDIR}/firmware/etc/init/S40disable_ota" start
 else
-    sh "${SD_MOUNTDIR}/firmware/etc/init/S50disable_ota" stop
+    sh "${SD_MOUNTDIR}/firmware/etc/init/S40disable_ota" stop
 fi
 
 

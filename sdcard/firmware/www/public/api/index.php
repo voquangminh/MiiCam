@@ -324,9 +324,20 @@ write:
     ok(['written' => true]);
 }
 
+function init_script(string $name): ?string {
+    /* Resolve service name "rtsp" -> "S60rtsp" (init scripts use S## prefix, not S99). */
+    foreach (glob('/tmp/sd/firmware/etc/init/S*') ?: [] as $f) {
+        $base = basename($f);
+        if ($base === 'S' . $name || (preg_match('/^S[0-9]{2}(.+)$/', $base, $m) && $m[1] === $name)) {
+            return $f;
+        }
+    }
+    return null;
+}
+
 function ep_service(string $name, string $action) {
-    $script = '/tmp/sd/firmware/etc/init/S99' . $name;
-    if (!is_file($script)) {
+    $script = init_script($name);
+    if ($script === null || !is_file($script)) {
         fail('Unknown service: ' . $name, 404);
     }
     if (!in_array($action, ['start', 'stop', 'restart', 'status'], true)) {
@@ -668,8 +679,8 @@ try {
             ];
             $res = [];
             foreach ($list as $s) {
-                $script = '/tmp/sd/firmware/etc/init/S99' . $s;
-                if (!is_file($script)) {
+                $script = init_script($s);
+                if ($script === null) {
                     continue;
                 }
                 $out = run_cmd(['/bin/sh', $script, 'status'], $rc);
