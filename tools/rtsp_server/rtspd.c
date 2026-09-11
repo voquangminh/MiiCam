@@ -2396,7 +2396,24 @@ static void *rtspd_zoom_thread(void *arg)
 #define RTSPD_ARGS_FILE    "/tmp/rtspd_pending_args"
 #define RTSPD_ARGS_FILE_TMP "/tmp/rtspd_pending_args.tmp"
 #define RTSPD_RESTART_FILE "/tmp/rtspd_restart_oldpid"
+#define RTSPD_PIDFILE      "/var/run/rtspd.pid"
 static pthread_t ctrl_thread_id = 0;
+
+/* Keep /var/run/rtspd.pid in sync with the real daemon pid. S99rtsp writes it
+ * at boot via start-stop-daemon --make-pidfile, but a ctrl-triggered
+ * self-restart (rtspd_reboot) re-execs without going through start-stop-daemon,
+ * leaving the pidfile pointing at the dead original pid. Then `S99rtsp stop`
+ * kills the wrong pid and the live instance is orphaned (PPid 1) -> repeated
+ * ctrl restarts accumulate parallel encoder processes. Rewriting the pidfile on
+ * every startup keeps stop/restart/status accurate. */
+static void write_pidfile(void)
+{
+    FILE *f = fopen(RTSPD_PIDFILE, "w");
+    if (f) {
+        fprintf(f, "%d\n", (int)getpid());
+        fclose(f);
+    }
+}
 
 static int  saved_argc = 0;
 static char *saved_argv[64];
@@ -4058,6 +4075,8 @@ int main(int argc, char *argv[])
     }
 
     log_info("Starting the RTSP Daemon");
+
+    write_pidfile();
 
     rtsp_password = getenv("RTSP_PASS");
     rtsp_username = getenv("RTSP_USER");

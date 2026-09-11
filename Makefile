@@ -191,7 +191,7 @@ $(BUILDDIR)/aac_play: $(PREFIXDIR)/bin
 		-DLOG_USE_COLOR			\
 		-Wall					\
 		-I$(GMLIBDIR)/inc		\
-		$(RTSPDDIR)/aac_player.c	\
+		$(RTSPDDIR)/aac_play.c	\
 		$(RTSPDDIR)/log/log.c	\
 		$(RTSPDDIR)/librtsp.a	\
 		-L$(GMLIBDIR)/lib		\
