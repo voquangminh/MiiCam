@@ -681,8 +681,10 @@ int main(int argc, char **argv)
     write_zoom();
     if (pidfile_path[0]) {
         char pbuf[16];
+        int pf;
         snprintf(pbuf,sizeof(pbuf),"%d\n",(int)getpid());
-        write_all_file(pidfile_path,pbuf);
+        pf=open(pidfile_path,O_WRONLY|O_CREAT|O_TRUNC,0644);
+        if(pf>=0){int plen=(int)strlen(pbuf);write(pf,pbuf,(size_t)plen);close(pf);}
     }
     if (motor_pwm_init() < 0) {
         log_message("ERROR","motor PWM is unavailable; physical PTZ may not move");
