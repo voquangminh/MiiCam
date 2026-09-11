@@ -1,0 +1,7 @@
+# The camera's busybox sh hard-fails on CRLF ("\r: not found") and lighttpd
+# prefers LF. Force LF on all deployable scripts/config regardless of
+# core.autocrlf on the checkout machine.
+sdcard/firmware/etc/init/* text eol=lf
+sdcard/firmware/etc/lighttpd.conf text eol=lf
+sdcard/firmware/scripts/** text eol=lf
+sdcard/config.cfg text eol=lf
