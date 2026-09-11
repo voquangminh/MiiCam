@@ -157,6 +157,20 @@ then
 fi
 
 ####################################
+## ONVIF server                   ##
+####################################
+
+if [ "${ENABLE_ONVIF}" -eq 1 ]
+then
+    sh ${SD_MOUNTDIR}/firmware/etc/init/S99onvif start
+
+    if ! grep -q '^onvif_server' /tmp/etc/restartd.conf
+    then
+        echo "onvif_server \"${SD_MOUNTDIR}/firmware/bin/onvif_server\" \"${SD_MOUNTDIR}/firmware/etc/init/S99onvif restart\" \"/bin/echo '*** ONVIF server was restarted from restartd... '\"" >> /tmp/etc/restartd.conf
+    fi
+fi
+
+####################################
 ## Auto Night Mode                ##
 ####################################
 

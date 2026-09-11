@@ -34,6 +34,7 @@
 #include <string.h>
 #include <sys/ioctl.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/types.h>
 #include <time.h>
 #include <math.h>
@@ -52,6 +53,10 @@
 #define Y_MAX 15
 #define PRESET_MAX 16
 #define STATE_FILE "/tmp/onvif_ptz.state"
+#define SNAP_TRIGGER_FILE "/dev/shm/rtspd_snapshot"
+#define SNAP_LAST_FILE "/dev/shm/rtspd_last_snapshot_path"
+#define SNAP_LOCK_FILE "/dev/shm/rtspd_web_snapshot_lock"
+#define SNAP_MIN_INTERVAL 3
 /* Digital zoom state shared with the RTSP server (rtspd2MP.c):
  * line format: "<zoom> <pan> <tilt>"  (all normalized 0.0..1.0) */
 #define ZOOM_STATE_FILE "/dev/shm/rtspd_zoom"
@@ -123,6 +128,7 @@ static char local_ip[64] = "127.0.0.1";
 static char public_host[128] = "";
 static int public_http_port = 0;
 static int public_rtsp_port = 0;
+static char pidfile_path[128] = "";
 static char endpoint_uuid[96] = "urn:uuid:81360000-0000-4000-8000-000000000001";
 static int pwm_fd = -1;
 static int motor_fd = -1;
@@ -183,6 +189,8 @@ static void log_message(const char *level,const char *fmt,...){va_list ap;fprint
 static int write_all_file(const char *path,const char *text){int fd,rc=0;size_t off=0,len=strlen(text);fd=open(path,O_WRONLY);if(fd<0)return-1;while(off<len){ssize_t n=write(fd,text+off,len-off);if(n<0){if(errno==EINTR)continue;rc=-1;break;}off+=(size_t)n;}if(close(fd)<0&&rc==0)rc=-1;return rc;}
 static int write_sysfs_string(const char *path,const char *value){int rc;if (!path || !value) {errno = EINVAL;return -1;}rc = write_all_file(path, value);if (rc < 0) {log_message("ERROR","write %s='%s' failed: %s",path,value,strerror(errno));}return rc;}
 static int write_sysfs_int(const char *path,int value){char text[32];snprintf(text,sizeof(text),"%d\n",value);return write_sysfs_string(path, text);}
+/* Read a whole file (binary-safe) into a malloc'd buffer. */
+static int read_file_bin(const char *path,char **out,size_t *outlen){int fd=open(path,O_RDONLY);if(fd<0)return -1;size_t cap=65536,len=0;char*b=malloc(cap);if(!b){close(fd);return -1;}for(;;){if(len==cap){cap*=2;char*n=realloc(b,cap);if(!n){free(b);close(fd);return -1;}b=n;}ssize_t r=read(fd,b+len,cap-len);if(r<=0){if(r<0&&errno==EINTR)continue;break;}len+=(size_t)r;}close(fd);*out=b;*outlen=len;return 0;}
 static int status_led_set(int led,int brightness,int mode,int delay_on_ms,int delay_off_ms)
 {
     const status_led_paths_t *paths;
@@ -294,7 +302,7 @@ static int gpio_get(int pin,int *value){char path[128],text[32];snprintf(path,si
 static int ircut_set(int enabled){int rc;char state[8];enabled=enabled?1:0;pthread_mutex_lock(&gpio_mutex);if(enabled){rc=gpio_set(14,1);if(rc==0)rc=gpio_set(15,0);}else{rc=gpio_set(14,0);if(rc==0)rc=gpio_set(15,1);}if(rc==0){snprintf(state,sizeof(state),"%d\n",enabled);rc=write_all_file(IRCUT_STATE,state);}pthread_mutex_unlock(&gpio_mutex);return rc;}
 static int ircut_get(int *enabled){char state[16];int rc=0;pthread_mutex_lock(&gpio_mutex);if(read_file(IRCUT_STATE,state,sizeof(state))==0)*enabled=atoi(state)?1:0;else rc=gpio_get(14,enabled);pthread_mutex_unlock(&gpio_mutex);return rc;}
 
-static void image_defaults(image_state_t *s){memset(s,0,sizeof(*s));s->brightness=s->contrast=s->saturation=s->sharpness=128;s->denoise=128;s->sensor_fps=20;s->ae_en=s->awb_en=1;}
+static void image_defaults(image_state_t *s){memset(s,0,sizeof(*s));s->brightness=s->contrast=s->saturation=s->sharpness=128;s->denoise=128;s->sensor_fps=15;s->ae_en=s->awb_en=1;}
 static int image_get(image_state_t *s){int rc=0;image_defaults(s);
 #define GET_FIELD(name,field)do{if(isp_get(name,&s->field)<0)rc=-1;}while(0)
     GET_FIELD("brightness",brightness);GET_FIELD("contrast",contrast);GET_FIELD("hue",hue);GET_FIELD("saturation",saturation);GET_FIELD("denoise",denoise);GET_FIELD("sharpness",sharpness);GET_FIELD("drc_strength",drc_strength);GET_FIELD("dr_mode",dr_mode);GET_FIELD("daynight",daynight);GET_FIELD("ae_en",ae_en);GET_FIELD("awb_en",awb_en);GET_FIELD("af_en",af_en);GET_FIELD("sen_exp",sensor_exposure);GET_FIELD("sen_gain",sensor_gain);GET_FIELD("sen_fps",sensor_fps);GET_FIELD("mirror",mirror);GET_FIELD("flip",flip);if(ircut_get(&s->ircut)<0)rc=-1;
@@ -472,13 +480,13 @@ static void handle_soap(const char*r,char*out,size_t size){out[0]=0;append(out,s
  if(strstr(r,"GetDeviceInformation"))append(out,size,"<tds:GetDeviceInformationResponse><tds:Manufacturer>Xiaomi/Chuangmi</tds:Manufacturer><tds:Model>Mijia 1080p GM8136</tds:Model><tds:FirmwareVersion>ONVIF-full-1.0</tds:FirmwareVersion><tds:SerialNumber>%s</tds:SerialNumber><tds:HardwareId>GM8136</tds:HardwareId></tds:GetDeviceInformationResponse>",endpoint_uuid);
  else if(strstr(r,"GetCapabilities"))append(out,size,"<tds:GetCapabilitiesResponse><tds:Capabilities><tt:Device><tt:XAddr>http://%s:%d/onvif/device_service</tt:XAddr></tt:Device><tt:Media><tt:XAddr>http://%s:%d/onvif/media_service</tt:XAddr><tt:StreamingCapabilities><tt:RTP_TCP>true</tt:RTP_TCP><tt:RTP_RTSP_TCP>true</tt:RTP_RTSP_TCP></tt:StreamingCapabilities></tt:Media><tt:PTZ><tt:XAddr>http://%s:%d/onvif/ptz_service</tt:XAddr></tt:PTZ><tt:Imaging><tt:XAddr>http://%s:%d/onvif/imaging_service</tt:XAddr></tt:Imaging><tt:DeviceIO><tt:XAddr>http://%s:%d/onvif/deviceio_service</tt:XAddr></tt:DeviceIO></tds:Capabilities></tds:GetCapabilitiesResponse>",onvif_host(),onvif_http_port(),onvif_host(),onvif_http_port(),onvif_host(),onvif_http_port(),onvif_host(),onvif_http_port(),onvif_host(),onvif_http_port());
  else if(strstr(r,"GetServices"))append(out,size,"<tds:GetServicesResponse><tds:Service><tds:Namespace>http://www.onvif.org/ver10/device/wsdl</tds:Namespace><tds:XAddr>http://%s:%d/onvif/device_service</tds:XAddr></tds:Service><tds:Service><tds:Namespace>http://www.onvif.org/ver10/media/wsdl</tds:Namespace><tds:XAddr>http://%s:%d/onvif/media_service</tds:XAddr></tds:Service><tds:Service><tds:Namespace>http://www.onvif.org/ver20/ptz/wsdl</tds:Namespace><tds:XAddr>http://%s:%d/onvif/ptz_service</tds:XAddr></tds:Service><tds:Service><tds:Namespace>http://www.onvif.org/ver20/imaging/wsdl</tds:Namespace><tds:XAddr>http://%s:%d/onvif/imaging_service</tds:XAddr></tds:Service></tds:GetServicesResponse>",onvif_host(),onvif_http_port(),onvif_host(),onvif_http_port(),onvif_host(),onvif_http_port(),onvif_host(),onvif_http_port());
- else if(strstr(r,"GetProfiles"))append(out,size,"<trt:GetProfilesResponse><trt:Profiles token=\"profile_0\" fixed=\"true\"><tt:Name>MainStream</tt:Name><tt:VideoSourceConfiguration token=\"vsrc_0\"><tt:Name>VideoSource</tt:Name><tt:UseCount>1</tt:UseCount><tt:SourceToken>source_0</tt:SourceToken><tt:Bounds x=\"0\" y=\"0\" width=\"1920\" height=\"1080\"/></tt:VideoSourceConfiguration><tt:AudioSourceConfiguration token=\"asrc_cfg_0\"><tt:Name>AudioSourceConfig</tt:Name><tt:UseCount>1</tt:UseCount><tt:SourceToken>asrc_0</tt:SourceToken></tt:AudioSourceConfiguration><tt:AudioEncoderConfiguration token=\"aenc_cfg_0\"><tt:Name>AudioEncoderConfig</tt:Name><tt:UseCount>1</tt:UseCount><tt:Encoding>AAC</tt:Encoding><tt:Bitrate>16000</tt:Bitrate><tt:SampleRate>16000</tt:SampleRate><tt:Multicast><tt:Address><tt:Type>Multicast</tt:Type><tt:IPv4Address>239.255.255.250</tt:IPv4Address></tt:Address><tt:Port>37020</tt:Port><tt:TTL>5</tt:TTL><tt:AutoStart>true</tt:AutoStart></tt:Multicast><tt:SessionTimeout>PT60S</tt:SessionTimeout></tt:AudioEncoderConfiguration><tt:PTZConfiguration token=\"ptz_0\"><tt:Name>PTZ</tt:Name><tt:UseCount>1</tt:UseCount><tt:NodeToken>node_0</tt:NodeToken></tt:PTZConfiguration></trt:Profiles></trt:GetProfilesResponse>");
- else if(strstr(r,"GetProfile"))append(out,size,"<trt:GetProfileResponse><trt:Profile token=\"profile_0\" fixed=\"true\"><tt:Name>MainStream</tt:Name><tt:VideoSourceConfiguration token=\"vsrc_0\"><tt:Name>VideoSource</tt:Name><tt:UseCount>1</tt:UseCount><tt:SourceToken>source_0</tt:SourceToken><tt:Bounds x=\"0\" y=\"0\" width=\"1920\" height=\"1080\"/></tt:VideoSourceConfiguration><tt:AudioSourceConfiguration token=\"asrc_cfg_0\"><tt:Name>AudioSourceConfig</tt:Name><tt:UseCount>1</tt:UseCount><tt:SourceToken>asrc_0</tt:SourceToken></tt:AudioSourceConfiguration><tt:AudioEncoderConfiguration token=\"aenc_cfg_0\"><tt:Name>AudioEncoderConfig</tt:Name><tt:UseCount>1</tt:UseCount><tt:Encoding>AAC</tt:Encoding><tt:Bitrate>16000</tt:Bitrate><tt:SampleRate>16000</tt:SampleRate><tt:Multicast><tt:Address><tt:Type>Multicast</tt:Type><tt:IPv4Address>239.255.255.250</tt:IPv4Address></tt:Address><tt:Port>37020</tt:Port><tt:TTL>5</tt:TTL><tt:AutoStart>true</tt:AutoStart></tt:Multicast><tt:SessionTimeout>PT60S</tt:SessionTimeout></tt:AudioEncoderConfiguration><tt:PTZConfiguration token=\"ptz_0\"><tt:Name>PTZ</tt:Name><tt:UseCount>1</tt:UseCount><tt:NodeToken>node_0</tt:NodeToken></tt:PTZConfiguration></trt:Profile></trt:GetProfileResponse>");
+ else if(strstr(r,"GetProfiles"))append(out,size,"<trt:GetProfilesResponse><trt:Profiles token=\"profile_0\" fixed=\"true\"><tt:Name>MainStream</tt:Name><tt:VideoSourceConfiguration token=\"vsrc_0\"><tt:Name>VideoSource</tt:Name><tt:UseCount>1</tt:UseCount><tt:SourceToken>source_0</tt:SourceToken><tt:Bounds x=\"0\" y=\"0\" width=\"1280\" height=\"720\"/></tt:VideoSourceConfiguration><tt:AudioSourceConfiguration token=\"asrc_cfg_0\"><tt:Name>AudioSourceConfig</tt:Name><tt:UseCount>1</tt:UseCount><tt:SourceToken>asrc_0</tt:SourceToken></tt:AudioSourceConfiguration><tt:AudioEncoderConfiguration token=\"aenc_cfg_0\"><tt:Name>AudioEncoderConfig</tt:Name><tt:UseCount>1</tt:UseCount><tt:Encoding>AAC</tt:Encoding><tt:Bitrate>16000</tt:Bitrate><tt:SampleRate>16000</tt:SampleRate><tt:Multicast><tt:Address><tt:Type>Multicast</tt:Type><tt:IPv4Address>239.255.255.250</tt:IPv4Address></tt:Address><tt:Port>37020</tt:Port><tt:TTL>5</tt:TTL><tt:AutoStart>true</tt:AutoStart></tt:Multicast><tt:SessionTimeout>PT60S</tt:SessionTimeout></tt:AudioEncoderConfiguration><tt:PTZConfiguration token=\"ptz_0\"><tt:Name>PTZ</tt:Name><tt:UseCount>1</tt:UseCount><tt:NodeToken>node_0</tt:NodeToken></tt:PTZConfiguration></trt:Profiles></trt:GetProfilesResponse>");
+ else if(strstr(r,"GetProfile"))append(out,size,"<trt:GetProfileResponse><trt:Profile token=\"profile_0\" fixed=\"true\"><tt:Name>MainStream</tt:Name><tt:VideoSourceConfiguration token=\"vsrc_0\"><tt:Name>VideoSource</tt:Name><tt:UseCount>1</tt:UseCount><tt:SourceToken>source_0</tt:SourceToken><tt:Bounds x=\"0\" y=\"0\" width=\"1280\" height=\"720\"/></tt:VideoSourceConfiguration><tt:AudioSourceConfiguration token=\"asrc_cfg_0\"><tt:Name>AudioSourceConfig</tt:Name><tt:UseCount>1</tt:UseCount><tt:SourceToken>asrc_0</tt:SourceToken></tt:AudioSourceConfiguration><tt:AudioEncoderConfiguration token=\"aenc_cfg_0\"><tt:Name>AudioEncoderConfig</tt:Name><tt:UseCount>1</tt:UseCount><tt:Encoding>AAC</tt:Encoding><tt:Bitrate>16000</tt:Bitrate><tt:SampleRate>16000</tt:SampleRate><tt:Multicast><tt:Address><tt:Type>Multicast</tt:Type><tt:IPv4Address>239.255.255.250</tt:IPv4Address></tt:Address><tt:Port>37020</tt:Port><tt:TTL>5</tt:TTL><tt:AutoStart>true</tt:AutoStart></tt:Multicast><tt:SessionTimeout>PT60S</tt:SessionTimeout></tt:AudioEncoderConfiguration><tt:PTZConfiguration token=\"ptz_0\"><tt:Name>PTZ</tt:Name><tt:UseCount>1</tt:UseCount><tt:NodeToken>node_0</tt:NodeToken></tt:PTZConfiguration></trt:Profile></trt:GetProfileResponse>");
  else if(strstr(r,"GetAudioSources"))append(out,size,"<trt:GetAudioSourcesResponse><trt:AudioSources token=\"asrc_0\"><tt:Name>AudioSource</tt:Name><tt:Channels>1</tt:Channels></trt:AudioSources></trt:GetAudioSourcesResponse>");
  else if(strstr(r,"GetAudioSourceConfigurations"))append(out,size,"<trt:GetAudioSourceConfigurationsResponse><trt:AudioSourceConfigurations token=\"asrc_cfg_0\"><tt:Name>AudioSourceConfig</tt:Name><tt:UseCount>1</tt:UseCount><tt:SourceToken>asrc_0</tt:SourceToken></trt:AudioSourceConfigurations></trt:GetAudioSourceConfigurationsResponse>");
  else if(strstr(r,"GetAudioEncoderConfigurations"))append(out,size,"<trt:GetAudioEncoderConfigurationsResponse><trt:AudioEncoderConfigurations token=\"aenc_cfg_0\"><tt:Name>AudioEncoderConfig</tt:Name><tt:UseCount>1</tt:UseCount><tt:Encoding>AAC</tt:Encoding><tt:Bitrate>16000</tt:Bitrate><tt:SampleRate>16000</tt:SampleRate><tt:Multicast><tt:Address><tt:Type>Multicast</tt:Type><tt:IPv4Address>239.255.255.250</tt:IPv4Address></tt:Address><tt:Port>37020</tt:Port><tt:TTL>5</tt:TTL><tt:AutoStart>true</tt:AutoStart></tt:Multicast><tt:SessionTimeout>PT60S</tt:SessionTimeout></trt:AudioEncoderConfigurations></trt:GetAudioEncoderConfigurationsResponse>");
  else if(strstr(r,"GetAudioEncoderConfigurationOptions"))append(out,size,"<trt:GetAudioEncoderConfigurationOptionsResponse><trt:Options><tt:Encoding>AAC</tt:Encoding><tt:Bitrate><tt:Min>8000</tt:Min><tt:Max>192000</tt:Max></tt:Bitrate><tt:SampleRate><tt:Min>8000</tt:Min><tt:Max>48000</tt:Max></tt:SampleRate><tt:Multicast><tt:Address><tt:Type>Multicast</tt:Type><tt:IPv4Address>239.255.255.250</tt:IPv4Address></tt:Address><tt:Port>37020</tt:Port><tt:TTL>5</tt:TTL><tt:AutoStart>true</tt:AutoStart></tt:Multicast></trt:Options></trt:GetAudioEncoderConfigurationOptionsResponse>");
- else if(strstr(r,"GetVideoSources"))append(out,size,"<trt:GetVideoSourcesResponse><trt:VideoSources token=\"source_0\"><tt:Framerate>20</tt:Framerate><tt:Resolution><tt:Width>1920</tt:Width><tt:Height>1080</tt:Height></tt:Resolution></trt:VideoSources></trt:GetVideoSourcesResponse>");
+ else if(strstr(r,"GetVideoSources"))append(out,size,"<trt:GetVideoSourcesResponse><trt:VideoSources token=\"source_0\"><tt:Framerate>15</tt:Framerate><tt:Resolution><tt:Width>1280</tt:Width><tt:Height>720</tt:Height></tt:Resolution></trt:VideoSources></trt:GetVideoSourcesResponse>");
  else if(strstr(r,"GetStreamUri"))append(out,size,"<trt:GetStreamUriResponse><trt:MediaUri><tt:Uri>rtsp://%s:%d/live/ch00_0</tt:Uri><tt:InvalidAfterConnect>false</tt:InvalidAfterConnect><tt:InvalidAfterReboot>false</tt:InvalidAfterReboot><tt:Timeout>PT60S</tt:Timeout></trt:MediaUri></trt:GetStreamUriResponse>",onvif_host(),onvif_rtsp_port());
  else if(strstr(r,"GetSnapshotUri"))append(out,size,"<trt:GetSnapshotUriResponse>""<trt:MediaUri>""<tt:Uri>http://%s:%d/snapshot.jpg</tt:Uri>""<tt:InvalidAfterConnect>false</tt:InvalidAfterConnect>""<tt:InvalidAfterReboot>false</tt:InvalidAfterReboot>""<tt:Timeout>PT60S</tt:Timeout>""</trt:MediaUri>""</trt:GetSnapshotUriResponse>",onvif_host(),onvif_http_port());
  else if(strstr(r,"GetNodes"))append(out,size,"<tptz:GetNodesResponse><tptz:PTZNode token=\"node_0\"><tt:Name>PanTiltZoom</tt:Name><tt:MaximumNumberOfPresets>%d</tt:MaximumNumberOfPresets><tt:HomeSupported>true</tt:HomeSupported><tt:SupportedPTZSpaces><tt:AbsolutePanTiltPositionSpace><tt:URI>http://www.onvif.org/ver10/tptz/PanTiltSpaces/PositionGenericSpace</tt:URI></tt:AbsolutePanTiltPositionSpace><tt:AbsoluteZoomPositionSpace><tt:URI>http://www.onvif.org/ver10/tptz/ZoomSpaces/PositionGenericSpace</tt:URI></tt:AbsoluteZoomPositionSpace><tt:ContinuousZoomVelocitySpace><tt:URI>http://www.onvif.org/ver10/tptz/ZoomSpaces/VelocityGenericSpace</tt:URI></tt:ContinuousZoomVelocitySpace></tt:SupportedPTZSpaces></tptz:PTZNode></tptz:GetNodesResponse>",PRESET_MAX);
@@ -512,7 +520,8 @@ static void handle_soap(const char*r,char*out,size_t size){out[0]=0;append(out,s
  else if(strstr(r,"SetIrCut")){int v;if(get_int_tag(r,"Enabled",&v) < 0 || ircut_set(v != 0) < 0){soap_fault(out,size,"IR-cut failed");return;}append(out,size,"<tmd:SetIrCutResponse/>");}
 else{soap_fault(out,size,"Action not supported");return;}append(out,size,"%s",SOAP_TAIL);}
 
-static void http_reply(int fd,int code,const char*type,const char*body){char h[512];size_t n=body?strlen(body):0;int l=snprintf(h,sizeof(h),"HTTP/1.1 %d %s\r\nContent-Type: %s\r\nContent-Length: %lu\r\nConnection: close\r\nServer: GM8136-ONVIF\r\n\r\n",code,code==200?"OK":"Error",type,(unsigned long)n);send(fd,h,l,0);if(n)send(fd,body,n,0);}
+static void http_reply_bytes(int fd,int code,const char*type,const char*body,size_t n){char h[512];int l=snprintf(h,sizeof(h),"HTTP/1.1 %d %s\r\nContent-Type: %s\r\nContent-Length: %lu\r\nConnection: close\r\nServer: GM8136-ONVIF\r\n\r\n",code,code==200?"OK":"Error",type,(unsigned long)n);send(fd,h,l,0);if(n)send(fd,body,n,0);}
+static void http_reply(int fd,int code,const char*type,const char*body){http_reply_bytes(fd,code,type,body,body?strlen(body):0);}
 static void *client_thread(void*arg)
 {
     int fd=(int)(intptr_t)arg,used=0,n;
@@ -533,10 +542,36 @@ static void *client_thread(void*arg)
             if(used>=(int)(end+4-req)+len)break;
         }
     }
-    // * HTTP snapshot handler
+    // * HTTP snapshot handler (rtspd produces the JPEG, like the web /api/snapshot)
     if(strstr(req,"GET /snapshot.jpg"))
     {
-        http_reply(fd,200,"image/jpeg","");
+        struct stat st;
+        int base_sig=-1,nowt=(int)time(NULL),last=0,elapsed=0;
+        char stamp[16]={0},path[512]={0};
+        if(stat(SNAP_LAST_FILE,&st)==0)base_sig=(int)st.st_mtime;
+        if(read_file(SNAP_LOCK_FILE,stamp,sizeof(stamp))==0)last=atoi(stamp);
+        if(nowt>=last+SNAP_MIN_INTERVAL){
+            char sb[16];snprintf(sb,sizeof(sb),"%d\n",nowt);
+            write_all_file(SNAP_LOCK_FILE,sb);
+            int tfd=open(SNAP_TRIGGER_FILE,O_WRONLY|O_CREAT|O_TRUNC,0644);
+            if(tfd>=0){write(tfd,"1",1);close(tfd);}
+        }
+        char *jpg=NULL;size_t jlen=0;
+        while(elapsed<3000){
+            if(stat(SNAP_LAST_FILE,&st)==0&&(base_sig<0||(int)st.st_mtime>base_sig)){
+                path[0]=0;
+                if(read_file(SNAP_LAST_FILE,path,sizeof(path))==0){
+                    char *e=path+strlen(path);
+                    while(e>path&&(e[-1]=='\n'||e[-1]=='\r'))*--e=0;
+                    if(path[0]&&read_file_bin(path,&jpg,&jlen)==0)break;
+                }
+            }
+            usleep(120000);
+            elapsed+=120;
+        }
+        if(jpg&&jlen)http_reply_bytes(fd,200,"image/jpeg",jpg,jlen);
+        else http_reply(fd,200,"image/jpeg","");
+        free(jpg);
         close(fd);
         free(req);
         free(out);
@@ -627,6 +662,9 @@ int main(int argc, char **argv)
             public_http_port = atoi(argv[i] + 19);
         } else if (!strncmp(argv[i], "--public-rtsp-port=", 19)) {
             public_rtsp_port = atoi(argv[i] + 19);
+        } else if (!strncmp(argv[i], "-P", 2) && i + 1 < argc) {
+            snprintf(pidfile_path, sizeof(pidfile_path), "%s", argv[i + 1]);
+            i++;
         }
     }
     if (public_http_port < 0 || public_http_port > 65535)
@@ -641,6 +679,11 @@ int main(int argc, char **argv)
     make_uuid();
     load_ptz();
     write_zoom();
+    if (pidfile_path[0]) {
+        char pbuf[16];
+        snprintf(pbuf,sizeof(pbuf),"%d\n",(int)getpid());
+        write_all_file(pidfile_path,pbuf);
+    }
     if (motor_pwm_init() < 0) {
         log_message("ERROR","motor PWM is unavailable; physical PTZ may not move");
     }
@@ -665,5 +708,7 @@ int main(int argc, char **argv)
         close(pwm_fd);
         pwm_fd = -1;
     }
+    if (pidfile_path[0])
+        unlink(pidfile_path);
     return 0;
 }

@@ -1,0 +1,62 @@
+#!/bin/sh
+## purpose: Init script for ONVIF server
+## license: GPLv3+, http://www.gnu.org/licenses/gpl-3.0.html
+
+SD_MOUNTDIR="/tmp/sd"
+if [ -r "${SD_MOUNTDIR}/firmware/scripts/functions.sh" ]; then
+  . "${SD_MOUNTDIR}/firmware/scripts/functions.sh"
+else
+  echo "Unable to load basic functions"
+  exit 1
+fi
+
+NAME="onvif_server"
+DESC="ONVIF server"
+DAEMON="${SD_MOUNTDIR}/firmware/bin/${NAME}"
+PIDFILE="/var/run/${NAME}.pid"
+
+## onvif_server writes ${PIDFILE} itself at startup (-P), so stop always
+## targets the real listener. PIDFILE must be defined before DAEMON_OPTS.
+DAEMON_OPTS="-P ${PIDFILE}"
+
+## WAN access: advertise the public/DDNS host and forwarded ports in the SOAP
+## responses (GetCapabilities/GetStreamUri/...). Clients outside the LAN get
+## rtsp://<ONVIF_WAN_HOST>:<ONVIF_RTSP_PORT>/live/ch00_0
+if [ -n "${ONVIF_WAN_HOST}" ] ; then
+    DAEMON_OPTS="${DAEMON_OPTS} --public-host=${ONVIF_WAN_HOST}"
+fi
+if [ -n "${ONVIF_HTTP_PORT}" ] && [ "${ONVIF_HTTP_PORT}" -gt 0 ] 2>/dev/null ; then
+    DAEMON_OPTS="${DAEMON_OPTS} --public-http-port=${ONVIF_HTTP_PORT}"
+fi
+if [ -n "${ONVIF_RTSP_PORT}" ] && [ "${ONVIF_RTSP_PORT}" -gt 0 ] 2>/dev/null ; then
+    DAEMON_OPTS="${DAEMON_OPTS} --public-rtsp-port=${ONVIF_RTSP_PORT}"
+fi
+
+check_daemon_bin "${DAEMON}" "${DESC}"
+
+case "$1" in
+  start)
+    ## Stale pidfile from a previous boot must not linger: -P overwrites it,
+    ## but stop_daemon would choke on a dead pid in between.
+    [ -f "${PIDFILE}" ] && rm -f "${PIDFILE}"
+    echo "*** Starting ${NAME} ${DESC}... "
+    nohup "${DAEMON}" ${DAEMON_OPTS} </dev/null >>/var/log/${NAME}.log 2>&1 &
+    ;;
+  stop)
+    stop_daemon
+    ;;
+  restart|reload)
+    "$0" stop
+    sleep 1
+    "$0" start
+    ;;
+  status)
+    status_daemon
+    ;;
+  *)
+    echo "Usage: $0 {start|stop|restart|status}"
+    exit 1
+    ;;
+esac
+
+exit $?

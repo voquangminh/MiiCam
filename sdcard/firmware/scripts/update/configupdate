@@ -248,6 +248,25 @@ RTSP_OSD_SIZE="${RTSP_OSD_SIZE:-""}"
 
 
 ############################################################
+## ONVIF Settings                                         ##
+############################################################
+
+## Start ONVIF server at system boot (0/1); SOAP on :8899, WS-Discovery UDP :3702
+ENABLE_ONVIF="${ENABLE_ONVIF:-0}"
+
+## Access via WAN/DDNS: host advertised in GetCapabilities/GetStreamUri/etc.
+## Leave empty to advertise the LAN IP (auto-detected).
+## Use the public IP or DDNS hostname the ONVIF client will reach you on.
+ONVIF_WAN_HOST="${ONVIF_WAN_HOST:-""}"
+
+## Public (forwarded) ports as seen from the WAN side.
+## ONVIF_HTTP_PORT = the router port that maps to camera:8899
+## ONVIF_RTSP_PORT = the router port that maps to camera:554 (rtspd)
+ONVIF_HTTP_PORT="${ONVIF_HTTP_PORT:-8899}"
+ONVIF_RTSP_PORT="${ONVIF_RTSP_PORT:-554}"
+
+
+############################################################
 ## Motion Settings                                        ##
 ############################################################
 
