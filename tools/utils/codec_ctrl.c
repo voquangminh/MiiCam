@@ -24,6 +24,16 @@ static void print_usage(void)
         "  mode <1-4>          Change bitrate mode: 1=CBR 2=VBR 3=ECBR 4=EVBR (requires rtspd)\n"
         "  fps <num>           Change framerate 1-15, this camera's max (requires rtspd)\n"
         "  gop <num>           Change GOP length (requires rtspd)\n"
+        "  resolution WxH      Change encoder resolution, e.g. 640x360, 1280x720 (requires rtspd restart)\n"
+        "  bitrate_max <kbps>  Change max bitrate ceiling (requires rtspd)\n"
+        "  flip h|v|hv|0       Flip capture horizontally/vertically (requires rtspd)\n"
+        "  rotation <0|90|180|270> Rotate capture (requires rtspd)\n"
+        "  crop WxH+X+Y|0      Crop capture source rect, or 0 to disable (requires rtspd)\n"
+        "  h264profile <val>   H264 profile: 0/66/77/100 (requires rtspd)\n"
+        "  h264level <val>     H264 level: 0/31/40/41/50/51 (requires rtspd)\n"
+        "  vui_cs <0|1>        VUI colorspace matrix (requires rtspd)\n"
+        "  vui_fr <0|1>        VUI full-range flag (requires rtspd)\n"
+        "  watermark <hex|0>   H264 watermark pattern e.g. 0x12345678, 0 to disable (requires rtspd)\n"
         "  zoom                Show zoom/pan/tilt from shared state\n"
         "\n"
         "Examples:\n"
@@ -32,6 +42,8 @@ static void print_usage(void)
         "  codec_ctrl bitrate 4096      # change to 4096 kbps\n"
         "  codec_ctrl mode 4            # change to EVBR\n"
         "  codec_ctrl fps 15            # change to 15 fps (max)\n"
+        "  codec_ctrl resolution 640x360  # change resolution\n"
+        "  codec_ctrl flip h            # flip horizontally\n"
     );
     exit(EXIT_FAILURE);
 }
@@ -303,6 +315,74 @@ int main(int argc, char *argv[])
         if (argi + 1 >= argc) { fprintf(stderr, "Usage: codec_ctrl gop <num>\n"); return 1; }
         char cmd[64];
         snprintf(cmd, sizeof(cmd), "gop %s", argv[argi + 1]);
+        return write_ctrl(cmd);
+    }
+    else if (strcmp(argv[argi], "resolution") == 0) {
+        if (argi + 1 >= argc) { fprintf(stderr, "Usage: codec_ctrl resolution WxH\n"); return 1; }
+        char cmd[64];
+        snprintf(cmd, sizeof(cmd), "resolution %s", argv[argi + 1]);
+        return write_ctrl(cmd);
+    }
+    else if (strcmp(argv[argi], "bitrate_max") == 0) {
+        if (argi + 1 >= argc) { fprintf(stderr, "Usage: codec_ctrl bitrate_max <kbps>\n"); return 1; }
+        int v = atoi(argv[argi + 1]);
+        if (v < 1 || v > 16384) { fprintf(stderr, "bitrate_max must be 1-16384\n"); return 1; }
+        char cmd[64];
+        snprintf(cmd, sizeof(cmd), "bitrate_max %d", v);
+        return write_ctrl(cmd);
+    }
+    else if (strcmp(argv[argi], "flip") == 0) {
+        if (argi + 1 >= argc) { fprintf(stderr, "Usage: codec_ctrl flip h|v|hv|0\n"); return 1; }
+        const char *v = argv[argi + 1];
+        if (strcmp(v, "h") && strcmp(v, "v") && strcmp(v, "hv") && strcmp(v, "0")) {
+            fprintf(stderr, "flip must be h, v, hv, or 0\n"); return 1;
+        }
+        char cmd[64];
+        snprintf(cmd, sizeof(cmd), "flip %s", v);
+        return write_ctrl(cmd);
+    }
+    else if (strcmp(argv[argi], "rotation") == 0) {
+        if (argi + 1 >= argc) { fprintf(stderr, "Usage: codec_ctrl rotation <0|90|180|270>\n"); return 1; }
+        int v = atoi(argv[argi + 1]);
+        if (v != 0 && v != 90 && v != 180 && v != 270) { fprintf(stderr, "rotation must be 0/90/180/270\n"); return 1; }
+        char cmd[64];
+        snprintf(cmd, sizeof(cmd), "rotation %d", v);
+        return write_ctrl(cmd);
+    }
+    else if (strcmp(argv[argi], "crop") == 0) {
+        if (argi + 1 >= argc) { fprintf(stderr, "Usage: codec_ctrl crop WxH+X+Y|0\n"); return 1; }
+        char cmd[64];
+        snprintf(cmd, sizeof(cmd), "crop %s", argv[argi + 1]);
+        return write_ctrl(cmd);
+    }
+    else if (strcmp(argv[argi], "h264profile") == 0) {
+        if (argi + 1 >= argc) { fprintf(stderr, "Usage: codec_ctrl h264profile <0|66|77|100>\n"); return 1; }
+        char cmd[64];
+        snprintf(cmd, sizeof(cmd), "h264profile %s", argv[argi + 1]);
+        return write_ctrl(cmd);
+    }
+    else if (strcmp(argv[argi], "h264level") == 0) {
+        if (argi + 1 >= argc) { fprintf(stderr, "Usage: codec_ctrl h264level <0|31|40|41|50|51>\n"); return 1; }
+        char cmd[64];
+        snprintf(cmd, sizeof(cmd), "h264level %s", argv[argi + 1]);
+        return write_ctrl(cmd);
+    }
+    else if (strcmp(argv[argi], "vui_cs") == 0) {
+        if (argi + 1 >= argc) { fprintf(stderr, "Usage: codec_ctrl vui_cs <0|1>\n"); return 1; }
+        char cmd[64];
+        snprintf(cmd, sizeof(cmd), "vui_cs %s", argv[argi + 1]);
+        return write_ctrl(cmd);
+    }
+    else if (strcmp(argv[argi], "vui_fr") == 0) {
+        if (argi + 1 >= argc) { fprintf(stderr, "Usage: codec_ctrl vui_fr <0|1>\n"); return 1; }
+        char cmd[64];
+        snprintf(cmd, sizeof(cmd), "vui_fr %s", argv[argi + 1]);
+        return write_ctrl(cmd);
+    }
+    else if (strcmp(argv[argi], "watermark") == 0) {
+        if (argi + 1 >= argc) { fprintf(stderr, "Usage: codec_ctrl watermark <hex|0>\n"); return 1; }
+        char cmd[64];
+        snprintf(cmd, sizeof(cmd), "watermark %s", argv[argi + 1]);
         return write_ctrl(cmd);
     }
     else if (strcmp(argv[argi], "zoom") == 0) {

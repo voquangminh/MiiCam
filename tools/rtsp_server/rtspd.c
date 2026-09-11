@@ -345,6 +345,7 @@ struct CommandLineArguments {
     int h264_level;           /* 0=default, 31=3.1, 40=4.0, 41=4.1, 50=5.0, 51=5.1 */
     int h264_config;          /* 0=default, 1=perf, 2=light, 3=quality */
     int h264_coding;          /* 0=default, 1=CABAC, 2=CAVLC */
+    int h264_watermark;       /* 0 = disabled, else H264 watermark pattern */
 
     /* H264 VUI color info */
     int vui_colorspace;       /* matrix_coefficient: 0=undef, 1=bt709, 5=bt470bg, 6=smpte170 */
@@ -1889,9 +1890,9 @@ void gm_enc_init(int cap_ch, int cap_path, int rec_track, int enc_type, int mode
             h264e_attr.ratectl.bitrate_max   = cliArgs.bitrate_max;   // * Max bitrate ceiling (VBR upper bound)
             h264e_attr.b_frame_num           = 0;              // * B-frames per GOP (H.264 high profile)
             h264e_attr.enable_mv_data        = 0;              // * Disable H.264 motion data output
-            h264e_attr.ratectl.init_quant    = 28;
-            h264e_attr.ratectl.min_quant     = 26;
-            h264e_attr.ratectl.max_quant     = 51;
+            h264e_attr.ratectl.init_quant    = cliArgs.quant_init;
+            h264e_attr.ratectl.min_quant     = cliArgs.quant_min;
+            h264e_attr.ratectl.max_quant     = cliArgs.quant_max;
 
             /* Apply H264 profile/level/config/coding if configured */
             if (cliArgs.h264_profile)
@@ -1930,6 +1931,16 @@ void gm_enc_init(int cap_ch, int cap_path, int rec_track, int enc_type, int mode
                 vui_attr.sar_info.sar.sar_width = cliArgs.sar_width;
                 vui_attr.sar_info.sar.sar_height = cliArgs.sar_height;
                 gm_set_attr(param->enc[rec_track].obj, &vui_attr);
+            }
+
+            /* Apply H264 watermark pattern if configured (0 = off) */
+            if (cliArgs.h264_watermark) {
+                DECLARE_ATTR(watermark_attr, gm_h264_watermark_attr_t);
+                watermark_attr.pattern = cliArgs.h264_watermark;
+                if (gm_set_attr(param->enc[rec_track].obj, &watermark_attr) < 0)
+                    log_error("H264 watermark not supported by hardware, ignoring");
+                else
+                    log_info("H264 watermark pattern: 0x%X", cliArgs.h264_watermark);
             }
 
             /* Apply ROI encoding if configured */
@@ -2550,6 +2561,7 @@ static void apply_pending_args(void)
     int h264profile = -1, h264level = -1, vui_cs = -1, vui_fr = -1;
     int hflip = -1, vflip = -1, rotation = -1;
     int cropx = -1, cropy = -1, cropw = -1, croph = -1;
+    int watermark = -1;
     char buf[128];
 
     if (!f)
@@ -2564,6 +2576,7 @@ static void apply_pending_args(void)
         else if (sscanf(buf, "bitrate_max=%d", &bitrate_max) == 1) {}
         else if (sscanf(buf, "h264profile=%d", &h264profile) == 1) {}
         else if (sscanf(buf, "h264level=%d", &h264level) == 1) {}
+        else if (sscanf(buf, "watermark=%d", &watermark) == 1) {}
         else if (sscanf(buf, "vui_cs=%d", &vui_cs) == 1) {}
         else if (sscanf(buf, "vui_fr=%d", &vui_fr) == 1) {}
         else if (sscanf(buf, "hflip=%d", &hflip) == 1) {}
@@ -2597,6 +2610,13 @@ static void apply_pending_args(void)
     if (h264level >= 0 && h264level <= 100) {
         cliArgs.h264_level = h264level;
         log_info("Pending args: h264level=%d", h264level);
+    }
+    if (watermark > 0) {
+        cliArgs.h264_watermark = watermark;
+        log_info("Pending args: watermark=0x%X", watermark);
+    } else if (watermark == 0) {
+        cliArgs.h264_watermark = 0;
+        log_info("Pending args: watermark off");
     }
     if (vui_cs >= 0) { cliArgs.vui_colorspace = vui_cs; log_info("Pending args: vui_cs=%d", vui_cs); }
     if (vui_fr >= 0) { cliArgs.vui_full_range = vui_fr; log_info("Pending args: vui_fr=%d", vui_fr); }
@@ -2706,6 +2726,18 @@ static void *rtspd_ctrl_thread(void *arg)
                     if (val >= 0 && val <= 100) {
                         write_pending_arg("h264level", val);
                         log_info("Ctrl: h264level=%d pending restart", val);
+                        need_reboot = 1;
+                    }
+                }
+                else if (strncmp(buf, "watermark ", 10) == 0) {
+                    long val = strtol(buf + 10, NULL, 0);
+                    if (val > 0 && val <= 0x7FFFFFFFL) {
+                        write_pending_arg("watermark", (int)val);
+                        log_info("Ctrl: watermark=0x%lX pending restart", val);
+                        need_reboot = 1;
+                    } else if (val == 0) {
+                        write_pending_arg("watermark", 0);
+                        log_info("Ctrl: watermark off, pending restart");
                         need_reboot = 1;
                     }
                 }
@@ -3303,7 +3335,7 @@ char *get_local_ip(void)
 static void print_usage(void)
 {
     printf("Usage:\n");
-    printf(" ./rtspd [-bfwhmotzB] [-j|-4|-d|-s|-r] [-XARSCPq] [-FGVLEIUNZQY] [-TW]\n");
+    printf(" ./rtspd [-bfwhmotzB] [-j|-4|-d|-s|-r] [-XARSCPq] [-FGHVLEIUNZQY] [-TW]\n");
     printf(
         "\nAvailable options:\n"
         "-b [1-16384]   - Set the bitrate         (default: 8192)\n"
@@ -3338,6 +3370,7 @@ static void print_usage(void)
         "-p [prescale]  - Capture prescale reduce: WxH, or 0  (default: off)\n"
         "-V [profile]   - H264 profile: baseline|main|high|default  (default: default)\n"
         "-L [level]     - H264 level: 10-51 (e.g. 31=3.1, 40=4.0, 41=4.1)  (default: 0)\n"
+        "-H [hex]       - H264 watermark pattern, 0=off (e.g. 0x12345678)  (default: off)\n"
         "-E [coding]    - H264 entropy coding: cavlc|cabac|default  (default: default)\n"
         "-I [preset]    - H264 config: perf|light|quality|default  (default: default)\n"
         "-U [0|1]       - VUI full-range color (0=limited, 1=full)  (default: 1)\n"
@@ -3443,6 +3476,7 @@ int main(int argc, char *argv[])
     cliArgs.h264_level   = 0;
     cliArgs.h264_config  = 0;
     cliArgs.h264_coding  = 0;
+    cliArgs.h264_watermark = 0;
 
     /* VUI defaults */
     cliArgs.vui_colorspace = 1;  /* BT.709 */
@@ -3640,6 +3674,19 @@ int main(int argc, char *argv[])
                             cliArgs.rotation != 180 && cliArgs.rotation != 270) {
                             log_error("Rotation must be 0, 90, 180, or 270 (got %d)", cliArgs.rotation);
                             return 1;
+                        }
+                        break;
+
+                    /* --- H264 watermark pattern (gm_h264_watermark_attr_t) --- */
+                    case 'H':
+                        {
+                            const char *v = NULL;
+                            if (argv[i][2] != '\0') v = &argv[i][2];
+                            else if ((i + 1) < argc && argv[i + 1][0] != '-') v = argv[++i];
+                            if (v) {
+                                cliArgs.h264_watermark = (int) strtol(v, NULL, 0);
+                                log_info("H264 watermark pattern: 0x%X", cliArgs.h264_watermark);
+                            }
                         }
                         break;
 
