@@ -57,12 +57,13 @@ jobs:
           git config --global user.email "41898282+github-actions[bot]@://github.com"
           
           # 2. Ép Git nhận diện thư mục tools/bin/ bất chấp file .gitignore chặn
-          git add -f tools/bin/rtspd2MP
-          git add -f tools/bin/rtspd
-          git add -f tools/bin/rtspd-v5
-          git add -f tools/bin/rtspd2MP00
-          git add -f tools/bin/rtsp_audio_in
-          git add -f tools/bin/tracking
+          #    rtspd2MP/rtspd2MP00 không còn được build ở workflow này (rtspd2MP00 đã bị xóa) -> bỏ qua nếu thiếu
+          git add -f tools/bin/rtspd2MP 2>/dev/null || true
+          git add -f tools/bin/rtspd2MP00 2>/dev/null || true
+          git add -f tools/bin/rtspd || exit 1
+          git add -f tools/bin/rtspd-v5 || exit 1
+          git add -f tools/bin/rtsp_audio_in || exit 1
+          git add -f tools/bin/tracking || exit 1
           
           # 3. Ti?n h�nh commit file ch?y
           git commit -m "Automated build: update camera binary rtspd2MP/rtspd/rtspd-v5/rtsp_audio_in" || echo "No changes to commit"
