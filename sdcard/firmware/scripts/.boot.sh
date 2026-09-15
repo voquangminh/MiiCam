@@ -23,6 +23,51 @@ export LD_LIBRARY_PATH=/tmp/sd/firmware/lib
 echo "*** Executing /mnt/data/test/boot.sh... "
 
 ##################################################################################
+## Self-heal: restore missing bins if firmware/bin was clobbered                ##
+##################################################################################
+
+BINS_BACKUP="${SD_MOUNTDIR}/firmware/etc/_bins_all.tar.gz"
+BINS_BACKUP2="/mnt/data/_bins_backup/fw_bins_all.tar.gz"
+
+if [ -d "${SD_MOUNTDIR}/firmware/bin" ]
+then
+    MISSING=""
+    for b in rtspd dropbear lighttpd onvif_server tracking camera_adjust codec_ctrl codec_ctl motor_ctrl motor_control chuangmi_ctrl blue_led yellow_led ir_led ir_cut nightmode flipmode mirrormode auto_night_mode take_snapshot take_video rtspd-v5 rtsp_audio_in aac_play arm-php-cgi dropbearkey sftp-server
+    do
+        if [ ! -f "${SD_MOUNTDIR}/firmware/bin/${b}" ]
+        then
+            MISSING="${MISSING} ${b}"
+        fi
+    done
+
+    if [ -n "${MISSING}" ]
+    then
+        echo "*** firmware/bin incomplete (missing:${MISSING} )... "
+        RESTORED=0
+        for src in ${BINS_BACKUP} ${BINS_BACKUP2}
+        do
+            if [ -f "${src}" ]
+            then
+                echo "*** Restoring firmware/bin from ${src}... "
+                tar xzf "${src}" -C "${SD_MOUNTDIR}/firmware/bin" && chmod +x ${SD_MOUNTDIR}/firmware/bin/*
+                RESTORED=1
+                break
+            fi
+        done
+        if [ "${RESTORED}" -eq 0 ]
+        then
+            echo "*** WARNING: no usable binary backup found, services may fail!"
+        fi
+    fi
+
+    ## FT payload files belong in /tmp/sd/ft, keep them out of firmware/bin
+    for f in ft_boot.sh prikey.pem rsa_decrypt secret.bin
+    do
+        [ -f "${SD_MOUNTDIR}/firmware/bin/${f}" ] && rm -f "${SD_MOUNTDIR}/firmware/bin/${f}"
+    done
+fi
+
+##################################################################################
 ## Put our bins into PATH                                                       ##
 ##################################################################################
 
