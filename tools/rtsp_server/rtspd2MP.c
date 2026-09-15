@@ -14,6 +14,7 @@
 #include <string.h>
 #include <strings.h>
 #include <signal.h>
+#include <fcntl.h>
 #include <time.h>
 #include <unistd.h>
 #include <math.h>
@@ -73,6 +74,15 @@
 
 #define MOTION_ON_SCRIPT         "/tmp/sd/tools/bin/motion_on.sh"
 #define MOTION_OFF_SCRIPT        "/tmp/sd/tools/bin/motion_off.sh"
+
+#define TAMPER_ON_SCRIPT         "/tmp/sd/tools/bin/tamper_on.sh"
+#define TAMPER_OFF_SCRIPT        "/tmp/sd/tools/bin/tamper_off.sh"
+
+#define TRACKING_FILE            "/dev/shm/rtspd_tracking"
+#define TRACKING_STATE_FILE      "/dev/shm/rtspd_tracking_state"
+
+/* Highest framerate this camera's sensor/capture supports. */
+#define MAX_FPS                  30
 
 #define RTSPD_LOGFILE            "/tmp/sd/log/rtspd.log"
 
@@ -227,6 +237,10 @@ static int snapshot_create    = 0;
 static int video_create       = 0;
 static int motion_detected    = 0;
 
+/* Tamper detection state */
+static volatile int tamper_alarm = 0;
+static volatile int tamper_ready = 0;
+
 pthread_mutex_t stream_queue_mutex;
 av_t enc[CAP_CH_NUM];
 gm_system_t gm_system;
@@ -275,7 +289,12 @@ struct CommandLineArguments {
     int height;
     int width;
     int bitrate;
+    int bitrate_max;          /* max bitrate ceiling (VBR upper bound) */
     int bitrateMode;
+    int gop;                  /* I-frame interval in frames */
+    int quant_min;            /* rate control QP floor */
+    int quant_max;
+    int quant_init;
     int encoderType;
     int snapshot;
     int record;
@@ -298,6 +317,53 @@ struct CommandLineArguments {
      * Runtime ePTZ (gm_apply_attr) is not verified on all GM8136 builds and
      * must not be touched unless explicitly enabled, to avoid a crash. */
     int eptz;                 /* 1 = enable ePTZ digital zoom thread */
+
+    /* Capture configuration (gm_cap_attr_t / gm_cap_flip_t / gm_rotation_attr_t /
+     * gm_crop_attr_t) */
+    int h_flip;               /* capture horizontal flip */
+    int v_flip;               /* capture vertical flip */
+    int rotation;             /* capture rotation: 0, 90, 180, 270 */
+    int crop_enabled;
+    int crop_x, crop_y, crop_w, crop_h;
+    int prescale_w;           /* capture prescale reduce (0 = off) */
+    int prescale_h;
+
+    /* H264 encoder configuration */
+    int h264_profile;         /* gm_h264e_profile_t */
+    int h264_level;           /* gm_h264e_level_t */
+    int h264_config;          /* gm_h264e_config_t */
+    int h264_coding;          /* gm_h264e_coding_t */
+    int h264_watermark;       /* gm_h264_watermark_attr_t.pattern (0 = off) */
+
+    /* VUI */
+    int vui_colorspace;       /* matrix_coefficient (BT.709 = 1) */
+    int vui_full_range;       /* full range 0-255 */
+
+    /* SAR */
+    int sar_width;
+    int sar_height;
+
+    /* ROI */
+    int roi_enabled;
+    int roi_x, roi_y, roi_w, roi_h;
+
+    /* ROI QP (8 region) */
+    int roiqp_enabled;
+
+    /* Fractional framerate (fps_ratio) */
+    int fps_ratio_num;
+    int fps_ratio_den;
+
+    /* Tamper detection (gm_cap_tamper_t) */
+    int tamper_enabled;
+    int tamper_threshold;
+    int tamper_sensitive_b;
+    int tamper_sensitive_h;
+
+    /* Motion tracking (PTZ auto-follow) */
+    int tracking;
+    int tracking_deadzone;
+    int tracking_speed;
 } cliArgs;
 
 /* Read HOSTNAME from config file. Try common locations. */
@@ -656,6 +722,76 @@ err_ext:
     if (mdt_alg.mb_cell_en)
         free(mdt_alg.mb_cell_en);
     return ret;
+}
+
+/* Notification callback fired by gmlib when a tamper event is triggered. */
+static void rtspd_notify_tamper(gm_obj_type_t obj_type, int vch, gm_notify_t notify)
+{
+    (void) obj_type;
+    (void) vch;
+
+    if (notify == GM_NOTIFY_TAMPER_ALARM) {
+        if (tamper_alarm == 0) {
+            tamper_alarm = 1;
+            log_info("Tamper ON - camera is being tampered with");
+            system(TAMPER_ON_SCRIPT);
+        }
+    } else if (notify == GM_NOTIFY_TAMPER_ALARM_RELEASE) {
+        if (tamper_alarm == 1) {
+            tamper_alarm = 0;
+            log_info("Tamper OFF - camera tamper released");
+            system(TAMPER_OFF_SCRIPT);
+        }
+    }
+}
+
+/* Configure tamper detection and register the notification handlers.
+ * Must be called after gm_init()/gm_get_sysinfo() and after gm_apply(). */
+static int set_cap_tamper(int cap_vch)
+{
+    int ret;
+    gm_cap_tamper_t cap_tamper;
+
+    if (!cliArgs.tamper_enabled)
+        return 0;
+
+    memset(&cap_tamper, 0, sizeof(cap_tamper));
+    cap_tamper.tamper_sensitive_b  = cliArgs.tamper_sensitive_b;
+    cap_tamper.tamper_threshold    = cliArgs.tamper_threshold;
+    cap_tamper.tamper_sensitive_h  = cliArgs.tamper_sensitive_h;
+
+    ret = gm_set_cap_tamper(cap_vch, &cap_tamper);
+    if (ret < 0) {
+        log_error("Failed to run gm_set_cap_tamper (ret=%d), tamper detection disabled", ret);
+        return -1;
+    }
+
+    ret = gm_register_notify_handler(GM_NOTIFY_TAMPER_ALARM, rtspd_notify_tamper);
+    if (ret < 0) {
+        log_error("Failed to register tamper alarm handler (ret=%d)", ret);
+        return -1;
+    }
+    ret = gm_register_notify_handler(GM_NOTIFY_TAMPER_ALARM_RELEASE, rtspd_notify_tamper);
+    if (ret < 0) {
+        log_error("Failed to register tamper release handler (ret=%d)", ret);
+        return -1;
+    }
+
+    log_info("Tamper detection enabled: threshold=%d sensitive_b=%d sensitive_h=%d",
+             cliArgs.tamper_threshold, cliArgs.tamper_sensitive_b, cliArgs.tamper_sensitive_h);
+    tamper_ready = 1;
+    return 0;
+}
+
+static void unset_cap_tamper(void)
+{
+    if (!tamper_ready)
+        return;
+    gm_register_notify_handler(GM_NOTIFY_TAMPER_ALARM, NULL);
+    gm_register_notify_handler(GM_NOTIFY_TAMPER_ALARM_RELEASE, NULL);
+    tamper_ready = 0;
+    /* Restore the alarm state file / flag so a later restart can re-trigger */
+    tamper_alarm = 0;
 }
 
 int init_snapshot(void)
@@ -1321,8 +1457,19 @@ static int cmd_cb(char *name, int sno, int cmd, void *p)
             if ( strncmp(name, "live/", 5) == 0 ) {
                 if ((pb = find_file_sr(name, sno)) == NULL)
                     ERR_GOTO(-1, cmd_cb_err);
-                if (pb->video.qno >= 0)
+                if (pb->video.qno >= 0) {
+                    /* Request a keyframe so a new client starts a stream
+                     * immediately instead of waiting for the next I-frame. */
+                    int need_key = (pb->play == 0);
                     pb->play = 1;
+                    if (need_key) {
+                        gm_enc_t *param = &enc_param[pb->video.cap_ch][pb->video.cap_path];
+                        if (param->bindfd[pb->video.rec_track]) {
+                            if (gm_request_keyframe(param->bindfd[pb->video.rec_track]) < 0)
+                                log_error("gm_request_keyframe failed on %s", name);
+                        }
+                    }
+                }
             }
             ret = 0;
             break;
@@ -1461,8 +1608,8 @@ static void *motion_thread(void *arg)
             }
             // * Motion ON
             else if (mdt_result[ch].result == MOTION_DETECTED) {
+                gettimeofday(&last_motion, NULL);
                 if (motion_detected == 0) {
-                    gettimeofday(&last_motion, NULL);
                     motion_detected = 1;
                     if (cliArgs.snapshot == 1)
                         snapshot_create = 1;
@@ -1470,6 +1617,35 @@ static void *motion_thread(void *arg)
                         video_create = 1;
                     log_info("Motion ON - executing motion on script");
                     system(MOTION_ON_SCRIPT);
+                }
+                /* Write motion centroid for tracking daemon */
+                if (cliArgs.tracking) {
+                    int mb_w = mdt_param[0].mdt_alg.mb_w_num;
+                    int mb_h = mdt_param[0].mdt_alg.mb_h_num;
+                    if (mb_w > 0 && mb_h > 0 && active[0].active_flag) {
+                        long sum_col = 0, sum_row = 0;
+                        int count = 0;
+                        int r, c;
+                        for (r = 0; r < mb_h; r++) {
+                            for (c = 0; c < mb_w; c++) {
+                                if (active[0].active_flag[r * mb_w + c] == 0) {
+                                    sum_col += c;
+                                    sum_row += r;
+                                    count++;
+                                }
+                            }
+                        }
+                        if (count > 0) {
+                            int center_col = sum_col / count;
+                            int center_row = sum_row / count;
+                            FILE *tf = fopen(TRACKING_FILE, "w");
+                            if (tf) {
+                                fprintf(tf, "%d %d %d %d %d\n",
+                                        center_col, center_row, mb_w, mb_h, count);
+                                fclose(tf);
+                            }
+                        }
+                    }
                 }
             }
             // * Motion OFF
@@ -1486,6 +1662,10 @@ static void *motion_thread(void *arg)
                     }
                     log_info("Motion OFF - executing motion off script");
                     system(MOTION_OFF_SCRIPT);
+                    /* Clear tracking file */
+                    if (cliArgs.tracking) {
+                        remove(TRACKING_FILE);
+                    }
                 }
             }
             else {
@@ -1616,7 +1796,13 @@ void gm_enc_init(int cap_ch, int cap_path, int rec_track, int enc_type, int mode
 
         // * GM813x capture path 0(liveview), 1(substream), 2(substream), 3(mainstream)
         cap_attr.path = cap_path;
-        cap_attr.enable_mv_data = 0;
+        cap_attr.enable_mv_data = 1;
+        cap_attr.dma_path = 0;                 // * DMA path 0
+        if (cliArgs.prescale_w > 0 && cliArgs.prescale_h > 0) {
+            cap_attr.prescale_reduce_width  = cliArgs.prescale_w;
+            cap_attr.prescale_reduce_height = cliArgs.prescale_h;
+            log_info("Capture prescale reduce: %dx%d", cliArgs.prescale_w, cliArgs.prescale_h);
+        }
         gm_set_attr(param->cap.obj, &cap_attr);                // * Set capture attribute
 
         // * Enable 3dnr if resolution > capture dim / 2
@@ -1625,6 +1811,39 @@ void gm_enc_init(int cap_ch, int cap_path, int rec_track, int enc_type, int mode
             dnr_attr.enabled = 1;
             gm_set_attr(param->cap.obj, &dnr_attr);
         }
+
+        /* Apply capture flip if configured */
+        if (cliArgs.h_flip || cliArgs.v_flip) {
+            gm_cap_flip_t flip_attr;
+            memset(&flip_attr, 0, sizeof(flip_attr));
+            flip_attr.h_flip_enabled = cliArgs.h_flip;
+            flip_attr.v_flip_enabled = cliArgs.v_flip;
+            gm_set_cap_flip(cap_ch, &flip_attr);
+            log_info("Capture flip: h=%d v=%d", cliArgs.h_flip, cliArgs.v_flip);
+        }
+
+        /* Apply capture rotation if configured */
+        if (cliArgs.rotation != 0) {
+            DECLARE_ATTR(rotation_attr, gm_rotation_attr_t);
+            rotation_attr.enabled = 1;
+            rotation_attr.clockwise = cliArgs.rotation;
+            gm_set_attr(param->cap.obj, &rotation_attr);
+            log_info("Capture rotation: %d degrees", cliArgs.rotation);
+        }
+
+        /* Apply capture crop if configured */
+        if (cliArgs.crop_enabled) {
+            DECLARE_ATTR(crop_attr, gm_crop_attr_t);
+            crop_attr.enabled = 1;
+            crop_attr.src_crop_rect.x      = cliArgs.crop_x;
+            crop_attr.src_crop_rect.y      = cliArgs.crop_y;
+            crop_attr.src_crop_rect.width  = cliArgs.crop_w;
+            crop_attr.src_crop_rect.height = cliArgs.crop_h;
+            gm_set_attr(param->cap.obj, &crop_attr);
+            log_info("Capture crop: %dx%d+%d+%d", cliArgs.crop_w, cliArgs.crop_h,
+                     cliArgs.crop_x, cliArgs.crop_y);
+        }
+
         memcpy(&param->cap.cap_attr, &cap_attr, sizeof(gm_cap_attr_t));
         memcpy(&param->cap.dnr_attr, &dnr_attr, sizeof(gm_3dnr_attr_t));
     }
@@ -1637,14 +1856,31 @@ void gm_enc_init(int cap_ch, int cap_path, int rec_track, int enc_type, int mode
             h264e_attr.dim.height            = height;
             h264e_attr.frame_info.framerate  = framerate;
             h264e_attr.ratectl.mode          = mode;
-            h264e_attr.ratectl.gop           = 20;			   // I-frame per fps = second, default is 60
+            h264e_attr.ratectl.gop           = cliArgs.gop;	   // * I frame per second
             h264e_attr.ratectl.bitrate       = bitrate;
-            h264e_attr.ratectl.bitrate_max   = bitrate;
+            h264e_attr.ratectl.bitrate_max   = cliArgs.bitrate_max;   // * Max bitrate ceiling (VBR upper bound)
             h264e_attr.b_frame_num           = 0;              // * B-frames per GOP (H.264 high profile)
             h264e_attr.enable_mv_data        = 0;              // * Disable H.264 motion data output
-            h264e_attr.ratectl.init_quant    = 25;
-            h264e_attr.ratectl.min_quant     = 20;
-            h264e_attr.ratectl.max_quant     = 51;
+            h264e_attr.ratectl.init_quant    = cliArgs.quant_init;
+            h264e_attr.ratectl.min_quant     = cliArgs.quant_min;
+            h264e_attr.ratectl.max_quant     = cliArgs.quant_max;
+
+            /* Apply H264 profile/level/config/coding if configured */
+            if (cliArgs.h264_profile)
+                h264e_attr.profile_setting.profile = (gm_h264e_profile_t) cliArgs.h264_profile;
+            if (cliArgs.h264_level)
+                h264e_attr.profile_setting.level = (gm_h264e_level_t) cliArgs.h264_level;
+            if (cliArgs.h264_config)
+                h264e_attr.profile_setting.config = (gm_h264e_config_t) cliArgs.h264_config;
+            if (cliArgs.h264_coding)
+                h264e_attr.profile_setting.coding = (gm_h264e_coding_t) cliArgs.h264_coding;
+
+            /* Apply fractional framerate if configured */
+            if (cliArgs.fps_ratio_num > 0 && cliArgs.fps_ratio_den > 0) {
+                h264e_attr.frame_info.fps_ratio.numerator   = cliArgs.fps_ratio_num;
+                h264e_attr.frame_info.fps_ratio.denominator = cliArgs.fps_ratio_den;
+            }
+
             gm_set_attr(param->enc[rec_track].obj, &h264e_attr);
 /* H264 advanced */
 			DECLARE_ATTR(h264_adv, gm_h264_advanced_attr_t);
@@ -1652,6 +1888,55 @@ void gm_enc_init(int cap_ch, int cap_path, int rec_track, int enc_type, int mode
 			h264_adv.field_coding = 0;
 			h264_adv.gray_scale = 0;
 			gm_set_attr(param->enc[rec_track].obj, &h264_adv);
+
+            /* Always apply VUI color info and SAR */
+            {
+                DECLARE_ATTR(vui_attr, gm_h264_vui_attr_t);
+                vui_attr.param_info.param.video_format = 5;   /* component */
+                vui_attr.param_info.param.colour_primaries = 1;   /* BT.709 */
+                vui_attr.param_info.param.transfer_characteristics = 1;   /* BT.709 */
+                vui_attr.param_info.param.matrix_coefficient = (char) cliArgs.vui_colorspace;
+                vui_attr.param_info.param.full_range = cliArgs.vui_full_range & 1;
+                vui_attr.param_info.param.timing_info_present_flag = 0;
+                vui_attr.sar_info.sar.sar_width = cliArgs.sar_width;
+                vui_attr.sar_info.sar.sar_height = cliArgs.sar_height;
+                gm_set_attr(param->enc[rec_track].obj, &vui_attr);
+            }
+
+            /* Apply H264 watermark pattern if configured (0 = off) */
+            if (cliArgs.h264_watermark) {
+                DECLARE_ATTR(watermark_attr, gm_h264_watermark_attr_t);
+                watermark_attr.pattern = cliArgs.h264_watermark;
+                if (gm_set_attr(param->enc[rec_track].obj, &watermark_attr) < 0)
+                    log_error("H264 watermark not supported by hardware, ignoring");
+                else
+                    log_info("H264 watermark pattern: 0x%X", cliArgs.h264_watermark);
+            }
+
+            /* Apply ROI encoding if configured */
+            if (cliArgs.roi_enabled) {
+                DECLARE_ATTR(roi_attr, gm_enc_roi_attr_t);
+                roi_attr.enabled = 1;
+                roi_attr.rect.x = cliArgs.roi_x;
+                roi_attr.rect.y = cliArgs.roi_y;
+                roi_attr.rect.width = cliArgs.roi_w;
+                roi_attr.rect.height = cliArgs.roi_h;
+                gm_set_attr(param->enc[rec_track].obj, &roi_attr);
+            }
+
+            /* Apply ROI QP 8-region mode if configured */
+            if (cliArgs.roiqp_enabled) {
+                DECLARE_ATTR(roiqp_attr, gm_h264_roiqp_attr_t);
+                roiqp_attr.enabled = 1;
+                /* Default: center 50% region gets lower QP (better quality) */
+                memset(roiqp_attr.rect, 0, sizeof(roiqp_attr.rect));
+                roiqp_attr.rect[0].x = width / 4;
+                roiqp_attr.rect[0].y = height / 4;
+                roiqp_attr.rect[0].width = width / 2;
+                roiqp_attr.rect[0].height = height / 2;
+                gm_set_attr(param->enc[rec_track].obj, &roiqp_attr);
+            }
+
             memcpy(&param->enc[rec_track].codec.h264e_attr, &h264e_attr, sizeof(gm_h264e_attr_t));
             break;
         case ENC_TYPE_MPEG4:
@@ -1860,6 +2145,12 @@ void gm_graph_init(void)
     gm_enc_init(0, 0, 0, cliArgs.encoderType, cliArgs.bitrateMode, cliArgs.framerate, cliArgs.bitrate, cliArgs.width, cliArgs.height);
     gm_apply(enc_groupfd); 	// * Activate settings
 	audio_init();			// * Activate audio
+
+    /* Tamper detection must be configured after the capture graph is active */
+    if (cliArgs.tamper_enabled) {
+        if (set_cap_tamper(0) < 0)
+            log_error("Tamper detection setup failed");
+    }
 }
 
 void gm_graph_release(void)
@@ -1881,6 +2172,8 @@ void gm_graph_release(void)
     gm_apply(enc_groupfd);
     if (audio_bindfd)
         gm_apply(enc_audio_groupfd);
+
+    unset_cap_tamper();
 
     for (cap_ch = 0; cap_ch < CAP_CH_NUM; cap_ch++) {
         for (cap_path = 0; cap_path < CAP_PATH_NUM; cap_path++) {
@@ -2047,6 +2340,447 @@ static void *rtspd_zoom_thread(void *arg)
             last_tilt = new_tilt;
         }
         usleep(20000);   // * 50 Hz zoom update
+    }
+    return NULL;
+}
+
+/* Ctrl thread: polls /tmp/rtspd.ctrl for commands from codec_ctrl.
+ * keyframe is applied live; bitrate/mode/fps/gop are staged in
+ * /tmp/rtspd_pending_args and applied via a self-restart, because the
+ * GM driver ignores gm_set_attr() changes after the encoder is running. */
+#define RTSPD_CTRL_FILE    "/tmp/rtspd.ctrl"
+#define RTSPD_ARGS_FILE    "/tmp/rtspd_pending_args"
+#define RTSPD_ARGS_FILE_TMP "/tmp/rtspd_pending_args.tmp"
+#define RTSPD_RESTART_FILE "/tmp/rtspd_restart_oldpid"
+#define RTSPD_PIDFILE      "/var/run/rtspd.pid"
+static pthread_t ctrl_thread_id = 0;
+
+/* Keep /var/run/rtspd.pid in sync with the real daemon pid. The init script
+ * writes it at boot via start-stop-daemon --make-pidfile, but a ctrl-triggered
+ * self-restart (rtspd_reboot) re-execs without going through start-stop-daemon,
+ * leaving the pidfile pointing at the dead original pid. Then stop kills the
+ * wrong pid and the live instance is orphaned (PPid 1) -> repeated ctrl
+ * restarts accumulate parallel encoder processes. Rewriting the pidfile on
+ * every startup keeps stop/restart/status accurate. */
+static void write_pidfile(void)
+{
+    FILE *f = fopen(RTSPD_PIDFILE, "w");
+    if (f) {
+        fprintf(f, "%d\n", (int)getpid());
+        fclose(f);
+    }
+}
+
+static int  saved_argc = 0;
+static char *saved_argv[64];
+
+/* Merge key=val into RTSPD_ARGS_FILE, preserving other keys. */
+static void write_pending_arg(const char *key, int val)
+{
+    char line[32], buf[128];
+    FILE *af, *tmp;
+    int replaced = 0;
+
+    snprintf(line, sizeof(line), "%s=%d\n", key, val);
+    tmp = fopen(RTSPD_ARGS_FILE_TMP, "w");
+    if (!tmp)
+        return;
+    af = fopen(RTSPD_ARGS_FILE, "r");
+    if (af) {
+        while (fgets(buf, sizeof(buf), af)) {
+            size_t klen = strlen(key);
+            if (strncmp(buf, key, klen) == 0 && buf[klen] == '=') {
+                fputs(line, tmp);
+                replaced = 1;
+            } else {
+                fputs(buf, tmp);
+            }
+        }
+        fclose(af);
+    }
+    if (!replaced)
+        fputs(line, tmp);
+    fclose(tmp);
+    rename(RTSPD_ARGS_FILE_TMP, RTSPD_ARGS_FILE);
+}
+
+/* Fork a detached child that re-execs the same binary with the same argv.
+ * The child must only use async-signal-safe calls (no fopen/opendir/malloc)
+ * because other threads may hold internal locks at fork time, which would
+ * deadlock the child. The parent then kills itself so the encoder is torn
+ * down cleanly; the new process picks up the restart marker and waits for
+ * this one to exit before re-initializing. */
+static void rtspd_reboot(void)
+{
+    pid_t parent = getpid();
+    FILE *mf = fopen(RTSPD_RESTART_FILE, "w");
+    if (mf) {
+        fprintf(mf, "%d", (int)parent);
+        fclose(mf);
+    }
+
+    pid_t pid = fork();
+    if (pid < 0) {
+        log_error("Ctrl: fork failed, cannot restart (%s)", strerror(errno));
+        remove(RTSPD_RESTART_FILE);
+        return;
+    }
+    if (pid > 0) {
+        log_info("Ctrl: restarting rtspd...");
+        kill(parent, SIGTERM);
+        return;
+    }
+
+    /* child: async-signal-safe only */
+    setsid();
+    {
+        int fd = open("/dev/null", O_RDWR);
+        if (fd >= 0) {
+            dup2(fd, 0);
+            dup2(fd, 1);
+            dup2(fd, 2);
+            if (fd > 2)
+                close(fd);
+        }
+        char exe[256];
+        int len = readlink("/proc/self/exe", exe, sizeof(exe) - 1);
+        if (len > 0) {
+            exe[len] = '\0';
+            execv(exe, saved_argv);
+        }
+    }
+    _exit(127);
+}
+
+/* True if /proc/<pid>/cmdline mentions rtspd (guards against PID reuse
+ * making us wait on an unrelated process). */
+static int pid_is_rtspd(int pid)
+{
+    char path[64], buf[64];
+    int fd, n;
+
+    snprintf(path, sizeof(path), "/proc/%d/cmdline", pid);
+    fd = open(path, O_RDONLY);
+    if (fd < 0)
+        return 0;
+    n = read(fd, buf, sizeof(buf) - 1);
+    close(fd);
+    if (n <= 0)
+        return 0;
+    buf[n] = '\0';
+    return strstr(buf, "rtspd") != NULL;
+}
+
+/* Called at startup: if a restart marker exists we were relaunched by
+ * rtspd_reboot(). Wait for the old process to exit (so the encoder device
+ * is released), then drop the inherited device fds before re-initializing.
+ * Returns 1 if this is a ctrl-initiated restart (caller then applies the
+ * persistent codec overrides), 0 for a fresh/boot start. */
+static int restart_handoff(void)
+{
+    FILE *f = fopen(RTSPD_RESTART_FILE, "r");
+    int oldpid = 0, valid = 0;
+
+    if (!f)
+        return 0;
+    if (fscanf(f, "%d", &oldpid) != 1)
+        oldpid = 0;
+    fclose(f);
+
+    if (oldpid > 0 && pid_is_rtspd(oldpid)) {
+        int i;
+        valid = 1;
+        log_info("Restart: inherited from old rtspd (pid %d), waiting for it to exit", oldpid);
+        for (i = 0; i < 100; i++) {
+            usleep(100000);
+            if (kill(oldpid, 0) < 0 && errno == ESRCH)
+                break;
+        }
+    } else if (oldpid > 0) {
+        log_info("Restart: ignoring stale marker (pid %d not rtspd)", oldpid);
+    }
+
+    if (valid) {
+        int fds[128], n = 0, i;
+        int logfd = logfile ? fileno(logfile) : -1;
+        DIR *d = opendir("/proc/self/fd");
+        if (d) {
+            struct dirent *de;
+            while (n < 128 && (de = readdir(d)) != NULL) {
+                int fdnum = atoi(de->d_name);
+                if (fdnum > 2 && fdnum != logfd)
+                    fds[n++] = fdnum;
+            }
+            closedir(d);
+        }
+        for (i = 0; i < n; i++)
+            close(fds[i]);
+        log_info("Restart: handoff complete");
+    }
+
+    remove(RTSPD_RESTART_FILE);
+    return valid;
+}
+
+/* Apply key=value overrides stored by the ctrl thread (from codec_ctrl)
+ * into cliArgs. Called at startup so changes survive a restart. The file is
+ * NOT deleted: it is the persistent desired config, so consecutive changes
+ * (e.g. bitrate then mode) stack instead of losing earlier values. */
+static void apply_pending_args(void)
+{
+    FILE *f = fopen(RTSPD_ARGS_FILE, "r");
+    int bitrate = -1, mode = -1, fps = -1, gop = -1;
+    int width = -1, height = -1, bitrate_max = -1;
+    int h264profile = -1, h264level = -1, vui_cs = -1, vui_fr = -1;
+    int hflip = -1, vflip = -1, rotation = -1;
+    int cropx = -1, cropy = -1, cropw = -1, croph = -1;
+    int watermark = -1;
+    char buf[128];
+
+    if (!f)
+        return;
+    while (fgets(buf, sizeof(buf), f)) {
+        if (sscanf(buf, "bitrate=%d", &bitrate) == 1) {}
+        else if (sscanf(buf, "mode=%d", &mode) == 1) {}
+        else if (sscanf(buf, "fps=%d", &fps) == 1) {}
+        else if (sscanf(buf, "gop=%d", &gop) == 1) {}
+        else if (sscanf(buf, "width=%d", &width) == 1) {}
+        else if (sscanf(buf, "height=%d", &height) == 1) {}
+        else if (sscanf(buf, "bitrate_max=%d", &bitrate_max) == 1) {}
+        else if (sscanf(buf, "h264profile=%d", &h264profile) == 1) {}
+        else if (sscanf(buf, "h264level=%d", &h264level) == 1) {}
+        else if (sscanf(buf, "watermark=%d", &watermark) == 1) {}
+        else if (sscanf(buf, "vui_cs=%d", &vui_cs) == 1) {}
+        else if (sscanf(buf, "vui_fr=%d", &vui_fr) == 1) {}
+        else if (sscanf(buf, "hflip=%d", &hflip) == 1) {}
+        else if (sscanf(buf, "vflip=%d", &vflip) == 1) {}
+        else if (sscanf(buf, "rotation=%d", &rotation) == 1) {}
+        else if (sscanf(buf, "cropx=%d", &cropx) == 1) {}
+        else if (sscanf(buf, "cropy=%d", &cropy) == 1) {}
+        else if (sscanf(buf, "cropw=%d", &cropw) == 1) {}
+        else if (sscanf(buf, "croph=%d", &croph) == 1) {}
+    }
+    fclose(f);
+
+    if (bitrate > 0 && bitrate <= 16384) { cliArgs.bitrate = bitrate; log_info("Pending args: bitrate=%d", bitrate); }
+    if (mode >= 1 && mode <= 4)           { cliArgs.bitrateMode = mode; log_info("Pending args: mode=%d", mode); }
+    if (fps > 0 && fps <= MAX_FPS)        { cliArgs.framerate = fps;   log_info("Pending args: fps=%d", fps); }
+    else if (fps > MAX_FPS) {
+        log_error("Pending fps=%d exceeds this camera's max (%d), using %d", fps, MAX_FPS, MAX_FPS);
+        cliArgs.framerate = MAX_FPS;
+    }
+    if (gop > 0 && gop <= 120)            { cliArgs.gop = gop;         log_info("Pending args: gop=%d", gop); }
+    if (width > 0 && width <= 1920)       { cliArgs.width = width;     log_info("Pending args: width=%d", width); }
+    if (height > 0 && height <= 1080)     { cliArgs.height = height;   log_info("Pending args: height=%d", height); }
+    if (bitrate_max > 0 && bitrate_max <= 16384) {
+        cliArgs.bitrate_max = bitrate_max;
+        log_info("Pending args: bitrate_max=%d", bitrate_max);
+    }
+    if (h264profile >= 0 && h264profile <= 100) {
+        cliArgs.h264_profile = h264profile;
+        log_info("Pending args: h264profile=%d", h264profile);
+    }
+    if (h264level >= 0 && h264level <= 100) {
+        cliArgs.h264_level = h264level;
+        log_info("Pending args: h264level=%d", h264level);
+    }
+    if (watermark > 0) {
+        cliArgs.h264_watermark = watermark;
+        log_info("Pending args: watermark=0x%X", watermark);
+    } else if (watermark == 0) {
+        cliArgs.h264_watermark = 0;
+        log_info("Pending args: watermark off");
+    }
+    if (vui_cs >= 0) { cliArgs.vui_colorspace = vui_cs; log_info("Pending args: vui_cs=%d", vui_cs); }
+    if (vui_fr >= 0) { cliArgs.vui_full_range = vui_fr; log_info("Pending args: vui_fr=%d", vui_fr); }
+    if (hflip >= 0)  { cliArgs.h_flip = hflip; log_info("Pending args: hflip=%d", hflip); }
+    if (vflip >= 0)  { cliArgs.v_flip = vflip; log_info("Pending args: vflip=%d", vflip); }
+    if (rotation >= 0) {
+        cliArgs.rotation = rotation;
+        log_info("Pending args: rotation=%d", rotation);
+    }
+    if (cropw > 0 && croph > 0) {
+        cliArgs.crop_enabled = 1;
+        cliArgs.crop_w = cropw;
+        cliArgs.crop_h = croph;
+        if (cropx >= 0) cliArgs.crop_x = cropx;
+        if (cropy >= 0) cliArgs.crop_y = cropy;
+        log_info("Pending args: crop=%dx%d+%d+%d", cropw, croph, cliArgs.crop_x, cliArgs.crop_y);
+    } else if (cropw == 0) {
+        cliArgs.crop_enabled = 0;
+    }
+}
+
+static void *rtspd_ctrl_thread(void *arg)
+{
+    char buf[128];
+    int need_reboot = 0;
+    (void)arg;
+
+    while (rtspd_sysinit) {
+        FILE *f = fopen(RTSPD_CTRL_FILE, "r");
+        if (f) {
+            if (fgets(buf, sizeof(buf), f)) {
+                buf[strcspn(buf, "\r\n")] = '\0';
+                need_reboot = 0;
+
+                if (strcmp(buf, "keyframe") == 0) {
+                    /* Prefer the live encoder bindfd; fall back to the global
+                     * (which is only set by the ePTZ apply path). */
+                    gm_enc_t *param = &enc_param[0][0];
+                    void *kf = (param->bindfd[0]) ? param->bindfd[0] : bindfd;
+                    if (kf) {
+                        int ret = gm_request_keyframe(kf);
+                        log_info("Ctrl: keyframe requested (ret=%d)", ret);
+                    }
+                }
+                else if (strcmp(buf, "restart") == 0) {
+                    /* Apply whatever pending args are already staged. */
+                    log_info("Ctrl: restart requested");
+                    need_reboot = 1;
+                }
+                else if (strncmp(buf, "bitrate ", 8) == 0) {
+                    int val = atoi(buf + 8);
+                    if (val > 0 && val <= 16384) {
+                        write_pending_arg("bitrate", val);
+                        log_info("Ctrl: bitrate=%d pending restart", val);
+                        need_reboot = 1;
+                    }
+                }
+                else if (strncmp(buf, "mode ", 5) == 0) {
+                    int val = atoi(buf + 5);
+                    if (val >= 1 && val <= 4) {
+                        write_pending_arg("mode", val);
+                        log_info("Ctrl: mode=%d pending restart", val);
+                        need_reboot = 1;
+                    }
+                }
+                else if (strncmp(buf, "fps ", 4) == 0) {
+                    int val = atoi(buf + 4);
+                    if (val > 0 && val <= MAX_FPS) {
+                        write_pending_arg("fps", val);
+                        log_info("Ctrl: fps=%d pending restart", val);
+                        need_reboot = 1;
+                    }
+                }
+                else if (strncmp(buf, "gop ", 4) == 0) {
+                    int val = atoi(buf + 4);
+                    if (val > 0 && val <= 120) {
+                        write_pending_arg("gop", val);
+                        log_info("Ctrl: gop=%d pending restart", val);
+                        need_reboot = 1;
+                    }
+                }
+                else if (strncmp(buf, "resolution ", 11) == 0) {
+                    int w = 0, h = 0;
+                    if (sscanf(buf + 11, "%dx%d", &w, &h) == 2 && w > 0 && h > 0) {
+                        write_pending_arg("width", w);
+                        write_pending_arg("height", h);
+                        log_info("Ctrl: resolution=%dx%d pending restart", w, h);
+                        need_reboot = 1;
+                    } else {
+                        log_error("Ctrl: invalid resolution '%s' (use WxH)", buf + 11);
+                    }
+                }
+                else if (strncmp(buf, "bitrate_max ", 12) == 0) {
+                    int val = atoi(buf + 12);
+                    if (val > 0 && val <= 16384) {
+                        write_pending_arg("bitrate_max", val);
+                        log_info("Ctrl: bitrate_max=%d pending restart", val);
+                        need_reboot = 1;
+                    }
+                }
+                else if (strncmp(buf, "h264profile ", 12) == 0) {
+                    int val = atoi(buf + 12);
+                    if (val >= 0 && val <= 100) {
+                        write_pending_arg("h264profile", val);
+                        log_info("Ctrl: h264profile=%d pending restart", val);
+                        need_reboot = 1;
+                    }
+                }
+                else if (strncmp(buf, "h264level ", 10) == 0) {
+                    int val = atoi(buf + 10);
+                    if (val >= 0 && val <= 100) {
+                        write_pending_arg("h264level", val);
+                        log_info("Ctrl: h264level=%d pending restart", val);
+                        need_reboot = 1;
+                    }
+                }
+                else if (strncmp(buf, "watermark ", 10) == 0) {
+                    long val = strtol(buf + 10, NULL, 0);
+                    if (val > 0 && val <= 0x7FFFFFFFL) {
+                        write_pending_arg("watermark", (int)val);
+                        log_info("Ctrl: watermark=0x%lX pending restart", val);
+                        need_reboot = 1;
+                    } else if (val == 0) {
+                        write_pending_arg("watermark", 0);
+                        log_info("Ctrl: watermark off, pending restart");
+                        need_reboot = 1;
+                    }
+                }
+                else if (strncmp(buf, "vui_cs ", 7) == 0) {
+                    int val = atoi(buf + 7);
+                    if (val >= 0) {
+                        write_pending_arg("vui_cs", val);
+                        log_info("Ctrl: vui_cs=%d pending restart", val);
+                        need_reboot = 1;
+                    }
+                }
+                else if (strncmp(buf, "vui_fr ", 7) == 0) {
+                    int val = atoi(buf + 7);
+                    if (val >= 0) {
+                        write_pending_arg("vui_fr", val);
+                        log_info("Ctrl: vui_fr=%d pending restart", val);
+                        need_reboot = 1;
+                    }
+                }
+                else if (strncmp(buf, "flip ", 5) == 0) {
+                    const char *v = buf + 5;
+                    int hf = -1, vf = -1;
+                    if (strcasecmp(v, "h") == 0)      { hf = 1; vf = 0; }
+                    else if (strcasecmp(v, "v") == 0) { hf = 0; vf = 1; }
+                    else if (strcasecmp(v, "hv") == 0){ hf = 1; vf = 1; }
+                    else if (strcmp(v, "0") == 0)     { hf = 0; vf = 0; }
+                    if (hf >= 0 && vf >= 0) {
+                        write_pending_arg("hflip", hf);
+                        write_pending_arg("vflip", vf);
+                        log_info("Ctrl: flip h=%d v=%d pending restart", hf, vf);
+                        need_reboot = 1;
+                    }
+                }
+                else if (strncmp(buf, "rotation ", 9) == 0) {
+                    int val = atoi(buf + 9);
+                    if (val == 0 || val == 90 || val == 180 || val == 270) {
+                        write_pending_arg("rotation", val);
+                        log_info("Ctrl: rotation=%d pending restart", val);
+                        need_reboot = 1;
+                    }
+                }
+                else if (strncmp(buf, "crop ", 5) == 0) {
+                    int w = 0, h = 0, x = 0, y = 0;
+                    if (strcmp(buf + 5, "0") == 0) {
+                        write_pending_arg("cropw", 0);
+                        log_info("Ctrl: crop off pending restart");
+                        need_reboot = 1;
+                    } else if (sscanf(buf + 5, "%dx%d+%d+%d", &w, &h, &x, &y) == 4 && w > 0 && h > 0) {
+                        write_pending_arg("cropx", x);
+                        write_pending_arg("cropy", y);
+                        write_pending_arg("cropw", w);
+                        write_pending_arg("croph", h);
+                        log_info("Ctrl: crop=%dx%d+%d+%d pending restart", w, h, x, y);
+                        need_reboot = 1;
+                    }
+                }
+            }
+            fclose(f);
+            remove(RTSPD_CTRL_FILE);
+        }
+        if (need_reboot) {
+            log_info("Ctrl: restarting rtspd to apply changes");
+            rtspd_reboot();
+            usleep(200000);
+        }
+        usleep(500000);   // * poll every 500ms
     }
     return NULL;
 }
@@ -2515,6 +3249,14 @@ static int rtspd_start(int port)
         ret = pthread_create(&zoom_thread_id, &attr, &rtspd_zoom_thread, NULL);
         pthread_attr_destroy(&attr);
     }
+
+    // * Ctrl Thread (reads /tmp/rtspd.ctrl for codec_ctrl commands)
+    if (ctrl_thread_id == (pthread_t)NULL) {
+        pthread_attr_init(&attr);
+        pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+        ret = pthread_create(&ctrl_thread_id, &attr, &rtspd_ctrl_thread, NULL);
+        pthread_attr_destroy(&attr);
+    }
 	
 	for (ch_num = 0; ch_num < CAP_CH_NUM; ch_num++) {
         pthread_mutex_lock(&enc[ch_num].ubs_mutex);
@@ -2581,23 +3323,51 @@ static void print_usage(void)
     printf(" ./rtspd [-bfwhm] [-j|-4]\n");
     printf(
         "\nAvailable options:\n"
-        "-b [1-8192]    - Set the bitrate         (default: 4096)\n"
-        "-f [1-20]      - Set the framerate       (default: 20)\n"
+        "-b [1-16384]   - Set the bitrate         (default: 4096)\n"
+        "-f [1-30]      - Set the framerate       (default: 20)\n"
         "-w [1-1920]    - Set the image width     (default: 1920 pixels)\n"
-        "-h [1-1280]    - Set the image height    (default: 1080 pixels)\n"
+        "-h [1-1080]    - Set the image height    (default: 1080 pixels)\n"
         "-m [1-4]       - Set the bitrate mode    (default: 1, CBR)\n"
-        "-o (1/0)  	    - Enable OSD timestamp    (default: on)\n"
+        "-o (1/0)       - Enable OSD timestamp    (default: on)\n"
         "-t [text]      - Set OSD string text     (default: 'hostname')\n"
         "-z [0-4]       - Set OSD font zoom (0=none,1=2x,2=3x,3=4x,4=1/2) (default: 0)\n"
-        "-B [0-15]      - Set OSD background palette index (default: 1)\n"
-		"-u string      - Set the user name       (default: none)\n"
-        "-p string      - Set the user password   (default: none)\n\n"
-		
+        "-B [0-15]      - Set OSD background palette index (default: 1)\n\n"
+
         "-j (optional)  - Use MJPEG encoding      (default: off)\n"
         "-4 (optional)  - Use MPEG4 encoding      (default: off)\n"
         "-d (optional)  - Enable motion detection (default: off)\n"
         "-s (optional)  - Take a snapshot when motion detected (default: off)\n"
         "-r (optional)  - Record a 10 second clip on motion    (default: off)\n\n"
+
+        "Stream authentication (env vars):\n"
+        "  RTSP_USER / RTSP_PASS - enable RTSP basic auth when both are set\n\n"
+
+        "Capture options:\n"
+        "-F [h|v|hv|0]  - Capture flip                          (default: off)\n"
+        "-G [0|90|180|270] - Capture rotation                   (default: 0)\n"
+        "-c [WxH+X+Y|0] - Capture crop                          (default: off)\n"
+        "-p [WxH|0]     - Capture prescale reduce               (default: off)\n\n"
+
+        "H264 options:\n"
+        "-V [baseline|main|high|default] - H264 profile         (default: default)\n"
+        "-L [level]     - H264 level (e.g. 31, 40, 41, 50, 51)  (default: default)\n"
+        "-E [cavlc|cabac|default] - H264 entropy coding         (default: default)\n"
+        "-I [perf|light|quality|default] - H264 config preset   (default: default)\n"
+        "-U [0|1]       - VUI full-range flag                   (default: 1)\n"
+        "-N [WxH|W:H]   - Sample aspect ratio (SAR)             (default: 1x1)\n"
+        "-H [hex]       - H264 watermark pattern                (default: off)\n"
+        "-O [x,y,w,h|off] - ROI encoding region                 (default: off)\n"
+        "-Q [on|off]    - ROI QP 8-region mode (center 50%)     (default: off)\n"
+        "-Y [num:den]   - Fractional framerate (fps_ratio)      (default: off)\n"
+        "-K [min:max[:init]] - Rate control QP bounds           (default: 20:51:25)\n\n"
+
+        "Tamper options:\n"
+        "-T [0|1|on|off] - Enable tamper detection              (default: off)\n"
+        "-W [threshold:sens_b[:sens_h]] - Tamper parameters     (default: 128:50:50)\n\n"
+
+        "Tracking:\n"
+        "-J [deadzone[:speed]] - Motion tracking (PTZ auto-follow, needs -d)\n"
+        "                          (default: deadzone 2, speed 3)\n\n"
 
         "Audio options (gmlib supported types / sample rates):\n"
         "-X [type]      - Audio encode type: aac|pcm|g726|adpcm|g711a|alaw|g711u|ulaw (default: aac)\n"
@@ -2632,8 +3402,25 @@ int main(int argc, char *argv[])
 {
     int i;
 	int cap_ch, cap_path, rec_track;
+	int from_restart;
 	
     setup_logging();						// * Setup logging
+
+    /* If we were relaunched after a codec change, hand off: wait for the old
+     * process to release the encoder and drop inherited device fds. A fresh
+     * boot/manual start has no marker: the command-line args (from the init
+     * script) take precedence, so any stale overrides from the previous daemon
+     * instance are dropped. Pending overrides are applied AFTER arg parsing
+     * below (only on a ctrl-initiated restart). */
+    from_restart = restart_handoff();
+    if (!from_restart)
+        remove(RTSPD_ARGS_FILE);
+
+    saved_argc = argc;
+    for (i = 0; i < argc && i < 64; i++)
+        saved_argv[i] = argv[i];
+    if (argc < 64)
+        saved_argv[argc] = NULL;
 
     cliArgs.bitrate     = 4096;     		// * for smooth moving object
     cliArgs.framerate   = 20;				// * Maximum support fps
@@ -2661,6 +3448,60 @@ int main(int argc, char *argv[])
 
     /* ePTZ digital zoom: OFF by default, opt-in with -Z */
     cliArgs.eptz                = 0;
+
+    cliArgs.bitrate_max = 8192;
+    cliArgs.gop         = 20;
+
+    /* QP bounds (same defaults the 2MP daemon always used) */
+    cliArgs.quant_min  = 20;
+    cliArgs.quant_max  = 51;
+    cliArgs.quant_init = 25;
+
+    /* Capture defaults: no flip, no rotation, no crop, no prescale */
+    cliArgs.h_flip       = 0;
+    cliArgs.v_flip       = 0;
+    cliArgs.rotation     = 0;
+    cliArgs.crop_enabled = 0;
+    cliArgs.crop_x = cliArgs.crop_y = cliArgs.crop_w = cliArgs.crop_h = 0;
+    cliArgs.prescale_w   = 0;
+    cliArgs.prescale_h   = 0;
+
+    /* H264 encoder defaults */
+    cliArgs.h264_profile = 0;  /* default (let gmlib decide) */
+    cliArgs.h264_level   = 0;
+    cliArgs.h264_config  = 0;
+    cliArgs.h264_coding  = 0;
+    cliArgs.h264_watermark = 0;
+
+    /* VUI defaults */
+    cliArgs.vui_colorspace = 1;  /* BT.709 */
+    cliArgs.vui_full_range = 1;  /* full range 0-255 for better color */
+
+    /* SAR defaults: 1:1 */
+    cliArgs.sar_width    = 1;
+    cliArgs.sar_height   = 1;
+
+    /* ROI defaults: disabled */
+    cliArgs.roi_enabled  = 0;
+    cliArgs.roi_x = cliArgs.roi_y = cliArgs.roi_w = cliArgs.roi_h = 0;
+
+    /* ROI QP defaults: disabled */
+    cliArgs.roiqp_enabled = 0;
+
+    /* Fractional framerate defaults: 0 = use integer framerate */
+    cliArgs.fps_ratio_num = 0;
+    cliArgs.fps_ratio_den = 0;
+
+    /* Tamper detection defaults: disabled */
+    cliArgs.tamper_enabled   = 0;
+    cliArgs.tamper_threshold = 128;
+    cliArgs.tamper_sensitive_b = 50;
+    cliArgs.tamper_sensitive_h = 50;
+
+    /* Motion tracking defaults: disabled */
+    cliArgs.tracking         = 0;
+    cliArgs.tracking_deadzone = 2;
+    cliArgs.tracking_speed   = 3;
 
     if (argc > 1) {
         for (i = 1; i < argc; i++) {
@@ -2807,6 +3648,304 @@ int main(int argc, char *argv[])
                         }
                         cliArgs.osd = 1;
                         break;
+
+                    /* --- Capture flip (gm_cap_flip_t) --- */
+                    case 'F':
+                        {
+                            const char *v = NULL;
+                            if (argv[i][2] != '\0') v = &argv[i][2];
+                            else if ((i + 1) < argc && argv[i + 1][0] != '-') v = argv[++i];
+                            if (v) {
+                                if (strcasecmp(v, "h") == 0)         { cliArgs.h_flip = 1; cliArgs.v_flip = 0; }
+                                else if (strcasecmp(v, "v") == 0)    { cliArgs.h_flip = 0; cliArgs.v_flip = 1; }
+                                else if (strcasecmp(v, "hv") == 0)   { cliArgs.h_flip = 1; cliArgs.v_flip = 1; }
+                                else if (strcmp(v, "0") == 0)         { cliArgs.h_flip = 0; cliArgs.v_flip = 0; }
+                                else {
+                                    log_error("Invalid flip mode: %s (use h, v, hv, or 0)", v);
+                                    return 1;
+                                }
+                            }
+                        }
+                        break;
+
+                    /* --- Capture rotation (gm_rotation_attr_t) --- */
+                    case 'G':
+                        cliArgs.rotation = atoi(&argv[i][2]);
+                        if (argv[i][2] == '\0' && (i + 1) < argc && argv[i + 1][0] != '-')
+                            cliArgs.rotation = atoi(argv[++i]);
+                        if (cliArgs.rotation != 0 && cliArgs.rotation != 90 &&
+                            cliArgs.rotation != 180 && cliArgs.rotation != 270) {
+                            log_error("Rotation must be 0, 90, 180, or 270 (got %d)", cliArgs.rotation);
+                            return 1;
+                        }
+                        break;
+
+                    /* --- H264 watermark pattern (gm_h264_watermark_attr_t) --- */
+                    case 'H':
+                        {
+                            const char *v = NULL;
+                            if (argv[i][2] != '\0') v = &argv[i][2];
+                            else if ((i + 1) < argc && argv[i + 1][0] != '-') v = argv[++i];
+                            if (v) {
+                                cliArgs.h264_watermark = (int) strtol(v, NULL, 0);
+                                log_info("H264 watermark pattern: 0x%X", cliArgs.h264_watermark);
+                            }
+                        }
+                        break;
+
+                    /* --- Capture crop (gm_crop_attr_t): -c WxH+X+Y --- */
+                    case 'c':
+                        {
+                            const char *v = NULL;
+                            if (argv[i][2] != '\0') v = &argv[i][2];
+                            else if ((i + 1) < argc && argv[i + 1][0] != '-') v = argv[++i];
+                            if (v) {
+                                int w = 0, h = 0, x = 0, y = 0;
+                                if (sscanf(v, "%dx%d+%d+%d", &w, &h, &x, &y) == 4 && w > 0 && h > 0) {
+                                    cliArgs.crop_enabled = 1;
+                                    cliArgs.crop_w = w;
+                                    cliArgs.crop_h = h;
+                                    cliArgs.crop_x = x;
+                                    cliArgs.crop_y = y;
+                                } else if (strcmp(v, "0") == 0) {
+                                    cliArgs.crop_enabled = 0;
+                                } else {
+                                    log_error("Invalid crop: %s (use WxH+X+Y or 0)", v);
+                                    return 1;
+                                }
+                            }
+                        }
+                        break;
+
+                    /* --- Capture prescale reduce (gm_cap_attr_t): -p WxH --- */
+                    case 'p':
+                        {
+                            const char *v = NULL;
+                            if (argv[i][2] != '\0') v = &argv[i][2];
+                            else if ((i + 1) < argc && argv[i + 1][0] != '-') v = argv[++i];
+                            if (v) {
+                                int w = 0, h = 0;
+                                if (sscanf(v, "%dx%d", &w, &h) == 2 && w > 0 && h > 0) {
+                                    cliArgs.prescale_w = w;
+                                    cliArgs.prescale_h = h;
+                                } else if (strcmp(v, "0") == 0) {
+                                    cliArgs.prescale_w = 0;
+                                    cliArgs.prescale_h = 0;
+                                } else {
+                                    log_error("Invalid prescale: %s (use WxH or 0)", v);
+                                    return 1;
+                                }
+                            }
+                        }
+                        break;
+
+                    /* --- H264 profile (gm_h264e_profile_t) --- */
+                    case 'V':
+                        {
+                            const char *v = NULL;
+                            if (argv[i][2] != '\0') v = &argv[i][2];
+                            else if ((i + 1) < argc && argv[i + 1][0] != '-') v = argv[++i];
+                            if (v) {
+                                if (strcasecmp(v, "baseline") == 0)      cliArgs.h264_profile = GM_H264E_BASELINE_PROFILE;
+                                else if (strcasecmp(v, "main") == 0)     cliArgs.h264_profile = GM_H264E_MAIN_PROFILE;
+                                else if (strcasecmp(v, "high") == 0)     cliArgs.h264_profile = GM_H264E_HIGH_PROFILE;
+                                else if (strcasecmp(v, "default") == 0)  cliArgs.h264_profile = GM_H264E_DEFAULT_PROFILE;
+                                else {
+                                    log_error("Invalid H264 profile: %s (use baseline, main, high, default)", v);
+                                    return 1;
+                                }
+                            }
+                        }
+                        break;
+
+                    /* --- H264 level (gm_h264e_level_t) --- */
+                    case 'L':
+                        cliArgs.h264_level = atoi(&argv[i][2]);
+                        if (argv[i][2] == '\0' && (i + 1) < argc && argv[i + 1][0] != '-')
+                            cliArgs.h264_level = atoi(argv[++i]);
+                        break;
+
+                    /* --- H264 coding: CABAC vs CAVLC --- */
+                    case 'E':
+                        {
+                            const char *v = NULL;
+                            if (argv[i][2] != '\0') v = &argv[i][2];
+                            else if ((i + 1) < argc && argv[i + 1][0] != '-') v = argv[++i];
+                            if (v) {
+                                if (strcasecmp(v, "cavlc") == 0)        cliArgs.h264_coding = GM_H264E_CAVLC_CODING;
+                                else if (strcasecmp(v, "cabac") == 0)   cliArgs.h264_coding = GM_H264E_CABAC_CODING;
+                                else if (strcasecmp(v, "default") == 0) cliArgs.h264_coding = GM_H264E_DEFAULT_CODING;
+                                else {
+                                    log_error("Invalid H264 coding: %s (use cavlc, cabac, default)", v);
+                                    return 1;
+                                }
+                            }
+                        }
+                        break;
+
+                    /* --- H264 config preset --- */
+                    case 'I':
+                        {
+                            const char *v = NULL;
+                            if (argv[i][2] != '\0') v = &argv[i][2];
+                            else if ((i + 1) < argc && argv[i + 1][0] != '-') v = argv[++i];
+                            if (v) {
+                                if (strcasecmp(v, "perf") == 0)         cliArgs.h264_config = GM_H264E_PERFORMANCE_CONFIG;
+                                else if (strcasecmp(v, "light") == 0)   cliArgs.h264_config = GM_H264E_LIGHT_QUALITY_CONFIG;
+                                else if (strcasecmp(v, "quality") == 0) cliArgs.h264_config = GM_H264E_QUALITY_CONFIG;
+                                else if (strcasecmp(v, "default") == 0) cliArgs.h264_config = GM_H264E_DEFAULT_CONFIG;
+                                else {
+                                    log_error("Invalid H264 config: %s (use perf, light, quality, default)", v);
+                                    return 1;
+                                }
+                            }
+                        }
+                        break;
+
+                    /* --- VUI full-range flag --- */
+                    case 'U':
+                        cliArgs.vui_full_range = atoi(&argv[i][2]);
+                        if (argv[i][2] == '\0' && (i + 1) < argc && argv[i + 1][0] != '-')
+                            cliArgs.vui_full_range = atoi(argv[++i]);
+                        break;
+
+                    /* --- Sample aspect ratio (SAR): WxH or W:H --- */
+                    case 'N':
+                        {
+                            const char *v = NULL;
+                            if (argv[i][2] != '\0') v = &argv[i][2];
+                            else if ((i + 1) < argc && argv[i + 1][0] != '-') v = argv[++i];
+                            if (v) {
+                                if (sscanf(v, "%dx%d", &cliArgs.sar_width, &cliArgs.sar_height) != 2 &&
+                                    sscanf(v, "%d:%d", &cliArgs.sar_width, &cliArgs.sar_height) != 2) {
+                                    log_error("Invalid SAR format: %s (use WxH e.g. 1x1 or 4:3)", v);
+                                    return 1;
+                                }
+                            }
+                        }
+                        break;
+
+                    /* --- ROI encoding region (gm_enc_roi_attr_t) ---
+                     * Note: -Z is taken by ePTZ in this variant, so ROI uses -O. */
+                    case 'O':
+                        {
+                            const char *v = NULL;
+                            if (argv[i][2] != '\0') v = &argv[i][2];
+                            else if ((i + 1) < argc && argv[i + 1][0] != '-') v = argv[++i];
+                            if (v && strcmp(v, "off") != 0 && strcmp(v, "0") != 0) {
+                                if (sscanf(v, "%u,%u,%u,%u", &cliArgs.roi_x, &cliArgs.roi_y, &cliArgs.roi_w, &cliArgs.roi_h) != 4) {
+                                    log_error("Invalid ROI format: %s (use x,y,w,h or off)", v);
+                                    return 1;
+                                }
+                                cliArgs.roi_enabled = 1;
+                            } else {
+                                cliArgs.roi_enabled = 0;
+                            }
+                        }
+                        break;
+
+                    /* --- ROI QP 8-region mode (gm_h264_roiqp_attr_t) --- */
+                    case 'Q':
+                        {
+                            const char *v = NULL;
+                            if (argv[i][2] != '\0') v = &argv[i][2];
+                            else if ((i + 1) < argc && argv[i + 1][0] != '-') v = argv[++i];
+                            if (v && (strcmp(v, "1") == 0 || strcasecmp(v, "on") == 0))
+                                cliArgs.roiqp_enabled = 1;
+                            else
+                                cliArgs.roiqp_enabled = 0;
+                        }
+                        break;
+
+                    /* --- Fractional framerate (fps_ratio) --- */
+                    case 'Y':
+                        {
+                            const char *v = NULL;
+                            if (argv[i][2] != '\0') v = &argv[i][2];
+                            else if ((i + 1) < argc && argv[i + 1][0] != '-') v = argv[++i];
+                            if (v) {
+                                if (sscanf(v, "%d:%d", &cliArgs.fps_ratio_num, &cliArgs.fps_ratio_den) != 2 ||
+                                    cliArgs.fps_ratio_num <= 0 || cliArgs.fps_ratio_den <= 0) {
+                                    log_error("Invalid fps_ratio: %s (use num:den e.g. 30000:1001)", v);
+                                    return 1;
+                                }
+                            }
+                        }
+                        break;
+
+                    /* --- Rate control QP bounds (min:max[:init]) --- */
+                    case 'K':
+                        {
+                            const char *v = NULL;
+                            if (argv[i][2] != '\0') v = &argv[i][2];
+                            else if ((i + 1) < argc && argv[i + 1][0] != '-') v = argv[++i];
+                            if (v) {
+                                int n = sscanf(v, "%d:%d:%d", &cliArgs.quant_min, &cliArgs.quant_max, &cliArgs.quant_init);
+                                if (n < 2) {
+                                    log_error("Invalid quant bounds: %s (use min:max or min:max:init e.g. 20:51:25)", v);
+                                    return 1;
+                                }
+                                if (n == 2)
+                                    cliArgs.quant_init = cliArgs.quant_min + 2;
+                            }
+                        }
+                        break;
+
+                    /* --- Tamper detection (gm_cap_tamper_t) --- */
+                    case 'T':
+                        {
+                            const char *v = NULL;
+                            if (argv[i][2] != '\0') v = &argv[i][2];
+                            else if ((i + 1) < argc && argv[i + 1][0] != '-') v = argv[++i];
+                            if (v && (strcmp(v, "1") == 0 || strcasecmp(v, "on") == 0)) {
+                                cliArgs.tamper_enabled = 1;
+                            } else if (v && (strcmp(v, "0") == 0 || strcasecmp(v, "off") == 0)) {
+                                cliArgs.tamper_enabled = 0;
+                            } else {
+                                log_error("Invalid tamper value: %s (use 0/1 or on/off)", v);
+                                return 1;
+                            }
+                        }
+                        break;
+
+                    /* --- Tamper parameters (threshold:sens_b[:sens_h]) --- */
+                    case 'W':
+                        {
+                            const char *v = NULL;
+                            if (argv[i][2] != '\0') v = &argv[i][2];
+                            else if ((i + 1) < argc && argv[i + 1][0] != '-') v = argv[++i];
+                            if (v) {
+                                int n = sscanf(v, "%d:%d:%d",
+                                               &cliArgs.tamper_threshold,
+                                               &cliArgs.tamper_sensitive_b,
+                                               &cliArgs.tamper_sensitive_h);
+                                if (n < 2) {
+                                    log_error("Invalid tamper params: %s (use threshold:sens_b[:sens_h])", v);
+                                    return 1;
+                                }
+                                cliArgs.tamper_enabled = 1;
+                            }
+                        }
+                        break;
+
+                    /* --- Motion tracking (PTZ auto-follow) --- */
+                    case 'J':
+                        cliArgs.tracking = 1;
+                        {
+                            const char *v = NULL;
+                            if (argv[i][2] != '\0') v = &argv[i][2];
+                            else if ((i + 1) < argc && argv[i + 1][0] != '-') v = argv[++i];
+                            if (v) {
+                                int n = sscanf(v, "%d:%d",
+                                               &cliArgs.tracking_deadzone,
+                                               &cliArgs.tracking_speed);
+                                if (n >= 1 && cliArgs.tracking_deadzone < 0) cliArgs.tracking_deadzone = 2;
+                                if (n >= 2 && (cliArgs.tracking_speed < 1 || cliArgs.tracking_speed > 10))
+                                    cliArgs.tracking_speed = 3;
+                            }
+                        }
+                        break;
+
                     default:
                         log_error("Unknown argument: %s", argv[i]);
                         print_usage();
@@ -2821,13 +3960,30 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    if ((cliArgs.bitrate < 1) || (cliArgs.bitrate > 8192)) {
-        log_error("Use a maximum bitrate of 8192 and a minimum of 1");
+    if (cliArgs.tracking && cliArgs.motion != 1) {
+        log_error("-d (motion detection) is required when using -J (tracking)");
         return 1;
     }
 
-    if ((cliArgs.framerate < 1) || (cliArgs.framerate > 30)) {
-        log_error("A framerate below 1 or higher than 30 fps is not supported.");
+    /* Apply pending codec overrides (from codec_ctrl) after command-line
+     * parsing so the encoder is created with the last requested
+     * bitrate/mode/fps. Only on a ctrl-initiated restart: a fresh
+     * boot/manual start runs exactly what it was launched with. */
+    if (from_restart)
+        apply_pending_args();
+
+    if ((cliArgs.bitrate < 1) || (cliArgs.bitrate > 16384)) {
+        log_error("Use a maximum bitrate of 16384 and a minimum of 1");
+        return 1;
+    }
+
+    if ((cliArgs.bitrate_max < 1) || (cliArgs.bitrate_max > 16384)) {
+        log_error("Use a maximum bitrate_max of 16384 and a minimum of 1");
+        return 1;
+    }
+
+    if ((cliArgs.framerate < 1) || (cliArgs.framerate > MAX_FPS)) {
+        log_error("A framerate below 1 or higher than %d fps is not supported (this camera's capture max).", MAX_FPS);
         return 1;
     }
 
@@ -2844,6 +4000,26 @@ int main(int argc, char *argv[])
     if ((cliArgs.bitrateMode < 1) || (cliArgs.bitrateMode > 4)) {
         log_error("Bitrate mode should be in between 1 and 4");
         return 1;
+    }
+
+    if (cliArgs.quant_min < 2 || cliArgs.quant_max > 51 || cliArgs.quant_min > cliArgs.quant_max ||
+        cliArgs.quant_init < cliArgs.quant_min || cliArgs.quant_init > cliArgs.quant_max) {
+        log_error("Quant bounds invalid: min=%d max=%d init=%d (need 2<=min<=init<=max<=51)",
+                  cliArgs.quant_min, cliArgs.quant_max, cliArgs.quant_init);
+        return 1;
+    }
+
+    /* Tamper parameter validation */
+    if (cliArgs.tamper_enabled) {
+        if (cliArgs.tamper_threshold < 1 || cliArgs.tamper_threshold > 255) {
+            log_error("Tamper threshold must be 1..255");
+            return 1;
+        }
+        if (cliArgs.tamper_sensitive_b < 0 || cliArgs.tamper_sensitive_b > 100 ||
+            cliArgs.tamper_sensitive_h < 0 || cliArgs.tamper_sensitive_h > 100) {
+            log_error("Tamper sensitivity must be 0..100 (0 disables that detector)");
+            return 1;
+        }
     }
 
     if (cliArgs.audio_enabled) {
@@ -2891,6 +4067,8 @@ int main(int argc, char *argv[])
     }
 
     log_info("Starting the RTSP Daemon");
+
+    write_pidfile();
 
     rtsp_password = getenv("RTSP_PASS");
     rtsp_username = getenv("RTSP_USER");

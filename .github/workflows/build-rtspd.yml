@@ -49,6 +49,7 @@ jobs:
           make TARGET="$REAL_TARGET_PREFIX" build/rtspd-v5
           make TARGET="$REAL_TARGET_PREFIX" build/rtsp_audio_in
           make TARGET="$REAL_TARGET_PREFIX" build/tracking
+          make TARGET="$REAL_TARGET_PREFIX" build/rtspd2MP
 
       - name: Commit và Push file Binary trực tiếp lên GitHub (Siêu tốc 1 giây)
         run: |

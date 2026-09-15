@@ -159,6 +159,30 @@ build/rtspd: $(BUILDDIR)/rtspd
 	@:
 
 #################################################################
+## RTSPD-2MP (1920x1080 variant)							   ##
+#################################################################
+
+$(BUILDDIR)/rtspd2MP: $(PREFIXDIR)/bin
+	@mkdir -p $(BUILDDIR) $(TOOLSDIR)/bin
+	cd $(RTSPDDIR) 				&& \
+	$(TARGET)-gcc 				\
+		-Os 					\
+		-DLOG_USE_COLOR			\
+		-Wall					\
+		-I$(GMLIBDIR)/inc		\
+		$(RTSPDDIR)/log/log.c	\
+		$(RTSPDDIR)/rtspd2MP.c	\
+		$(RTSPDDIR)/librtsp.a	\
+		$(RTSPDDIR)/librtsp_glibc.a	\
+		-L$(GMLIBDIR)/lib		\
+		-lpthread -lm -lrt -lgm -o $(TOOLSDIR)/bin/rtspd2MP && \
+		$(TARGET)-strip $(TOOLSDIR)/bin/rtspd2MP
+	@touch $@
+
+build/rtspd2MP: $(BUILDDIR)/rtspd2MP
+	@:
+
+#################################################################
 ## RTSPD-V5 (syslog, internal paths)						   ##
 #################################################################
 
