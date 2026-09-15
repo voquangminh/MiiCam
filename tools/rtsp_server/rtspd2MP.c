@@ -1796,7 +1796,7 @@ void gm_enc_init(int cap_ch, int cap_path, int rec_track, int enc_type, int mode
 
         // * GM813x capture path 0(liveview), 1(substream), 2(substream), 3(mainstream)
         cap_attr.path = cap_path;
-        cap_attr.enable_mv_data = 1;
+        cap_attr.enable_mv_data = cliArgs.tracking ? 1 : 0;
         cap_attr.dma_path = 0;                 // * DMA path 0
         if (cliArgs.prescale_w > 0 && cliArgs.prescale_h > 0) {
             cap_attr.prescale_reduce_width  = cliArgs.prescale_w;
