@@ -2497,6 +2497,26 @@ void gm_graph_init(void)
 
     rtspd_avail_ch = 0;
     gm_enc_init(0, 0, 0, cliArgs.encoderType, cliArgs.bitrateMode, cliArgs.framerate, cliArgs.bitrate, cliArgs.width, cliArgs.height);
+    /* Register the encoder EPTZ attribute in the disabled state so gmlib_setting
+     * renders "eptz.enabled(0) eptz.src_dim(...) eptz.srcCrop(...)" under H264E,
+     * matching the reference Chuangmi 720p camera, even on firmware where the
+     * runtime gm_apply_attr() rejects live ePTZ enables. See rtspd_apply_eptz(). */
+    {
+        DECLARE_ATTR(eptz_attr, gm_enc_eptz_attr_t);
+        gm_enc_t *param = &enc_param[0][0];
+
+        eptz_attr.enabled = 0;
+        eptz_attr.src_dim.width  = (unsigned int)gm_system.cap[0].dim.width;
+        eptz_attr.src_dim.height = (unsigned int)gm_system.cap[0].dim.height;
+        eptz_attr.src_crop_rect.x = 0;
+        eptz_attr.src_crop_rect.y = 0;
+        eptz_attr.src_crop_rect.width  = (unsigned int)gm_system.cap[0].dim.width;
+        eptz_attr.src_crop_rect.height = (unsigned int)gm_system.cap[0].dim.height;
+        if (param->enc[0].obj != NULL) {
+            if (gm_set_attr(param->enc[0].obj, &eptz_attr) < 0)
+                log_info("ePTZ: encoder attr not registered at init");
+        }
+    }
     gm_apply(enc_groupfd); 	// * Activate settings
 	audio_init();			// * Activate audio
 
@@ -2575,7 +2595,13 @@ void gm_graph_release(void)
  * configured output resolution. This is supported on GM813x, unlike the
  * encoder-level gm_enc_eptz_attr_t which the GM8136S driver rejects.
  * Conflicts with the static -c crop: ePTZ temporarily overrides it while
- * active and restores it when zoom returns to 1x. */
+ * active and restores it when zoom returns to 1x.
+ *
+ * The encoder EPTZ attribute (gm_enc_eptz_attr_t) IS registered at init time
+ * with enabled=0 to produce the eptz node in gmlib_setting (reference parity),
+ * but the live gm_apply_attr() is rejected by this firmware, so runtime zoom
+ * always uses capture-crop. The two are compatible: the encoder eptz stays
+ * disabled (full-frame) while the capture crop controls the FOV. */
 static int rtspd_apply_eptz(float factor, float pan, float tilt)
 {
     DECLARE_ATTR(crop_attr, gm_crop_attr_t);
@@ -2585,14 +2611,12 @@ static int rtspd_apply_eptz(float factor, float pan, float tilt)
     int crop_w, crop_h, crop_x, crop_y;
     static int eptz_active = 0;   /* was an ePTZ crop applied to capture? */
 
-    param = &enc_param[0][0];
+    param   = &enc_param[0][0];
     cap_obj = param->cap.obj;
-    if (cap_obj == NULL)
-        return -1;
+    src_w   = gm_system.cap[0].dim.width;
+    src_h   = gm_system.cap[0].dim.height;
 
-    src_w = gm_system.cap[0].dim.width;
-    src_h = gm_system.cap[0].dim.height;
-    if (src_w <= 0 || src_h <= 0)
+    if (cap_obj == NULL || src_w <= 0 || src_h <= 0)
         return -1;
 
     if (factor < 1.0f)
