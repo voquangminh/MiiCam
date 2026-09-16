@@ -264,16 +264,16 @@ static void cmd_zoom(void)
 
 int main(int argc, char *argv[])
 {
-    int json = 0, shell = 0, argi = 1;
+    int json = 0, shell = 0, argi = 1, i;
 
     if (argc < 2) print_usage();
 
-    while (argi < argc && argv[argi][0] == '-') {
-        if (strcmp(argv[argi], "-j") == 0) json = 1;
-        else if (strcmp(argv[argi], "-k") == 0) shell = 1;
-        else break;
-        argi++;
+    for (i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "-j") == 0) json = 1;
+        else if (strcmp(argv[i], "-k") == 0) shell = 1;
     }
+    while (argi < argc && argv[argi][0] == '-') argi++;
+    if (argi >= argc) print_usage();
 
     if (strcmp(argv[argi], "status") == 0) {
         if (json) cmd_status_json();

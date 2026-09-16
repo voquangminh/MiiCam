@@ -2471,6 +2471,9 @@ static void rtspd_reboot(void)
     }
     if (pid > 0) {
         log_info("Ctrl: restarting rtspd...");
+        /* Give the child time to exec and call restart_handoff() before we
+         * die, so it can still find our PID in /proc (from_restart check). */
+        usleep(500000);
         kill(parent, SIGTERM);
         return;
     }
@@ -2664,9 +2667,9 @@ static void *rtspd_ctrl_thread(void *arg)
     while (rtspd_sysinit) {
         FILE *f = fopen(RTSPD_CTRL_FILE, "r");
         if (f) {
-            if (fgets(buf, sizeof(buf), f)) {
+            need_reboot = 0;
+            while (fgets(buf, sizeof(buf), f)) {
                 buf[strcspn(buf, "\r\n")] = '\0';
-                need_reboot = 0;
 
                 if (strcmp(buf, "keyframe") == 0) {
                     if (bindfd) {
