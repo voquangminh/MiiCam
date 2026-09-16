@@ -678,6 +678,7 @@ static void enc_get(enc_state_t *e)
     while (line)
     {
         if (strstr(line, "H264E(")) in_video = 1;
+        if (strstr(line, "AUDIO_ENC(")) in_video = 0;
         if (in_video)
         {
             parse_int_after(line, "dim_width(",  &e->w);
