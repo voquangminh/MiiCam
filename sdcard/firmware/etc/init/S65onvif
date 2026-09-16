@@ -32,6 +32,13 @@ if [ -n "${ONVIF_RTSP_PORT}" ] && [ "${ONVIF_RTSP_PORT}" -gt 0 ] 2>/dev/null ; t
     DAEMON_OPTS="${DAEMON_OPTS} --public-rtsp-port=${ONVIF_RTSP_PORT}"
 fi
 
+## Optional WS-UsernameToken auth. Only enforced when BOTH ONVIF_USER and
+## ONVIF_PASS are set (empty = open access, backward compatible). PasswordText
+## and PasswordDigest are both accepted.
+if [ -n "${ONVIF_USER}" ] && [ -n "${ONVIF_PASS}" ] ; then
+    DAEMON_OPTS="${DAEMON_OPTS} --user=${ONVIF_USER} --pass=${ONVIF_PASS}"
+fi
+
 check_daemon_bin "${DAEMON}" "${DESC}"
 
 case "$1" in
