@@ -672,7 +672,7 @@ static void enc_get(enc_state_t *e)
     size_t n = 0;
     int in_video = 0;
     e->w = 1280; e->h = 720; e->fps = 15; e->gop = 30;
-    e->bitrate = 2000000; e->bitrate_max = 2000000; e->rate_mode = 1;
+    e->bitrate = 8192; e->bitrate_max = 16384; e->rate_mode = 1;
     if (read_file_bin("/proc/videograph/gmlib_setting", &buf, &n) < 0) return;
     line = strtok_r(buf, "\n", &save);
     while (line)
@@ -691,7 +691,7 @@ static void enc_get(enc_state_t *e)
         line = strtok_r(NULL, "\n", &save);
     }
     free(buf);
-    if (!e->bitrate || !e->w || !e->h) { e->bitrate = 2000000; e->w = 1280; e->h = 720; }
+    if (!e->bitrate || !e->w || !e->h) { e->bitrate = 8192; e->w = 1280; e->h = 720; }
 }
 
 /* ---- hostname / MAC / netmask helpers ---- */
@@ -855,7 +855,7 @@ static void append_enc_cfg(char *out, size_t size, const enc_state_t *e)
     int kbps;
     if (e->w >= 1280 && e->h >= 720) prof = "High";
     else if (e->w <= 640) prof = "Baseline";
-    kbps = (e->bitrate + 500) / 1000;
+    kbps = e->bitrate;
     if (kbps < 32) kbps = 32;
     append(out, size,
         "<tt:VideoEncoderConfiguration token=\"venc_cfg_0\"><tt:Name>VideoEncoder</tt:Name><tt:UseCount>1</tt:UseCount><tt:Encoding>H264</tt:Encoding><tt:Resolution><tt:Width>%d</tt:Width><tt:Height>%d</tt:Height></tt:Resolution><tt:Quality>50</tt:Quality><tt:RateControl><tt:FrameRateLimit>%d</tt:FrameRateLimit><tt:EncodingInterval>1</tt:EncodingInterval><tt:BitrateLimit>%d</tt:BitrateLimit></tt:RateControl><tt:H264><tt:GovLength>%d</tt:GovLength><tt:H264Profile>%s</tt:H264Profile></tt:H264><tt:Multicast><tt:Address><tt:Type>Multicast</tt:Type><tt:IPv4Address>239.255.255.250</tt:IPv4Address></tt:Address><tt:Port>37020</tt:Port><tt:TTL>5</tt:TTL><tt:AutoStart>false</tt:AutoStart></tt:Multicast><tt:SessionTimeout>PT60S</tt:SessionTimeout></tt:VideoEncoderConfiguration>",
@@ -923,7 +923,7 @@ static void handle_soap(const char*r,char*out,size_t size){out[0]=0;append(out,s
   else if(strstr(r,"GetScopes"))append(out,size,"<tds:GetScopesResponse><tds:Scopes><tt:ScopeDef>Fixed</tt:ScopeDef><tt:ScopeItem>onvif://www.onvif.org/name/chuangmi720p</tt:ScopeItem></tds:Scopes><tds:Scopes><tt:ScopeDef>Fixed</tt:ScopeDef><tt:ScopeItem>onvif://www.onvif.org/hardware/GM8136</tt:ScopeItem></tds:Scopes><tds:Scopes><tt:ScopeDef>Fixed</tt:ScopeDef><tt:ScopeItem>onvif://www.onvif.org/type/video_encoder</tt:ScopeItem></tds:Scopes><tds:Scopes><tt:ScopeDef>Fixed</tt:ScopeDef><tt:ScopeItem>onvif://www.onvif.org/type/ptz</tt:ScopeItem></tds:Scopes></tds:GetScopesResponse>");
   /* ---- device: date/time ---- */
   else if(strstr(r,"SetSystemDateAndTime")){int y=0,mo=0,d=0,h=0,mi=0,se=0;char tbs[24];long tzoff=0,t;struct timeval tv;if(get_int_tag_n(r,"Year",&y)<0||y<1970||y>2200){soap_fault(out,size,"Invalid DateTime");return;}get_int_tag_n(r,"Month",&mo);get_int_tag_n(r,"Day",&d);get_int_tag_n(r,"Hour",&h);get_int_tag_n(r,"Minute",&mi);get_int_tag_n(r,"Second",&se);if(text_tag_n(r,"TZ",tbs,sizeof(tbs))==0&&tbs[0]){const char*p=tbs;int sign=1,hh=0,mm=0;if(*p=='+'||*p=='-'){sign=(*p=='-')?-1:1;p++;}else if(strncmp(p,"UTC",3)==0){p+=3;if(*p=='+'||*p=='-'){sign=(*p=='-')?-1:1;p++;}}hh=atoi(p);{const char*cp=strchr(p,':');if(cp)mm=atoi(cp+1);}tzoff=(long)sign*(hh*3600+mm*60);}t=ymdhms_to_time(y,mo?mo:1,d?d:1,h,mi,se);if(!strstr(r,"UTCDateTime"))t-=tzoff;tv.tv_sec=(time_t)t;tv.tv_usec=0;if(settimeofday(&tv,NULL)<0){soap_fault(out,size,"settimeofday failed");return;}append(out,size,"<tds:SetSystemDateAndTimeResponse/>");}
-  else if(strstr(r,"GetSystemDateAndTime")){time_t now=time(NULL);char utc[160],loc[160],tzs[24];int off=utc_tz_offset();fmt_date_time(utc,sizeof(utc),now,1);fmt_date_time(loc,sizeof(loc),now,0);snprintf(tzs,sizeof(tzs),"UTC%c%02d:%02d",off<0?'-':'+',(int)((off<0?-off:off)/3600),(int)(((off<0?-off:off)%3600)/60));append(out,size,"<tds:GetSystemDateAndTimeResponse><tds:SystemDateAndTime><tds:DateTimeType>Manual</tds:DateTimeType><tds:DaylightSavings>false</tds:DaylightSavings><tds:TimeZone><tds:TZ>%s</tds:TZ></tds:TimeZone><tds:UTCDateTime>%s</tds:UTCDateTime><tds:LocalDateTime>%s</tds:LocalDateTime></tds:SystemDateAndTime></tds:GetSystemDateAndTimeResponse>",tzs,utc,loc);}
+  else if(strstr(r,"GetSystemDateAndTime")){time_t now=time(NULL);char utc[256],loc[256],tzs[24];int off=utc_tz_offset();fmt_date_time(utc,sizeof(utc),now,1);fmt_date_time(loc,sizeof(loc),now,0);snprintf(tzs,sizeof(tzs),"UTC%c%02d:%02d",off<0?'-':'+',(int)((off<0?-off:off)/3600),(int)(((off<0?-off:off)%3600)/60));append(out,size,"<tds:GetSystemDateAndTimeResponse><tds:SystemDateAndTime><tds:DateTimeType>Manual</tds:DateTimeType><tds:DaylightSavings>false</tds:DaylightSavings><tds:TimeZone><tds:TZ>%s</tds:TZ></tds:TimeZone><tds:UTCDateTime>%s</tds:UTCDateTime><tds:LocalDateTime>%s</tds:LocalDateTime></tds:SystemDateAndTime></tds:GetSystemDateAndTimeResponse>",tzs,utc,loc);}
   /* ---- device: hostname / network / users / reboot ---- */
   else if(strstr(r,"GetHostname")){char hn[64];get_hostname_str(hn,sizeof(hn));append(out,size,"<tds:GetHostnameResponse><tds:HostnameInformation><tt:FromDHCP>false</tt:FromDHCP><tt:Name>%s</tt:Name></tds:HostnameInformation></tds:GetHostnameResponse>",hn);}
   else if(strstr(r,"SetHostname")){char hn[64];if(text_tag_n(r,"Name",hn,sizeof(hn))<0){soap_fault(out,size,"Missing Name");return;}hn[strcspn(hn,"<>")]=0;if(set_hostname_str(hn)<0){soap_fault(out,size,"set hostname failed");return;}append(out,size,"<tds:SetHostnameResponse/>");}
