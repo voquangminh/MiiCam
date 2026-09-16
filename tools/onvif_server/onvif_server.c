@@ -827,7 +827,7 @@ static int utc_tz_offset(void)
 /* ---- rtspd ctrl file (one command line per send, like codec_ctrl) ---- */
 static int ctrl_send(const char *cmd)
 {
-    int fd = open("/tmp/rtspd.ctrl", O_WRONLY | O_APPEND);
+    int fd = open("/tmp/rtspd.ctrl", O_WRONLY | O_CREAT | O_APPEND, 0644);
     ssize_t w;
     size_t n;
     if (fd < 0) return -1;
