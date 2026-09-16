@@ -268,12 +268,12 @@ int main(int argc, char *argv[])
 
     if (argc < 2) print_usage();
 
-    while (argi < argc && argv[argi][0] == '-') {
-        if (strcmp(argv[argi], "-j") == 0) json = 1;
-        else if (strcmp(argv[argi], "-k") == 0) shell = 1;
-        else break;
-        argi++;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "-j") == 0) json = 1;
+        else if (strcmp(argv[i], "-k") == 0) shell = 1;
     }
+    while (argi < argc && argv[argi][0] == '-') argi++;
+    if (argi >= argc) print_usage();
 
     if (strcmp(argv[argi], "status") == 0) {
         if (json) cmd_status_json();
