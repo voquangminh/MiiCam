@@ -2664,9 +2664,9 @@ static void *rtspd_ctrl_thread(void *arg)
     while (rtspd_sysinit) {
         FILE *f = fopen(RTSPD_CTRL_FILE, "r");
         if (f) {
-            if (fgets(buf, sizeof(buf), f)) {
+            need_reboot = 0;
+            while (fgets(buf, sizeof(buf), f)) {
                 buf[strcspn(buf, "\r\n")] = '\0';
-                need_reboot = 0;
 
                 if (strcmp(buf, "keyframe") == 0) {
                     if (bindfd) {
