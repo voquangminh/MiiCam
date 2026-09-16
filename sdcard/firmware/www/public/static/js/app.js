@@ -242,14 +242,13 @@ async function loadSettings() {
         async () => setMode('flipmode', 'off'));
     f.appendChild(flipEl);
 
-    /* --- Security: RTSP user/pass + port (fixed 554) --- */
+    /* --- Security: RTSP user/pass only (web auth disabled on this build) --- */
     const s = document.getElementById('settings-security');
     s.innerHTML = '';
     fieldText('settings-security', 'RTSP username', 'RTSP_USER', keys);
     fieldText('settings-security', 'RTSP password', 'RTSP_PASS', keys);
     fieldInfo('settings-security', 'RTSP port', '554 (fixed)');
-    fieldText('settings-security', 'Web API username', 'HTTP_API_USER', keys);
-    fieldText('settings-security', 'Web API password', 'HTTP_API_PASS', keys);
+    fieldInfo('settings-security', 'Web auth', 'Disabled on this lighttpd build (mod_auth broken)');
 
     /* --- Day / Night: live toggles + auto night mode --- */
     const d = document.getElementById('settings-daynight');
@@ -263,6 +262,29 @@ async function loadSettings() {
       ['1', 'On'],
     ]);
     fieldInfo('settings-daynight', 'Note', 'Mode/IR-cut apply live; auto night mode applies at next boot.');
+
+    /* --- Motion: detection + snapshot/record/tracking + speed/deadzone --- */
+    const m = document.getElementById('settings-motion');
+    m.innerHTML = '';
+    fieldSelect('settings-motion', 'Motion detection', 'MOTION_DETECTION', keys, [
+      ['0', 'Off'],
+      ['1', 'On'],
+    ]);
+    fieldSelect('settings-motion', 'Snapshot on motion', 'MOTION_TAKE_SNAPSHOT', keys, [
+      ['0', 'Off'],
+      ['1', 'On'],
+    ]);
+    fieldSelect('settings-motion', 'Record on motion', 'MOTION_RECORD', keys, [
+      ['0', 'Off'],
+      ['1', 'On'],
+    ]);
+    fieldSelect('settings-motion', 'PTZ auto-tracking', 'MOTION_TRACKING', keys, [
+      ['0', 'Off'],
+      ['1', 'On'],
+    ]);
+    fieldNumber('settings-motion', 'Tracking speed (1-10)', 'TRACKING_SPEED', keys, { min: 1, max: 10 });
+    fieldNumber('settings-motion', 'Tracking deadzone (0-15)', 'TRACKING_DEADZONE', keys, { min: 0, max: 15 });
+    fieldInfo('settings-motion', 'Note', 'Changes require RTSP restart (Apply RTSP below) or reboot.');
 
     /* --- Audio: encode type + sample rate (+ volume is config-only) --- */
     const a = document.getElementById('settings-audio');
@@ -335,6 +357,21 @@ async function loadSettings() {
     fieldInfo('settings-network', 'Router MAC', 'Not supported by this firmware');
     fieldInfo('settings-network', 'Note', 'WiFi changes apply at next boot (configure_wifi).');
 
+    /* --- MQTT: broker + credentials + topic --- */
+    const mqtt = document.getElementById('settings-mqtt');
+    mqtt.innerHTML = '';
+    fieldSelect('settings-mqtt', 'MQTT enabled', 'ENABLE_MQTT', keys, [
+      ['0', 'Off'],
+      ['1', 'On'],
+    ]);
+    fieldText('settings-mqtt', 'Broker host', 'MQTT_HOST', keys);
+    fieldNumber('settings-mqtt', 'Broker port', 'MQTT_PORT', keys, { min: 1, max: 65535 });
+    fieldText('settings-mqtt', 'Username', 'MQTT_USER', keys);
+    fieldText('settings-mqtt', 'Password', 'MQTT_PASS', keys);
+    fieldText('settings-mqtt', 'Base topic', 'MQTT_TOPIC', keys);
+    fieldNumber('settings-mqtt', 'Status interval (s)', 'MQTT_STATUSINTERVAL', keys, { min: 5, max: 3600 });
+    fieldInfo('settings-mqtt', 'Note', 'MQTT service must be restarted after changes.');
+
     /* --- Wire the buttons --- */
     const fSave = document.getElementById('btn-format-save');
     const fApply = document.getElementById('btn-format-apply');
@@ -369,13 +406,39 @@ async function loadSettings() {
           any = true;
         }
       }
-      toast(any ? 'Bitrate/FPS/Mode applied (rtspd restarts)' : 'No values to apply', any ? '' : 'err');
+      /* Also apply resolution if preset or custom width/height are set. */
+      const rv = resSel.value;
+      if (rv !== 'custom') {
+        await api('/codec/resolution', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: 'value=' + encodeURIComponent(rv),
+        });
+        any = true;
+      } else {
+        const wEl = document.querySelector('#settings-format [data-cfgKey="RTSP_WIDTH"]');
+        const hEl = document.querySelector('#settings-format [data-cfgKey="RTSP_HEIGHT"]');
+        if (wEl && hEl && wEl.value && hEl.value) {
+          await api('/codec/resolution', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: 'value=' + encodeURIComponent(wEl.value + 'x' + hEl.value),
+          });
+          any = true;
+        }
+      }
+      toast(any ? 'Resolution/codec applied (rtspd restarts)' : 'No values to apply', any ? '' : 'err');
     };
     securitySave.onclick = () => saveCfgGroup('security');
     daynightSave.onclick = () => saveCfgGroup('daynight');
     audioSave.onclick = () => saveCfgGroup('audio');
     osdSave.onclick = () => saveCfgGroup('osd');
     netSave.onclick = () => saveCfgGroup('network');
+
+    const motionSave = document.getElementById('btn-motion-save');
+    if (motionSave) motionSave.onclick = () => saveCfgGroup('motion');
+    const mqttSave = document.getElementById('btn-mqtt-save');
+    if (mqttSave) mqttSave.onclick = () => saveCfgGroup('mqtt');
 
     document.getElementById('btn-rtsp-restart').onclick = async () => {
       const r = await api('/service/rtsp/restart');
@@ -634,7 +697,6 @@ function kvRow(label, value, tableId) {
 }
 
 function fmtUptime(uptimeStr) {
-  const m = /up\s+(\d+)\s+(min|hour|day)/.exec(uptimeStr || '');
   return uptimeStr || '-';
 }
 
@@ -733,8 +795,20 @@ async function loadSDCard() {
   }
 }
 
+/* ---------------- Motion status on Home ---------------- */
+async function loadHome() {
+  try {
+    const st = await api('/status');
+    const motion = st.motion || {};
+    const el = document.getElementById('motion-state');
+    if (el) el.textContent = motion.detected ? 'Motion detected' : 'Idle';
+  } catch (e) { /* ignore */ }
+  try { await loadMotor(); } catch (e) { /* ignore */ }
+}
+
 /* ---------------- Tab loaders ---------------- */
 const tabLoaders = {
+  home: loadHome,
   settings: loadSettings,
   config: loadDeviceSettings,
   info: loadInfo,

@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>MiiCam</title>
-  <link rel="stylesheet" href="/static/css/style.css">
+  <link rel="stylesheet" href="/static/css/style.css?v=2">
 </head>
 <body>
   <nav class="topnav">
@@ -46,6 +46,18 @@
         <div class="field-value" id="tracking-state">unknown</div>
       </div>
     </div>
+
+    <h2>Motion detected</h2>
+    <div class="field-value" id="motion-state">unknown</div>
+
+    <h2>PTZ</h2>
+    <div class="ptz-pad">
+      <button data-motor="up">▲</button>
+      <button data-motor="left">◀</button>
+      <button data-motor="home">●</button>
+      <button data-motor="right">▶</button>
+      <button data-motor="down">▼</button>
+    </div>
   </section>
 
   <!-- ============ SETTINGS (video customization) ============ -->
@@ -57,7 +69,7 @@
     <div class="form-grid" id="settings-format"></div>
     <div class="btn-row">
       <button id="btn-format-save" class="primary">Save format</button>
-      <button id="btn-format-apply">Apply bitrate/fps now</button>
+      <button id="btn-format-apply">Apply resolution &amp; codec now</button>
     </div>
 
     <h2>Security</h2>
@@ -70,6 +82,12 @@
     <div class="form-grid" id="settings-daynight"></div>
     <div class="btn-row">
       <button id="btn-daynight-save" class="primary">Save day/night</button>
+    </div>
+
+    <h2>Motion</h2>
+    <div class="form-grid" id="settings-motion"></div>
+    <div class="btn-row">
+      <button id="btn-motion-save" class="primary">Save motion</button>
     </div>
 
     <h2>Audio</h2>
@@ -90,8 +108,14 @@
       <button id="btn-network-save" class="primary">Save network</button>
     </div>
 
+    <h2>MQTT</h2>
+    <div class="form-grid" id="settings-mqtt"></div>
+    <div class="btn-row">
+      <button id="btn-mqtt-save" class="primary">Save MQTT</button>
+    </div>
+
     <h2>Apply now</h2>
-    <p class="hint">Restarting the RTSP daemon applies all saved format/security/audio/OSD settings.</p>
+    <p class="hint">Restarting the RTSP daemon applies all saved format/security/audio/OSD/MQTT settings.</p>
     <div class="btn-row">
       <button id="btn-rtsp-restart">Restart RTSP</button>
     </div>
@@ -171,6 +195,6 @@
 
   <div id="toast" class="toast"></div>
 
-  <script src="/static/js/app.js"></script>
+  <script src="/static/js/app.js?v=2"></script>
 </body>
 </html>

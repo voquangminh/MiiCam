@@ -29,7 +29,6 @@ define('SNAP_MIN_INTERVAL', 3);
 
 $old_ld = getenv('LD_LIBRARY_PATH');
 putenv('LD_LIBRARY_PATH=' . LIBDIR . ($old_ld ? ':' . $old_ld : ''));
-define('CTRL_VIDEO',    '/dev/shm/rtspd_video');
 define('LAST_VIDEO',    '/dev/shm/rtspd_last_video_path');
 
 /* ------------------------------------------------------------------ */
@@ -190,9 +189,7 @@ function ep_camera_mode(string $name) {
 function ep_codec_status() {
     $b = need_binary('codec_ctrl');
     $out = run_cmd([$b, '-j', 'status'], $rc);
-    $txt = trim(implode('', $out));
-    $dec = json_decode($txt, true);
-    return is_array($dec) ? $dec : null;
+    return extract_json($out);
 }
 
 function ep_motion_status() {
@@ -232,12 +229,23 @@ function ep_last_media(string $kind): ?array {
     ];
 }
 
+/** Strict JSON decode of a shell command that may precede the payload
+ *  with stderr noise (e.g. motor_ctrl's "WARN: PWM init failed"). Extract
+ *  the first {...} object instead of requiring line-perfect output. */
+function extract_json(array $out, bool $assoc = true) {
+    $txt = implode("\n", $out);
+    if (!preg_match('/\{.*\}/s', $txt, $m)) {
+        return null;
+    }
+    $dec = json_decode($m[0], $assoc);
+    return is_array($dec) ? $dec : null;
+}
+
 function ep_motor_status() {
     $b = need_binary('motor_ctrl');
     $out = run_cmd([$b, 'status', '-j'], $rc);
-    $txt = trim(implode('', $out));
-    $dec = json_decode($txt, true);
-    if (!is_array($dec)) {
+    $dec = extract_json($out);
+    if ($dec === null) {
         fail('Failed to read motor status', 500);
     }
     json($dec);
@@ -512,7 +520,15 @@ try {
             $sub = $segments[1] ?? 'status';
             if ($sub === 'status') {
                 json(['codec' => ep_codec_status()]);
-            } elseif (in_array($sub, ['bitrate', 'fps', 'gop', 'mode'], true)) {
+            } elseif ($sub === 'zoom') {
+                /* Read-only: zoom/pan/tilt from shared rtspd state. */
+                $out = run_cmd([$b, 'zoom'], $rc);
+                json(['zoom' => trim(implode('', $out))]);
+            } elseif (in_array($sub, [
+                'bitrate', 'fps', 'gop', 'mode', 'resolution', 'bitrate_max',
+                'flip', 'rotation', 'crop', 'h264profile', 'h264level',
+                'vui_cs', 'vui_fr', 'watermark',
+            ], true)) {
                 $val = req('value', sget('value'));
                 if ($val === null) {
                     fail('Missing value');
@@ -534,7 +550,9 @@ try {
             break;
 
         case 'tracking':
-            $b = need_binary('tracking');
+            /* The tracking daemon writes its own /var/run/tracking.pid;
+             * tracking.sh handles LED blink + MQTT announce for on/off.
+             * status/blink/stop_blink must not require the binary to exist. */
             $script = '/tmp/sd/firmware/scripts/tracking.sh';
             $cmd = $segments[1] ?? 'status';
             switch ($cmd) {
@@ -549,31 +567,33 @@ try {
                         'running' => file_exists('/var/run/tracking.pid'),
                     ]]);
                 case 'start':
+                    $b = need_binary('tracking');
                     $rc = 0;
                     $out = [];
                     if (!file_exists('/var/run/tracking.pid')) {
                         $dz = (int)sget('deadzone', 2);
                         $sp = (int)sget('speed', 3);
-                        $cmd = escapeshellarg($b) . ' -d ' . $dz . ' -s ' . $sp
-                             . ' >/dev/null 2>&1 & echo $!';
-                        exec($cmd, $out, $rc);
-                        $pid = !empty($out[0]) ? (int)$out[0] : 0;
-                        if ($pid > 0) {
-                            @file_put_contents('/var/run/tracking.pid', (string)$pid);
-                        }
+                        $startCmd = escapeshellarg($b) . ' -d ' . $dz . ' -s ' . $sp
+                                  . ' >/dev/null 2>&1 & echo $!';
+                        exec($startCmd, $out, $rc);
                     } else {
                         $out[0] = trim((string)@file_get_contents('/var/run/tracking.pid'));
                         $rc = 0;
                     }
+                    /* LED blink + MQTT announce (idempotent). */
+                    run_cmd([$script, 'on'], $rcOn);
                     json(['tracking' => 'started', 'pid' => (int)($out[0] ?? 0), 'rc' => $rc]);
                 case 'stop':
+                    $rc = 0;
                     if (file_exists('/var/run/tracking.pid')) {
                         $pid = trim((string)@file_get_contents('/var/run/tracking.pid'));
                         if ($pid !== '' && is_numeric($pid)) {
-                            exec('kill ' . (int)$pid, $out, $rc);
+                            exec('kill ' . (int)$pid, $o, $rc);
                         }
+                        @unlink('/var/run/tracking.pid');
                     }
-                    @unlink('/var/run/tracking.pid');
+                    /* LED off + MQTT announce. */
+                    run_cmd([$script, 'off'], $rcOff);
                     json(['tracking' => 'stopped', 'rc' => $rc]);
                 case 'blink':
                     run_cmd([$script, 'blink'], $rc);
@@ -623,8 +643,7 @@ try {
             $sub = $segments[1] ?? 'info';
             if ($sub === 'info') {
                 $out = run_cmd([$b, '-j'], $rc);
-                $dec = json_decode(trim(implode('', $out)), true);
-                json(['camera' => is_array($dec) ? $dec : null]);
+                json(['camera' => extract_json($out)]);
             } else {
                 $type = $sub; // brightness|contrast|hue|...
                 $val = req('value', sget('value'));
