@@ -314,8 +314,8 @@ struct CommandLineArguments {
     int audio_enabled;        /* 0 = RTSP stream without audio, 1 = with audio */
 
     /* ePTZ digital zoom: OFF by default (opt-in with -Z).
-     * Runtime ePTZ (gm_apply_attr) is not verified on all GM8136 builds and
-     * must not be touched unless explicitly enabled, to avoid a crash. */
+     * Applied via gm_crop_attr_t on the capture object (SDK encode_with_eptz
+     * approach) -- supported on GM813x, unlike encoder gm_enc_eptz_attr_t. */
     int eptz;                 /* 1 = enable ePTZ digital zoom thread */
 
     /* Capture configuration (gm_cap_attr_t / gm_cap_flip_t / gm_rotation_attr_t /
@@ -364,6 +364,36 @@ struct CommandLineArguments {
     int tracking;
     int tracking_deadzone;
     int tracking_speed;
+
+    /* Privacy mask (gm_set_osd_mask, GM_ALL_PATH, up to 8 regions) */
+    int osd_mask_count;        /* number of masks configured (0..8) */
+    int osd_mask_idx[8];
+    int osd_mask_x[8];
+    int osd_mask_y[8];
+    int osd_mask_w[8];
+    int osd_mask_h[8];
+    int osd_mask_alpha[8];     /* gm_osd_mask_alpha_t 0..7 */
+
+    /* Logo overlay (gm_set_osd_mark_image + gm_set_osd_mark) */
+    int osd_logo_enabled;
+    char osd_logo_path[256];   /* YUV422 logo file on SD */
+    int osd_logo_x;
+    int osd_logo_y;
+    int osd_logo_alpha;        /* gm_osd_mark_alpha_t 0..7 */
+    int osd_logo_zoom;         /* gm_osd_mark_zoom_t 0..2 */
+
+    /* H264 encoder checksum / fast-forward */
+    int h264_checksum;         /* gm_checksum_type_t (0 = none) */
+    int h264_fastforward;      /* gm_fast_forward_t (0 = none) */
+
+    /* H264 advanced (encode_with_advance_feature.c) */
+    int field_coding;          /* 1 = enable field/temporal coding */
+    int gray_scale;            /* 1 = encode gray only */
+    int multi_slice;           /* multi-slice regions (0 = auto, 4 = sample default) */
+
+    /* 3DI (encode_with_deinterlace.c): gm_3di_attr_t on the capture object */
+    int deinterlace;           /* 1 = enable 3DI temporal deinterlace */
+    int denoise;               /* 1 = enable 3DI denoise */
 } cliArgs;
 
 /* Read HOSTNAME from config file. Try common locations. */
@@ -438,6 +468,265 @@ static void rtspd_enable_osd_font2(void *capture_obj, const char *text)
 static void rtspd_set_osd_palette(void)
 {
     gm_set_palette_table(&rtspd_osd_palette);
+}
+
+/* Apply configured privacy masks (gm_set_osd_mask, GM_ALL_PATH).
+ * Up to 8 regions indexed cliArgs.osd_mask_idx[0..count-1]. */
+static void rtspd_clear_osd_mask(void *cap_obj)
+{
+    const char *who = "ctrl";
+    int i;
+
+    if (cap_obj == NULL)
+        return;
+    for (i = 0; i < 8; i++) {
+        gm_osd_mask_t mask;
+
+        memset(&mask, 0, sizeof(mask));
+        mask.mask_idx   = i;
+        mask.enabled    = 0;
+        mask.x          = 0;
+        mask.y          = 0;
+        mask.width      = 0;
+        mask.height     = 0;
+        mask.alpha      = GM_OSD_MASK_ALPHA_75;
+        mask.palette_idx = 1;
+        mask.border.type = GM_OSD_MASK_BORDER_TYPE_TRUE;
+        mask.border.width = 1;
+        mask.align_type  = GM_OSD_ALIGN_TOP_LEFT;
+        gm_set_osd_mask(cap_obj, &mask, GM_ALL_PATH);
+    }
+    log_info("OSD mask[%s]: all %d cleared", who, 8);
+}
+
+static void rtspd_apply_osd_mask(void *cap_obj, const char *who)
+{
+    int i, ret;
+
+    if (cap_obj == NULL)
+        return;
+    if (cliArgs.osd_mask_count <= 0) {
+        log_info("OSD mask: none configured");
+        return;
+    }
+    for (i = 0; i < cliArgs.osd_mask_count; i++) {
+        gm_osd_mask_t mask;
+
+        memset(&mask, 0, sizeof(mask));
+        mask.mask_idx   = cliArgs.osd_mask_idx[i];
+        mask.enabled    = 1;
+        mask.x          = cliArgs.osd_mask_x[i];
+        mask.y          = cliArgs.osd_mask_y[i];
+        mask.width      = cliArgs.osd_mask_w[i];
+        mask.height     = cliArgs.osd_mask_h[i];
+        mask.alpha      = (gm_osd_mask_alpha_t) cliArgs.osd_mask_alpha[i];
+        mask.palette_idx = 1;              /* black */
+        mask.border.type = GM_OSD_MASK_BORDER_TYPE_TRUE;
+        mask.border.width = 1;
+        mask.align_type  = GM_OSD_ALIGN_TOP_LEFT;
+        ret = gm_set_osd_mask(cap_obj, &mask, GM_ALL_PATH);
+        log_info("OSD mask[%s] #%d: %dx%d+%d+%d alpha=%d -> %d",
+                 who, mask.mask_idx, mask.width, mask.height,
+                 mask.x, mask.y, mask.alpha, ret);
+    }
+}
+
+/* Parse "path[:x:y[:alpha:zoom]]" into cliArgs.osd_logo_* fields. */
+static void rtspd_parse_logo_arg(const char *v)
+{
+    char tmp[256], *save = NULL;
+    char *tok;
+
+    snprintf(tmp, sizeof(tmp), "%s", v);
+    if (!strchr(tmp, ':')) {
+        snprintf(cliArgs.osd_logo_path, sizeof(cliArgs.osd_logo_path), "%s", tmp);
+        cliArgs.osd_logo_enabled = 1;
+        return;
+    }
+    tok = strtok_r(tmp, ":", &save);
+    if (tok) snprintf(cliArgs.osd_logo_path, sizeof(cliArgs.osd_logo_path), "%s", tok);
+    tok = strtok_r(NULL, ":", &save);
+    if (tok) cliArgs.osd_logo_x = atoi(tok);
+    tok = strtok_r(NULL, ":", &save);
+    if (tok) cliArgs.osd_logo_y = atoi(tok);
+    tok = strtok_r(NULL, ":", &save);
+    if (tok) cliArgs.osd_logo_alpha = atoi(tok);
+    tok = strtok_r(NULL, ":", &save);
+    if (tok) cliArgs.osd_logo_zoom = atoi(tok);
+    cliArgs.osd_logo_enabled = 1;
+    log_info("OSD logo: %s at %d,%d (alpha=%d zoom=%d)",
+             cliArgs.osd_logo_path, cliArgs.osd_logo_x, cliArgs.osd_logo_y,
+             cliArgs.osd_logo_alpha, cliArgs.osd_logo_zoom);
+}
+
+/* Load a YUV422 logo file (sizes accepted by gm_osd_mark_dim_t) into the
+ * mark-image table and place it on the capture OSD engine. */
+static void rtspd_apply_osd_logo(void *cap_obj, const char *who)
+{
+    FILE *fp;
+    long fsize;
+    static char *logo_buf = NULL;
+    gm_osd_mark_img_table_t img;
+    gm_osd_mark_t mark;
+    gm_osd_mark_dim_t dim = GM_OSD_MARK_DIM_16;
+    int i;
+
+    if (cap_obj == NULL)
+        return;
+    if (!cliArgs.osd_logo_enabled || cliArgs.osd_logo_path[0] == '\0') {
+        log_info("OSD logo: disabled");
+        return;
+    }
+
+    fp = fopen(cliArgs.osd_logo_path, "rb");
+    if (!fp) {
+        log_error("OSD logo: cannot open %s", cliArgs.osd_logo_path);
+        return;
+    }
+    fseek(fp, 0, SEEK_END);
+    fsize = ftell(fp);
+    fseek(fp, 0, SEEK_SET);
+    /* YUV422 = 2 bytes/pixel; must be one of the supported square dims and
+     * fit the GM8210/GM8287 mark-image SRAM limit ((w*h*2) < 16384). */
+    {
+        int side = 0;
+        while (side * side * 2L < fsize) side++;
+        if (side * side * 2L != fsize || (side != 16 && side != 32 && side != 64)) {
+            fclose(fp);
+            log_error("OSD logo: %s size %ld is not a supported square YUV422 (16/32/64 px)", cliArgs.osd_logo_path, fsize);
+            return;
+        }
+        dim = (side == 16) ? GM_OSD_MARK_DIM_16 : (side == 32) ? GM_OSD_MARK_DIM_32 : GM_OSD_MARK_DIM_64;
+    }
+
+    /* GM_MAX_OSD_MARK_IMG_NUM is 4; non-osg mode uses mark_img[] free slots. */
+    if (logo_buf)
+        free(logo_buf);
+    logo_buf = (char *) malloc((size_t) fsize);
+    if (logo_buf == NULL) {
+        fclose(fp);
+        log_error("OSD logo: malloc failed");
+        return;
+    }
+    if (fread(logo_buf, 1, (size_t) fsize, fp) != (size_t) fsize) {
+        fclose(fp);
+        free(logo_buf);
+        logo_buf = NULL;
+        log_error("OSD logo: short read from %s", cliArgs.osd_logo_path);
+        return;
+    }
+    fclose(fp);
+
+    memset(&img, 0, sizeof(img));
+    img.mark_img[0].mark_exist      = 1;
+    img.mark_img[0].mark_yuv_buf    = logo_buf;
+    img.mark_img[0].mark_yuv_buf_len = (unsigned int) fsize;
+    img.mark_img[0].mark_width      = dim;
+    img.mark_img[0].mark_height     = dim;
+    for (i = 1; i < GM_MAX_OSD_MARK_IMG_NUM; i++)
+        img.mark_img[i].mark_exist = 0;
+    if (gm_set_osd_mark_image(&img) < 0) {
+        log_error("OSD logo: gm_set_osd_mark_image failed");
+        return;
+    }
+
+    memset(&mark, 0, sizeof(mark));
+    mark.mark_idx    = 0;
+    mark.enabled     = 1;
+    mark.x           = (unsigned int) cliArgs.osd_logo_x;
+    mark.y           = (unsigned int) cliArgs.osd_logo_y;
+    mark.alpha       = (gm_osd_mark_alpha_t) cliArgs.osd_logo_alpha;
+    mark.zoom        = (gm_osd_mark_zoom_t) cliArgs.osd_logo_zoom;
+    mark.align_type  = GM_OSD_ALIGN_TOP_LEFT;
+    log_info("OSD logo[%s]: %s at %d,%d alpha=%d zoom=%d", who,
+             cliArgs.osd_logo_path, cliArgs.osd_logo_x, cliArgs.osd_logo_y,
+             cliArgs.osd_logo_alpha, cliArgs.osd_logo_zoom);
+    if (gm_set_osd_mark(cap_obj, &mark) < 0)
+        log_error("OSD logo: gm_set_osd_mark failed");
+}
+
+/* Clear the live logo overlay (gm_set_osd_mark with enabled=0). */
+static void rtspd_clear_osd_logo(void *cap_obj)
+{
+    gm_osd_mark_t mark;
+
+    if (cap_obj == NULL)
+        return;
+    memset(&mark, 0, sizeof(mark));
+    mark.mark_idx    = 0;
+    mark.enabled     = 0;
+    mark.x           = 0;
+    mark.y           = 0;
+    mark.alpha       = GM_OSD_MARK_ALPHA_75;
+    mark.zoom        = GM_OSD_MARK_ZOOM_1X;
+    mark.align_type  = GM_OSD_ALIGN_TOP_LEFT;
+    log_info("OSD logo[ctrl]: cleared");
+    gm_set_osd_mark(cap_obj, &mark);
+}
+
+/* Runtime raw-YUV region grab (gm_get_rawdata). Dumps the requested region
+ * of the capture output to /tmp/sd/firmware/rawdata_<ts>.yuv. Returns 0 on
+ * success, negative on error. */
+static int rtspd_grab_rawdata(int x, int y, int w, int h)
+{
+    gm_enc_t *param;
+    region_rawdata_t rd;
+    FILE *fp;
+    char path[96];
+    int ret, buflen;
+    time_t now = time(NULL);
+    struct tm tm;
+    char *buf;
+
+    param = &enc_param[0][0];
+    if (param->cap.obj == NULL || param->bindfd[0] == NULL) {
+        log_error("Rawdata: encoder graph not ready");
+        return -1;
+    }
+    if (w <= 0 || h <= 0 || x < 0 || y < 0) {
+        log_error("Rawdata: invalid region (%d,%d %dx%d)", x, y, w, h);
+        return -1;
+    }
+    buflen = w * h * 2;              /* YUV422 */
+    buf = (char *) malloc((size_t) buflen);
+    if (buf == NULL) {
+        log_error("Rawdata: malloc failed (%d bytes)", buflen);
+        return -1;
+    }
+
+    memset(&rd, 0, sizeof(rd));
+    rd.region.x      = (unsigned int) x;
+    rd.region.y      = (unsigned int) y;
+    rd.region.width  = (unsigned int) w;
+    rd.region.height = (unsigned int) h;
+    rd.yuv_buf       = buf;
+    rd.yuv_buf_len   = (unsigned int) buflen;
+    rd.rawdata_mode  = GM_WHOLE_FROM_ENC_OBJ;   /* 0xFBFB9933 partial / 0xFBFC9934 whole */
+
+    ret = gm_get_rawdata(param->bindfd[0], &rd, 2000);
+    if (ret < 0) {
+        log_error("Rawdata: gm_get_rawdata failed (ret %d) - may require dedicated raw capture path", ret);
+        free(buf);
+        return ret;
+    }
+
+    if (ret == 0)
+        ret = (int) rd.yuv_buf_len;
+    localtime_r(&now, &tm);
+    snprintf(path, sizeof(path), "/tmp/sd/firmware/rawdata_%02d%02d%02d.yuv",
+             tm.tm_hour, tm.tm_min, tm.tm_sec);
+    fp = fopen(path, "wb");
+    if (fp) {
+        fwrite(buf, 1, (size_t) ret, fp);
+        fclose(fp);
+        log_info("Rawdata: wrote %d bytes (%dx%d at %d,%d) to %s", ret, w, h, x, y, path);
+    } else {
+        log_error("Rawdata: cannot write %s", path);
+        free(buf);
+        return -1;
+    }
+    free(buf);
+    return 0;
 }
 
 static void rtspd_set_osd_text(void *capture_obj, const char *line1, const char *line2)
@@ -792,6 +1081,28 @@ static void unset_cap_tamper(void)
     tamper_ready = 0;
     /* Restore the alarm state file / flag so a later restart can re-trigger */
     tamper_alarm = 0;
+}
+
+/* Notification callback for signal-loss/present/HW-config-change events
+ * (encode_and_liveview_with_notification.c pattern).  These are always
+ * registered unconditionally at startup -- they are informational and the
+ * camera handles signal recovery internally.  On HW_CONFIG_CHANGE the driver
+ * has rescaled the capture dimensions; applications should re-read sysinfo
+ * and reinit encoders if needed. */
+static void rtspd_notify_signal(gm_obj_type_t obj_type, int vch, gm_notify_t notify)
+{
+    (void) obj_type;
+    if (notify == GM_NOTIFY_SIGNAL_LOSS) {
+        log_info("Video signal LOSS on vch%d", vch);
+    } else if (notify == GM_NOTIFY_SIGNAL_PRESENT) {
+        log_info("Video signal PRESENT on vch%d", vch);
+    } else if (notify == GM_NOTIFY_HW_CONFIG_CHANGE) {
+        log_info("HW CONFIG CHANGE on vch%d -- re-reading sysinfo", vch);
+        gm_get_sysinfo(&gm_system);
+        log_info("Capture dimensions now: %dx%d @ %dfps",
+                 gm_system.cap[vch].dim.width, gm_system.cap[vch].dim.height,
+                 gm_system.cap[vch].framerate);
+    }
 }
 
 int init_snapshot(void)
@@ -1812,6 +2123,20 @@ void gm_enc_init(int cap_ch, int cap_path, int rec_track, int enc_type, int mode
             gm_set_attr(param->cap.obj, &dnr_attr);
         }
 
+        /* Apply 3DI (gm_3di_attr_t: deinterlace/denoise on capture) if
+         * explicitly requested. Both default OFF (progressive CMOS sensor). */
+        if (cliArgs.deinterlace || cliArgs.denoise) {
+            DECLARE_ATTR(cap_3di_attr, gm_3di_attr_t);
+            cap_3di_attr.deinterlace = cliArgs.deinterlace ? 1 : 0;
+            cap_3di_attr.denoise     = cliArgs.denoise ? 1 : 0;
+            cap_3di_attr.stand_alone = 0;
+            if (gm_set_attr(param->cap.obj, &cap_3di_attr) < 0)
+                log_error("3DI not supported by this capture, ignoring (deint=%d denoise=%d)",
+                          cliArgs.deinterlace, cliArgs.denoise);
+            else
+                log_info("3DI: deinterlace=%d denoise=%d", cliArgs.deinterlace, cliArgs.denoise);
+        }
+
         /* Apply capture flip if configured */
         if (cliArgs.h_flip || cliArgs.v_flip) {
             gm_cap_flip_t flip_attr;
@@ -1881,13 +2206,26 @@ void gm_enc_init(int cap_ch, int cap_path, int rec_track, int enc_type, int mode
                 h264e_attr.frame_info.fps_ratio.denominator = cliArgs.fps_ratio_den;
             }
 
+            /* Apply checksum and fast-forward if configured */
+            if (cliArgs.h264_checksum != GM_CHECKSUM_NONE) {
+                h264e_attr.checksum_type = (gm_checksum_type_t) cliArgs.h264_checksum;
+                log_info("H264 checksum: 0x%X", cliArgs.h264_checksum);
+            }
+            if (cliArgs.h264_fastforward != GM_FASTFORWARD_NONE) {
+                h264e_attr.fast_forward = (gm_fast_forward_t) cliArgs.h264_fastforward;
+                log_info("H264 fast-forward: skip mode %d", cliArgs.h264_fastforward);
+            }
+
             gm_set_attr(param->enc[rec_track].obj, &h264e_attr);
 /* H264 advanced */
 			DECLARE_ATTR(h264_adv, gm_h264_advanced_attr_t);
-			h264_adv.multi_slice = 4;
-			h264_adv.field_coding = 0;
-			h264_adv.gray_scale = 0;
+			h264_adv.multi_slice = cliArgs.multi_slice ? cliArgs.multi_slice : 4;
+			h264_adv.field_coding = cliArgs.field_coding ? 1 : 0;
+			h264_adv.gray_scale = cliArgs.gray_scale ? 1 : 0;
 			gm_set_attr(param->enc[rec_track].obj, &h264_adv);
+			if (cliArgs.field_coding || cliArgs.gray_scale)
+				log_info("H264 advanced: field_coding=%d gray_scale=%d multi_slice=%d",
+				         h264_adv.field_coding, h264_adv.gray_scale, h264_adv.multi_slice);
 
             /* Always apply VUI color info and SAR */
             {
@@ -2095,8 +2433,12 @@ static void audio_init()
     audio_encode_attr.encode_type = (gm_audio_encode_type_t) cliArgs.audio_encode_type;
     audio_encode_attr.bitrate = cliArgs.audio_bitrate;
     audio_encode_attr.frame_samples = cliArgs.audio_frame_samples;
-    if (cliArgs.audio_encode_type == GM_AAC)
-        audio_encode_attr.block_count = 2;
+    /* Setting block_count on the AAC audio encoder hangs the GM graph inside
+     * gm_apply(): audio_init() never returns, the watchdog resets the camera,
+     * and no AUDIO_ENC object shows up in /proc/videograph/gmlib_setting.
+     * The camera-known-good binary (and rtspd.c) leave it zeroed, so keep the
+     * DECLARE_ATTR zero-init (driver then reports block_count 1) and let the
+     * RTP/ADTS packing walk multiple ADTS frames per receive. */
     gm_set_attr(audio_encode_object, &audio_encode_attr);
 
     audio_bindfd = gm_bind(enc_audio_groupfd, audio_grab_object, audio_encode_object);
@@ -2124,6 +2466,18 @@ void gm_graph_init(void)
 
     gm_init();
     gm_get_sysinfo(&gm_system);
+
+    /* This camera's capture runs at gm_system.cap[0].framerate fps; asking
+     * for more makes gm_bind() fail silently so no encoder object appears in
+     * /proc/videograph/gmlib_setting and the stream stays empty. Clamp. */
+    if (gm_system.cap[0].framerate > 0 &&
+        cliArgs.framerate > gm_system.cap[0].framerate) {
+        log_error("Framerate %d exceeds capture maximum %d, clamping to %d",
+                  cliArgs.framerate, gm_system.cap[0].framerate,
+                  gm_system.cap[0].framerate);
+        cliArgs.framerate = gm_system.cap[0].framerate;
+    }
+
     if (cliArgs.osd)
         rtspd_set_osd_palette();
     if (cliArgs.framerate > 0)
@@ -2151,6 +2505,25 @@ void gm_graph_init(void)
         if (set_cap_tamper(0) < 0)
             log_error("Tamper detection setup failed");
     }
+
+    /* Signal-loss/HW-config-change notifications (encode_and_liveview_with_notification.c).
+     * Always registered: informational only; no lifecycle impact. */
+    if (gm_register_notify_handler(GM_NOTIFY_SIGNAL_LOSS, rtspd_notify_signal) < 0)
+        log_error("Failed to register signal-loss handler");
+    else
+        log_info("Notify: registered SIGNAL_LOSS handler");
+    if (gm_register_notify_handler(GM_NOTIFY_SIGNAL_PRESENT, rtspd_notify_signal) < 0)
+        log_error("Failed to register signal-present handler");
+    else
+        log_info("Notify: registered SIGNAL_PRESENT handler");
+    if (gm_register_notify_handler(GM_NOTIFY_HW_CONFIG_CHANGE, rtspd_notify_signal) < 0)
+        log_error("Failed to register HW-config-change handler");
+    else
+        log_info("Notify: registered HW_CONFIG_CHANGE handler");
+
+    /* Privacy masks + logo overlay: OSD engine, applied after the graph is live */
+    rtspd_apply_osd_mask(enc_param[0][0].cap.obj, "boot");
+    rtspd_apply_osd_logo(enc_param[0][0].cap.obj, "boot");
 }
 
 void gm_graph_release(void)
@@ -2196,21 +2569,25 @@ void gm_graph_release(void)
     gm_release();
 }
 
-/* Apply the current ePTZ crop window to the encoder (digital zoom / pan / tilt).
- * The crop rectangle is taken from the capture source and scaled up by the
- * encoder to the configured output resolution. */
+/* Apply the current ePTZ crop window to the capture object (digital zoom /
+ * pan / tilt). The SDK-driven approach (encode_with_eptz.c) uses gm_crop_attr_t
+ * on the CAPTURE object -- the encoder then scales the cropped region up to the
+ * configured output resolution. This is supported on GM813x, unlike the
+ * encoder-level gm_enc_eptz_attr_t which the GM8136S driver rejects.
+ * Conflicts with the static -c crop: ePTZ temporarily overrides it while
+ * active and restores it when zoom returns to 1x. */
 static int rtspd_apply_eptz(float factor, float pan, float tilt)
 {
-    DECLARE_ATTR(eptz_attr, gm_enc_eptz_attr_t);
+    DECLARE_ATTR(crop_attr, gm_crop_attr_t);
     gm_enc_t *param;
-    void *bindfd;
+    void *cap_obj;
     int src_w, src_h;
     int crop_w, crop_h, crop_x, crop_y;
-    static int eptz_active = 0;   /* was ePTZ applied to the encoder? */
+    static int eptz_active = 0;   /* was an ePTZ crop applied to capture? */
 
     param = &enc_param[0][0];
-    bindfd = param->bindfd[0];
-    if (bindfd == NULL)
+    cap_obj = param->cap.obj;
+    if (cap_obj == NULL)
         return -1;
 
     src_w = gm_system.cap[0].dim.width;
@@ -2228,17 +2605,23 @@ static int rtspd_apply_eptz(float factor, float pan, float tilt)
     if (tilt > 1.0f) tilt = 1.0f;
 
     if (factor <= 1.001f) {
-        /* No zoom: nothing to do unless we still have ePTZ applied */
+        /* No zoom: nothing to do unless we still have an ePTZ crop applied */
         if (!eptz_active)
             return 0;
-        /* Restore the full frame */
-        eptz_attr.enabled = 0;
-        eptz_attr.src_dim.width  = src_w;
-        eptz_attr.src_dim.height = src_h;
-        eptz_attr.src_crop_rect.x = 0;
-        eptz_attr.src_crop_rect.y = 0;
-        eptz_attr.src_crop_rect.width  = src_w;
-        eptz_attr.src_crop_rect.height = src_h;
+        /* Restore: either re-apply the static -c crop or disable the crop */
+        if (cliArgs.crop_enabled) {
+            crop_attr.enabled = 1;
+            crop_attr.src_crop_rect.x      = (unsigned int)cliArgs.crop_x;
+            crop_attr.src_crop_rect.y      = (unsigned int)cliArgs.crop_y;
+            crop_attr.src_crop_rect.width  = (unsigned int)cliArgs.crop_w;
+            crop_attr.src_crop_rect.height = (unsigned int)cliArgs.crop_h;
+        } else {
+            crop_attr.enabled = 0;
+            crop_attr.src_crop_rect.x = 0;
+            crop_attr.src_crop_rect.y = 0;
+            crop_attr.src_crop_rect.width  = (unsigned int)src_w;
+            crop_attr.src_crop_rect.height = (unsigned int)src_h;
+        }
         eptz_active = 0;
     } else {
         /* Crop a window of src_w/factor x src_h/factor, scaled to output */
@@ -2260,25 +2643,21 @@ static int rtspd_apply_eptz(float factor, float pan, float tilt)
         if (crop_y + crop_h > src_h)
             crop_y = src_h - crop_h;
 
-        eptz_attr.enabled = 1;
-        eptz_attr.src_dim.width  = src_w;
-        eptz_attr.src_dim.height = src_h;
-        eptz_attr.src_crop_rect.x = (unsigned int)crop_x;
-        eptz_attr.src_crop_rect.y = (unsigned int)crop_y;
-        eptz_attr.src_crop_rect.width  = (unsigned int)crop_w;
-        eptz_attr.src_crop_rect.height = (unsigned int)crop_h;
+        crop_attr.enabled = 1;
+        crop_attr.src_crop_rect.x      = (unsigned int)crop_x;
+        crop_attr.src_crop_rect.y      = (unsigned int)crop_y;
+        crop_attr.src_crop_rect.width  = (unsigned int)crop_w;
+        crop_attr.src_crop_rect.height = (unsigned int)crop_h;
         eptz_active = 1;
     }
 
-    if (gm_set_attr(param->enc[0].obj, &eptz_attr) < 0) {
-        log_error("rtspd_apply_eptz: gm_set_attr failed");
+    if (gm_set_attr(cap_obj, &crop_attr) < 0) {
+        log_error("rtspd_apply_eptz: gm_set_attr(crop) failed");
         return -1;
     }
-    if (gm_apply_attr(bindfd, &eptz_attr) < 0) {
-        if (gm_apply(enc_groupfd) < 0) {
-            log_error("rtspd_apply_eptz: gm_apply failed");
-            return -1;
-        }
+    if (gm_apply(enc_groupfd) < 0) {
+        log_error("rtspd_apply_eptz: gm_apply failed");
+        return -1;
     }
     return 0;
 }
@@ -2382,6 +2761,36 @@ static void write_pending_arg(const char *key, int val)
     int replaced = 0;
 
     snprintf(line, sizeof(line), "%s=%d\n", key, val);
+    tmp = fopen(RTSPD_ARGS_FILE_TMP, "w");
+    if (!tmp)
+        return;
+    af = fopen(RTSPD_ARGS_FILE, "r");
+    if (af) {
+        while (fgets(buf, sizeof(buf), af)) {
+            size_t klen = strlen(key);
+            if (strncmp(buf, key, klen) == 0 && buf[klen] == '=') {
+                fputs(line, tmp);
+                replaced = 1;
+            } else {
+                fputs(buf, tmp);
+            }
+        }
+        fclose(af);
+    }
+    if (!replaced)
+        fputs(line, tmp);
+    fclose(tmp);
+    rename(RTSPD_ARGS_FILE_TMP, RTSPD_ARGS_FILE);
+}
+
+/* Same as write_pending_arg() but for string values (e.g. logo path). */
+static void write_pending_arg_str(const char *key, const char *val)
+{
+    char line[256], buf[128];
+    FILE *af, *tmp;
+    int replaced = 0;
+
+    snprintf(line, sizeof(line), "%s=%s\n", key, val);
     tmp = fopen(RTSPD_ARGS_FILE_TMP, "w");
     if (!tmp)
         return;
@@ -2535,10 +2944,21 @@ static void apply_pending_args(void)
     int hflip = -1, vflip = -1, rotation = -1;
     int cropx = -1, cropy = -1, cropw = -1, croph = -1;
     int watermark = -1;
+    int osdmask_count = -1;
+    static int osdmask_idx[8]  = {-1,-1,-1,-1,-1,-1,-1,-1};
+    static int osdmask_x[8]    = {0,0,0,0,0,0,0,0};
+    static int osdmask_y[8]    = {0,0,0,0,0,0,0,0};
+    static int osdmask_w[8]    = {0,0,0,0,0,0,0,0};
+    static int osdmask_h[8]    = {0,0,0,0,0,0,0,0};
+    static int osdmask_a[8]    = {GM_OSD_MASK_ALPHA_75,GM_OSD_MASK_ALPHA_75,GM_OSD_MASK_ALPHA_75,GM_OSD_MASK_ALPHA_75,GM_OSD_MASK_ALPHA_75,GM_OSD_MASK_ALPHA_75,GM_OSD_MASK_ALPHA_75,GM_OSD_MASK_ALPHA_75};
+    int osd_logo_enabled = -1, checksum = -1, fastforward = -1;
+    int osdmask_slot = -1, osdmask_i = -1;
+    char osd_logo_path[256];
     char buf[128];
 
     if (!f)
         return;
+    osd_logo_path[0] = '\0';
     while (fgets(buf, sizeof(buf), f)) {
         if (sscanf(buf, "bitrate=%d", &bitrate) == 1) {}
         else if (sscanf(buf, "mode=%d", &mode) == 1) {}
@@ -2559,6 +2979,17 @@ static void apply_pending_args(void)
         else if (sscanf(buf, "cropy=%d", &cropy) == 1) {}
         else if (sscanf(buf, "cropw=%d", &cropw) == 1) {}
         else if (sscanf(buf, "croph=%d", &croph) == 1) {}
+        else if (sscanf(buf, "osdmask_count=%d", &osdmask_count) == 1) {}
+        else if (sscanf(buf, "osdmask_%d_idx=%d", &osdmask_slot, &osdmask_i) == 2) { osdmask_idx[osdmask_slot] = osdmask_i; }
+        else if (sscanf(buf, "osdmask_%d_x=%d", &osdmask_slot, &osdmask_i) == 2) { osdmask_x[osdmask_slot] = osdmask_i; }
+        else if (sscanf(buf, "osdmask_%d_y=%d", &osdmask_slot, &osdmask_i) == 2) { osdmask_y[osdmask_slot] = osdmask_i; }
+        else if (sscanf(buf, "osdmask_%d_w=%d", &osdmask_slot, &osdmask_i) == 2) { osdmask_w[osdmask_slot] = osdmask_i; }
+        else if (sscanf(buf, "osdmask_%d_h=%d", &osdmask_slot, &osdmask_i) == 2) { osdmask_h[osdmask_slot] = osdmask_i; }
+        else if (sscanf(buf, "osdmask_%d_alpha=%d", &osdmask_slot, &osdmask_i) == 2) { osdmask_a[osdmask_slot] = osdmask_i; }
+        else if (sscanf(buf, "osd_logo_enabled=%d", &osd_logo_enabled) == 1) {}
+        else if (sscanf(buf, "osd_logo_path=%s", osd_logo_path) == 1) {}
+        else if (sscanf(buf, "checksum=%d", &checksum) == 1) {}
+        else if (sscanf(buf, "fastforward=%d", &fastforward) == 1) {}
     }
     fclose(f);
 
@@ -2608,6 +3039,48 @@ static void apply_pending_args(void)
         log_info("Pending args: crop=%dx%d+%d+%d", cropw, croph, cliArgs.crop_x, cliArgs.crop_y);
     } else if (cropw == 0) {
         cliArgs.crop_enabled = 0;
+    }
+
+    /* Privacy masks: rebuild cliArgs from slot-indexed pending keys */
+    if (osdmask_count == 0) {
+        cliArgs.osd_mask_count = 0;
+        log_info("Pending args: osdmask off");
+    } else if (osdmask_count > 0) {
+        int slot;
+        cliArgs.osd_mask_count = 0;
+        for (slot = 0; slot < osdmask_count; slot++) {
+            if (osdmask_idx[slot] < 0 || osdmask_w[slot] <= 0 || osdmask_h[slot] <= 0)
+                continue;
+            cliArgs.osd_mask_idx[cliArgs.osd_mask_count]   = osdmask_idx[slot];
+            cliArgs.osd_mask_x[cliArgs.osd_mask_count]     = osdmask_x[slot];
+            cliArgs.osd_mask_y[cliArgs.osd_mask_count]     = osdmask_y[slot];
+            cliArgs.osd_mask_w[cliArgs.osd_mask_count]     = osdmask_w[slot];
+            cliArgs.osd_mask_h[cliArgs.osd_mask_count]     = osdmask_h[slot];
+            cliArgs.osd_mask_alpha[cliArgs.osd_mask_count] = osdmask_a[slot];
+            cliArgs.osd_mask_count++;
+        }
+        log_info("Pending args: %d privacy masks", cliArgs.osd_mask_count);
+    }
+
+    /* Logo overlay */
+    if (osd_logo_enabled >= 0) {
+        cliArgs.osd_logo_enabled = osd_logo_enabled;
+        log_info("Pending args: osd_logo_enabled=%d", osd_logo_enabled);
+    }
+    if (osd_logo_path[0]) {
+        snprintf(cliArgs.osd_logo_path, sizeof(cliArgs.osd_logo_path), "%s", osd_logo_path);
+        cliArgs.osd_logo_enabled = 1;
+        log_info("Pending args: osd_logo_path=%s", osd_logo_path);
+    }
+
+    /* Checksum / fast-forward */
+    if (fastforward >= 0) {
+        cliArgs.h264_fastforward = fastforward;
+        log_info("Pending args: fastforward=%d", fastforward);
+    }
+    if (checksum >= 0) {
+        cliArgs.h264_checksum = checksum;
+        log_info("Pending args: checksum=0x%X", checksum);
     }
 }
 
@@ -2771,6 +3244,87 @@ static void *rtspd_ctrl_thread(void *arg)
                         need_reboot = 1;
                     }
                 }
+                /* Privacy mask (live-applicable): osdmask idx:x,y,w,h[:alpha] | osdmask off */
+                else if (strncmp(buf, "osdmask ", 8) == 0) {
+                    int idx = -1, x = 0, y = 0, w = 0, h = 0, a = GM_OSD_MASK_ALPHA_75;
+                    if (strcmp(buf + 8, "off") == 0 || strcmp(buf + 8, "0") == 0) {
+                        cliArgs.osd_mask_count = 0;
+                        write_pending_arg("osdmask_count", 0);
+                        log_info("Ctrl: osdmask off");
+                        rtspd_clear_osd_mask(enc_param[0][0].cap.obj);
+                    } else if (sscanf(buf + 8, "%d:%d,%d,%d,%d:%d", &idx, &x, &y, &w, &h, &a) >= 5 &&
+                               idx >= 0 && idx <= 7 && w > 0 && h > 0) {
+                        int slot = cliArgs.osd_mask_count;
+                        if (cliArgs.osd_mask_count >= 8) {
+                            log_error("Ctrl: too many masks (max 8)");
+                        } else {
+                            char key[24];
+                            cliArgs.osd_mask_idx[slot] = idx;
+                            cliArgs.osd_mask_x[slot] = x;
+                            cliArgs.osd_mask_y[slot] = y;
+                            cliArgs.osd_mask_w[slot] = w;
+                            cliArgs.osd_mask_h[slot] = h;
+                            cliArgs.osd_mask_alpha[slot] = a;
+                            cliArgs.osd_mask_count = slot + 1;
+                            /* merge into args file with slot-indexed keys */
+                            write_pending_arg("osdmask_count", cliArgs.osd_mask_count);
+                            snprintf(key, sizeof(key), "osdmask_%d_idx", slot);   write_pending_arg(key, idx);
+                            snprintf(key, sizeof(key), "osdmask_%d_x", slot);     write_pending_arg(key, x);
+                            snprintf(key, sizeof(key), "osdmask_%d_y", slot);     write_pending_arg(key, y);
+                            snprintf(key, sizeof(key), "osdmask_%d_w", slot);     write_pending_arg(key, w);
+                            snprintf(key, sizeof(key), "osdmask_%d_h", slot);     write_pending_arg(key, h);
+                            snprintf(key, sizeof(key), "osdmask_%d_alpha", slot); write_pending_arg(key, a);
+                            log_info("Ctrl: osdmask #%d idx=%d %dx%d+%d+%d alpha=%d (live)", slot, idx, w, h, x, y, a);
+                            rtspd_apply_osd_mask(enc_param[0][0].cap.obj, "ctrl");
+                        }
+                    } else {
+                        log_error("Ctrl: invalid osdmask '%s' (use idx:x,y,w,h[:alpha] or off)", buf + 8);
+                    }
+                }
+                /* Logo overlay (live-applicable): logo <path[:x:y[:alpha:zoom]]> | logo off */
+                else if (strncmp(buf, "logo ", 5) == 0) {
+                    if (strcmp(buf + 5, "off") == 0 || strcmp(buf + 5, "0") == 0) {
+                        cliArgs.osd_logo_enabled = 0;
+                        write_pending_arg("osd_logo_enabled", 0);
+                        log_info("Ctrl: logo off");
+                        rtspd_clear_osd_logo(enc_param[0][0].cap.obj);
+                        if (cliArgs.osd_logo_path[0])
+                            write_pending_arg_str("osd_logo_path", "");
+                    } else {
+                        rtspd_parse_logo_arg(buf + 5);
+                        write_pending_arg("osd_logo_enabled", 1);
+                        write_pending_arg_str("osd_logo_path", cliArgs.osd_logo_path);
+                        log_info("Ctrl: logo %s (live)", cliArgs.osd_logo_path);
+                        rtspd_apply_osd_logo(enc_param[0][0].cap.obj, "ctrl");
+                    }
+                }
+                /* Raw region YUV grab: rawdata x,y,w,h */
+                else if (strncmp(buf, "rawdata ", 8) == 0) {
+                    int x = 0, y = 0, w = 0, h = 0;
+                    if (sscanf(buf + 8, "%d,%d,%d,%d", &x, &y, &w, &h) == 4 && w > 0 && h > 0) {
+                        log_info("Ctrl: rawdata grab %dx%d at %d,%d", w, h, x, y);
+                        rtspd_grab_rawdata(x, y, w, h);
+                    } else {
+                        log_error("Ctrl: invalid rawdata '%s' (use x,y,w,h)", buf + 8);
+                    }
+                }
+                /* H264 checksum/fast-forward (needs restart): checksum 0x101[:0] */
+                else if (strncmp(buf, "checksum ", 9) == 0) {
+                    int cksum = GM_CHECKSUM_NONE, ff = GM_FASTFORWARD_NONE;
+                    if (sscanf(buf + 9, "%i:%i", &cksum, &ff) == 2) {
+                        write_pending_arg("checksum", cksum);
+                        write_pending_arg("fastforward", ff);
+                        log_info("Ctrl: checksum=0x%X fastforward=%d pending restart", cksum, ff);
+                        need_reboot = 1;
+                    } else if (sscanf(buf + 9, "%i", &cksum) == 1) {
+                        write_pending_arg("checksum", cksum);
+                        write_pending_arg("fastforward", GM_FASTFORWARD_NONE);
+                        log_info("Ctrl: checksum=0x%X pending restart", cksum);
+                        need_reboot = 1;
+                    } else {
+                        log_error("Ctrl: invalid checksum '%s' (use 0x101[:0])", buf + 9);
+                    }
+                }
             }
             fclose(f);
             remove(RTSPD_CTRL_FILE);
@@ -2911,6 +3465,14 @@ void *encode_thread(void *ptr)
                 else if (bs[i][j].retval == GM_SUCCESS) {
                     if (bs[i][j].bs.keyframe == 1)
                         VideoRecorder.waiting_for_keyframe = 0;
+
+                    /* Log encoder parameter change notifications (encode_update_notification.c) */
+                    if (bs[i][j].bs.newbs_flag & GM_FLAG_NEW_BITRATE)
+                        log_info("Notify: bitrate change detected (ch%d path%d)", i, j);
+                    if (bs[i][j].bs.newbs_flag & GM_FLAG_NEW_FRAME_RATE)
+                        log_info("Notify: framerate change detected (ch%d path%d)", i, j);
+                    if (bs[i][j].bs.newbs_flag & GM_FLAG_NEW_GOP)
+                        log_info("Notify: GOP change detected (ch%d path%d)", i, j);
 
                     // * Write buffer to file in case recording is enabled
                     if (VideoRecorder.recording == 1 && VideoRecorder.fh != NULL && VideoRecorder.waiting_for_keyframe == 0) {
@@ -3346,7 +3908,8 @@ static void print_usage(void)
         "-F [h|v|hv|0]  - Capture flip                          (default: off)\n"
         "-G [0|90|180|270] - Capture rotation                   (default: 0)\n"
         "-c [WxH+X+Y|0] - Capture crop                          (default: off)\n"
-        "-p [WxH|0]     - Capture prescale reduce               (default: off)\n\n"
+        "-p [WxH|0]     - Capture prescale reduce               (default: off)\n"
+        "-a [deint[:denoise]] - 3DI deinterlace/denoise on capture (default: off)\n\n"
 
         "H264 options:\n"
         "-V [baseline|main|high|default] - H264 profile         (default: default)\n"
@@ -3359,7 +3922,13 @@ static void print_usage(void)
         "-O [x,y,w,h|off] - ROI encoding region                 (default: off)\n"
         "-Q [on|off]    - ROI QP 8-region mode (center 50%)     (default: off)\n"
         "-Y [num:den]   - Fractional framerate (fps_ratio)      (default: off)\n"
-        "-K [min:max[:init]] - Rate control QP bounds           (default: 20:51:25)\n\n"
+        "-K [min:max[:init]] - Rate control QP bounds           (default: 20:51:25)\n"
+        "-D [cksum[:ff]] - H264 checksum 0x101/0x102/0x103 + fast-forward (default: 0:0)\n"
+        "-k [field:multi:gray] - H264 advanced: field_coding (0/1), multi_slice (0..4), gray_scale (0/1) (default: 0:4:0)\n\n"
+
+        "OSD options:\n"
+        "-M [idx:x,y,w,h[:alpha]] - Privacy mask (repeatable, up to 8; 0 = clear) (default: off)\n"
+        "-g [file[:x:y[:alpha:zoom]]] - Logo overlay YUV422 file (0/off = off)   (default: off)\n\n"
 
         "Tamper options:\n"
         "-T [0|1|on|off] - Enable tamper detection              (default: off)\n"
@@ -3502,6 +4071,28 @@ int main(int argc, char *argv[])
     cliArgs.tracking         = 0;
     cliArgs.tracking_deadzone = 2;
     cliArgs.tracking_speed   = 3;
+
+    /* Privacy mask defaults: disabled */
+    cliArgs.osd_mask_count = 0;
+
+    /* Logo overlay defaults: disabled */
+    cliArgs.osd_logo_enabled = 0;
+    cliArgs.osd_logo_path[0] = '\0';
+    cliArgs.osd_logo_x   = 0;
+    cliArgs.osd_logo_y   = 0;
+    cliArgs.osd_logo_alpha = GM_OSD_MARK_ALPHA_75;
+    cliArgs.osd_logo_zoom  = GM_OSD_MARK_ZOOM_1X;
+
+    /* H264 checksum / fast-forward defaults: none */
+    cliArgs.h264_checksum    = GM_CHECKSUM_NONE;
+    cliArgs.h264_fastforward = GM_FASTFORWARD_NONE;
+
+    /* H264 advanced / 3DI defaults: all off; multi_slice 4 (SDK default) */
+    cliArgs.field_coding = 0;
+    cliArgs.gray_scale   = 0;
+    cliArgs.multi_slice  = 4;
+    cliArgs.deinterlace  = 0;
+    cliArgs.denoise      = 0;
 
     if (argc > 1) {
         for (i = 1; i < argc; i++) {
@@ -3946,6 +4537,136 @@ int main(int argc, char *argv[])
                         }
                         break;
 
+                    /* --- Privacy mask (gm_set_osd_mask): -M idx:x,y,w,h[:alpha] ---
+                     * Repeatable up to 8 masks; -M 0 clears all. */
+                    case 'M':
+                        {
+                            const char *v = NULL;
+                            if (argv[i][2] != '\0') v = &argv[i][2];
+                            else if ((i + 1) < argc && argv[i + 1][0] != '-') v = argv[++i];
+                            if (v) {
+                                int idx, x, y, w, h, a = GM_OSD_MASK_ALPHA_75;
+                                if (strcmp(v, "0") == 0) {
+                                    cliArgs.osd_mask_count = 0;
+                                    break;
+                                }
+                                if (sscanf(v, "%d:%d,%d,%d,%d:%d", &idx, &x, &y, &w, &h, &a) != 6 &&
+                                    sscanf(v, "%d:%d,%d,%d,%d", &idx, &x, &y, &w, &h) != 5) {
+                                    log_error("Invalid mask: %s (use idx:x,y,w,h[:alpha])", v);
+                                    return 1;
+                                }
+                                /* Internal index 0..7 (GM_ALL_PATH), storage slot sequential */
+                                if (idx < 0 || idx > 7) {
+                                    log_error("Mask idx out of range (0..7): %d", idx);
+                                    return 1;
+                                }
+                                if (cliArgs.osd_mask_count >= 8) {
+                                    log_error("Too many masks (max 8)");
+                                    return 1;
+                                }
+                                if (cliArgs.osd_mask_count == 0 && cliArgs.osd_mask_idx[0] == 0) {
+                                    /* first mask: replace default empty slot */
+                                }
+                                cliArgs.osd_mask_idx[cliArgs.osd_mask_count]   = idx;
+                                cliArgs.osd_mask_x[cliArgs.osd_mask_count]     = x;
+                                cliArgs.osd_mask_y[cliArgs.osd_mask_count]     = y;
+                                cliArgs.osd_mask_w[cliArgs.osd_mask_count]     = w;
+                                cliArgs.osd_mask_h[cliArgs.osd_mask_count]     = h;
+                                cliArgs.osd_mask_alpha[cliArgs.osd_mask_count] = a;
+                                cliArgs.osd_mask_count++;
+                                log_info("OSD mask #%d: idx=%d %dx%d+%d+%d alpha=%d",
+                                         cliArgs.osd_mask_count - 1, idx, w, h, x, y, a);
+                            }
+                        }
+                        break;
+
+                    /* --- Logo overlay (gm_set_osd_mark_image+gm_set_osd_mark): -g file[:x:y[:alpha:zoom]] --- */
+                    case 'g':
+                        {
+                            const char *v = NULL;
+                            if (argv[i][2] != '\0') v = &argv[i][2];
+                            else if ((i + 1) < argc && argv[i + 1][0] != '-') v = argv[++i];
+                            if (v) {
+                                if (strcmp(v, "0") == 0 || strcasecmp(v, "off") == 0) {
+                                    cliArgs.osd_logo_enabled = 0;
+                                    break;
+                                }
+                                rtspd_parse_logo_arg(v);
+                            }
+                        }
+                        break;
+
+                    /* --- H264 checksum + fast-forward: -D checksum[:ff] --- */
+                    case 'D':
+                        {
+                            const char *v = NULL;
+                            if (argv[i][2] != '\0') v = &argv[i][2];
+                            else if ((i + 1) < argc && argv[i + 1][0] != '-') v = argv[++i];
+                            if (v) {
+                                int cksum = GM_CHECKSUM_NONE, ff = GM_FASTFORWARD_NONE;
+                                if (sscanf(v, "%i:%i", &cksum, &ff) == 2) {
+                                    cliArgs.h264_checksum = cksum;
+                                    cliArgs.h264_fastforward = ff;
+                                } else if (sscanf(v, "%i", &cksum) == 1) {
+                                    cliArgs.h264_checksum = cksum;
+                                    cliArgs.h264_fastforward = GM_FASTFORWARD_NONE;
+                                } else {
+                                    log_error("Invalid checksum: %s (use checksum[:ff], e.g. 0x101:0)", v);
+                                    return 1;
+                                }
+                                log_info("H264 checksum/fastforward: 0x%X:%d",
+                                         cliArgs.h264_checksum, cliArgs.h264_fastforward);
+                            }
+                        }
+                        break;
+
+                    /* --- H264 advanced (encode_with_advance_feature.c) --- */
+                    /* -k field:multi:gray — field_coding, multi_slice, gray_scale */
+                    case 'k':
+                        {
+                            const char *v = NULL;
+                            if (argv[i][2] != '\0') v = &argv[i][2];
+                            else if ((i + 1) < argc && argv[i + 1][0] != '-') v = argv[++i];
+                            if (v) {
+                                int fc = 0, ms = 4, gs = 0;
+                                if (sscanf(v, "%d:%d:%d", &fc, &ms, &gs) == 3 ||
+                                    sscanf(v, "%d:%d", &fc, &ms) == 2 ||
+                                    sscanf(v, "%d", &fc) == 1) {
+                                    cliArgs.field_coding = fc;
+                                    cliArgs.multi_slice  = ms;
+                                    cliArgs.gray_scale   = gs;
+                                    log_info("H264 advanced: field_coding=%d multi_slice=%d gray_scale=%d",
+                                             fc, ms, gs);
+                                } else {
+                                    log_error("Invalid advanced: %s (use field[:multi[:gray]])", v);
+                                    return 1;
+                                }
+                            }
+                        }
+                        break;
+
+                    /* --- 3DI capture (encode_with_deinterlace.c) --- */
+                    /* -a deint:denoise — gm_3di_attr_t on capture object */
+                    case 'a':
+                        {
+                            const char *v = NULL;
+                            if (argv[i][2] != '\0') v = &argv[i][2];
+                            else if ((i + 1) < argc && argv[i + 1][0] != '-') v = argv[++i];
+                            if (v) {
+                                int deint = 0, denoise = 0;
+                                if (sscanf(v, "%d:%d", &deint, &denoise) == 2 ||
+                                    sscanf(v, "%d", &deint) == 1) {
+                                    cliArgs.deinterlace = deint;
+                                    cliArgs.denoise     = denoise;
+                                    log_info("3DI: deinterlace=%d denoise=%d", deint, denoise);
+                                } else {
+                                    log_error("Invalid 3DI: %s (use deint[:denoise])", v);
+                                    return 1;
+                                }
+                            }
+                        }
+                        break;
+
                     default:
                         log_error("Unknown argument: %s", argv[i]);
                         print_usage();
@@ -4020,6 +4741,30 @@ int main(int argc, char *argv[])
             log_error("Tamper sensitivity must be 0..100 (0 disables that detector)");
             return 1;
         }
+    }
+
+    /* H264 checksum / fast-forward validation */
+    switch (cliArgs.h264_checksum) {
+        case GM_CHECKSUM_NONE:
+        case GM_CHECKSUM_ALL_CRC:
+        case GM_CHECKSUM_ALL_SUM:
+        case GM_CHECKSUM_ALL_4_BYTE:
+        case GM_CHECKSUM_ONLY_I_CRC:
+        case GM_CHECKSUM_ONLY_I_SUM:
+        case GM_CHECKSUM_ONLY_I_4_BYTE:
+            break;
+        default:
+            log_error("Invalid H264 checksum 0x%X (use 0/0x101/0x102/0x103/0x201/0x202/0x203)", cliArgs.h264_checksum);
+            return 1;
+    }
+    switch (cliArgs.h264_fastforward) {
+        case GM_FASTFORWARD_NONE:
+        case GM_FASTFORWARD_1_FRAME:
+        case GM_FASTFORWARD_3_FRAMES:
+            break;
+        default:
+            log_error("Invalid H264 fast-forward %d (use 0/2/4)", cliArgs.h264_fastforward);
+            return 1;
     }
 
     if (cliArgs.audio_enabled) {
