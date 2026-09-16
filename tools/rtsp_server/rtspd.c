@@ -2471,6 +2471,9 @@ static void rtspd_reboot(void)
     }
     if (pid > 0) {
         log_info("Ctrl: restarting rtspd...");
+        /* Give the child time to exec and call restart_handoff() before we
+         * die, so it can still find our PID in /proc (from_restart check). */
+        usleep(500000);
         kill(parent, SIGTERM);
         return;
     }
