@@ -1,0 +1,46 @@
+#!/bin/sh
+## purpose: Init script for Timelapse capture
+## Uses ENABLE_TIMELAPSE=1 in config.cfg to auto-start at boot.
+## See /tmp/sd/firmware/scripts/timelapse.sh for config keys.
+
+SD_MOUNTDIR="/tmp/sd"
+if [ -r "${SD_MOUNTDIR}/firmware/scripts/functions.sh" ]
+then
+    . "${SD_MOUNTDIR}/firmware/scripts/functions.sh"
+else
+    echo "Unable to load basic functions"
+    exit 1
+fi
+
+NAME="timelapse"
+DESC="Timelapse capture"
+DAEMON="${SD_MOUNTDIR}/firmware/scripts/timelapse.sh"
+PIDFILE="/var/run/${NAME}.pid"
+
+check_daemon_bin "${DAEMON}" "${DESC}"
+
+case "$1" in
+    start)
+        if [ "${ENABLE_TIMELAPSE:-0}" -eq 1 ]; then
+            /bin/sh "${DAEMON}" start
+        else
+            echo "*** ${DESC} disabled (ENABLE_TIMELAPSE != 1)."
+        fi
+        ;;
+    stop)
+        /bin/sh "${DAEMON}" stop
+        ;;
+    restart|reload)
+        "$0" stop
+        "$0" start
+        ;;
+    status)
+        /bin/sh "${DAEMON}" status
+        ;;
+    *)
+        echo "Usage: $0 {start|stop|restart|status}"
+        exit 1
+        ;;
+esac
+
+exit $?

@@ -114,8 +114,43 @@
       <button id="btn-mqtt-save" class="primary">Save MQTT</button>
     </div>
 
+    <h2>System</h2>
+    <p class="hint">Hostname, timezone and NTP. Hostname applies immediately; time settings via <code>S30ntpd</code>.</p>
+    <div class="form-grid" id="settings-system"></div>
+    <div class="btn-row">
+      <button id="btn-system-save" class="primary">Save system</button>
+    </div>
+
+    <h2>Services autostart</h2>
+    <p class="hint">Which services start at boot. Applied on next boot (or use Config → Services to toggle now).</p>
+    <div class="form-grid" id="settings-autostart"></div>
+    <div class="btn-row">
+      <button id="btn-autostart-save" class="primary">Save autostart</button>
+    </div>
+
+    <h2>Advanced</h2>
+    <p class="hint">Tamper detection, encoding ROI and capture prescale. Tamper fires <code>tamper_on.sh/tamper_off.sh</code> (MQTT alarm). Changes apply at RTSP start.</p>
+    <div class="form-grid" id="settings-advanced"></div>
+    <div class="btn-row">
+      <button id="btn-advanced-save" class="primary">Save advanced</button>
+    </div>
+
+    <h2>Timelapse</h2>
+    <p class="hint">Periodic snapshots captured to <code>/tmp/sd/timelapse/YYYY-MM-DD/</code>. Frames use the rtspd snapshot path, so set interval ≥ 3s.</p>
+    <div class="form-grid" id="settings-timelapse"></div>
+    <div class="btn-row">
+      <button id="btn-timelapse-save" class="primary">Save timelapse</button>
+    </div>
+
+    <h2>Record now</h2>
+    <p class="hint">Manually record a video segment to <code>/tmp/sd/RECORDED_VIDEOS/</code>.</p>
+    <div class="btn-row">
+      <button id="btn-record-now">Record video now</button>
+      <span id="record-now-result" class="muted"></span>
+    </div>
+
     <h2>Apply now</h2>
-    <p class="hint">Restarting the RTSP daemon applies all saved format/security/audio/OSD/MQTT settings.</p>
+    <p class="hint">Restarting the RTSP daemon applies all saved format/security/audio/OSD/advanced/autostart settings.</p>
     <div class="btn-row">
       <button id="btn-rtsp-restart">Restart RTSP</button>
     </div>
@@ -133,6 +168,9 @@
 
     <h2>Camera adjustment</h2>
     <div class="form-grid" id="settings-adjust"></div>
+    <div class="btn-row">
+      <button id="btn-camera-reset">Reset camera adjustments</button>
+    </div>
 
     <h2>Encoder</h2>
     <div class="form-grid" id="settings-codec"></div>
@@ -152,6 +190,13 @@
         <input type="number" id="pz-goto-x" placeholder="x"> <input type="number" id="pz-goto-y" placeholder="y">
         <button id="pz-goto">Goto</button>
       </div>
+      <h3>Presets</h3>
+      <div class="preset-row">
+        <input type="number" id="preset-slot" placeholder="slot (0-15)" min="0" max="15">
+        <input type="text" id="preset-name" placeholder="name">
+        <button id="preset-save">Save current</button>
+      </div>
+      <div id="preset-list" class="preset-list"></div>
     </div>
 
     <h2>Services</h2>
@@ -166,6 +211,9 @@
     <div class="btn-row">
       <button id="config-reload">Reload</button>
       <button id="config-save">Save</button>
+      <button id="config-download">Export</button>
+      <label class="btnfile">Import<input type="file" id="config-file" accept=".cfg,.txt,text/plain"></label>
+      <button id="config-restore">Restore last backup</button>
     </div>
     <p id="config-msg" class="msg"></p>
   </section>

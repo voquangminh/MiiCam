@@ -372,6 +372,46 @@ async function loadSettings() {
     fieldNumber('settings-mqtt', 'Status interval (s)', 'MQTT_STATUSINTERVAL', keys, { min: 5, max: 3600 });
     fieldInfo('settings-mqtt', 'Note', 'MQTT service must be restarted after changes.');
 
+    /* --- System: hostname, timezone, NTP --- */
+    const sys = document.getElementById('settings-system');
+    sys.innerHTML = '';
+    fieldText('settings-system', 'Hostname', 'CAMERA_HOSTNAME', keys);
+    fieldText('settings-system', 'Timezone', 'TIMEZONE', keys);
+    fieldText('settings-system', 'NTP server', 'NTP_SERVER', keys);
+
+    /* --- Services autostart --- */
+    const as = document.getElementById('settings-autostart');
+    as.innerHTML = '';
+    fieldSelect('settings-autostart', 'HTTPd (web UI)', 'ENABLE_HTTPD', keys, [['1', 'On'], ['0', 'Off']]);
+    fieldSelect('settings-autostart', 'RTSP', 'ENABLE_RTSP', keys, [['1', 'On'], ['0', 'Off']]);
+    fieldSelect('settings-autostart', 'ONVIF', 'ENABLE_ONVIF', keys, [['1', 'On'], ['0', 'Off']]);
+    fieldSelect('settings-autostart', 'SSH (dropbear)', 'ENABLE_SSHD', keys, [['1', 'On'], ['0', 'Off']]);
+    fieldSelect('settings-autostart', 'Telnet', 'ENABLE_TELNETD', keys, [['1', 'On'], ['0', 'Off']]);
+    fieldSelect('settings-autostart', 'FTP', 'ENABLE_FTPD', keys, [['1', 'On'], ['0', 'Off']]);
+    fieldSelect('settings-autostart', 'Cron', 'ENABLE_CRON', keys, [['1', 'On'], ['0', 'Off']]);
+    fieldSelect('settings-autostart', 'MQTT', 'ENABLE_MQTT', keys, [['1', 'On'], ['0', 'Off']]);
+    fieldSelect('settings-autostart', 'Logging', 'ENABLE_LOGGING', keys, [['1', 'On'], ['0', 'Off']]);
+    fieldSelect('settings-autostart', 'Timelapse', 'ENABLE_TIMELAPSE', keys, [['1', 'On'], ['0', 'Off']]);
+
+    /* --- Advanced: tamper / ROI / prescale --- */
+    const adv = document.getElementById('settings-advanced');
+    adv.innerHTML = '';
+    fieldSelect('settings-advanced', 'Tamper detection', 'TAMPER_ENABLED', keys, [['0', 'Off'], ['1', 'On']]);
+    fieldNumber('settings-advanced', 'Tamper threshold (1-255)', 'TAMPER_THRESHOLD', keys, { min: 1, max: 255 });
+    fieldNumber('settings-advanced', 'Black sensitivity (0-100)', 'TAMPER_SENSITIVE_B', keys, { min: 0, max: 100 });
+    fieldNumber('settings-advanced', 'Scene sensitivity (0-100)', 'TAMPER_SENSITIVE_H', keys, { min: 0, max: 100 });
+    fieldSelect('settings-advanced', 'ROI window', 'ROI_ENABLED', keys, [['0', 'Off'], ['1', 'On']]);
+    fieldText('settings-advanced', 'ROI rect (x,y,w,h)', 'ROI_RECT', keys);
+    fieldText('settings-advanced', 'Prescale (WxH or 0)', 'PRESCALE', keys);
+
+    /* --- Timelapse --- */
+    const tl = document.getElementById('settings-timelapse');
+    tl.innerHTML = '';
+    fieldNumber('settings-timelapse', 'Interval (s, min 3)', 'TIMELAPSE_INTERVAL', keys, { min: 3, max: 86400 });
+    fieldNumber('settings-timelapse', 'Duration (min, 0=forever)', 'TIMELAPSE_DURATION', keys, { min: 0, max: 10080 });
+    fieldInfo('settings-timelapse', 'Output', '/tmp/sd/timelapse/YYYY-MM-DD/');
+    fieldInfo('settings-timelapse', 'Controls', 'Start/stop via Services table (timelapse) or Config tab → config.cfg.');
+
     /* --- Wire the buttons --- */
     const fSave = document.getElementById('btn-format-save');
     const fApply = document.getElementById('btn-format-apply');
@@ -439,6 +479,29 @@ async function loadSettings() {
     if (motionSave) motionSave.onclick = () => saveCfgGroup('motion');
     const mqttSave = document.getElementById('btn-mqtt-save');
     if (mqttSave) mqttSave.onclick = () => saveCfgGroup('mqtt');
+    const systemSave = document.getElementById('btn-system-save');
+    if (systemSave) systemSave.onclick = () => saveCfgGroup('system');
+    const autostartSave = document.getElementById('btn-autostart-save');
+    if (autostartSave) autostartSave.onclick = () => saveCfgGroup('autostart');
+    const advancedSave = document.getElementById('btn-advanced-save');
+    if (advancedSave) advancedSave.onclick = () => saveCfgGroup('advanced');
+    const timelapseSave = document.getElementById('btn-timelapse-save');
+    if (timelapseSave) timelapseSave.onclick = () => saveCfgGroup('timelapse');
+
+    const recBtn = document.getElementById('btn-record-now');
+    if (recBtn) recBtn.onclick = async () => {
+      const out = document.getElementById('record-now-result');
+      out.textContent = 'Recording…';
+      out.classList.remove('err-text');
+      const r = await api('/record', { method: 'POST' });
+      if (r.status === 'ok') {
+        out.textContent = r.url ? ('Saved: ' + r.url) : (r.output || 'Saved');
+      } else {
+        out.textContent = r.message || 'Record failed';
+        out.classList.add('err-text');
+        toast('Record failed: ' + (r.message || ''), 'err');
+      }
+    };
 
     document.getElementById('btn-rtsp-restart').onclick = async () => {
       const r = await api('/service/rtsp/restart');
@@ -574,6 +637,17 @@ async function loadDeviceSettings() {
       codecWrap.appendChild(applyBtn);
     }
 
+    const resetBtn = document.getElementById('btn-camera-reset');
+    if (resetBtn) {
+      resetBtn.addEventListener('click', async () => {
+        if (!confirm('Reset all camera image adjustments to defaults?')) return;
+        const r = await api('/camera/reset', { method: 'POST' });
+        toast((r.status === 'ok' ? 'Camera adjustments reset' : (r.message || 'Reset failed')),
+          r.status === 'ok' ? '' : 'err');
+        loadDeviceSettings();
+      });
+    }
+
     await loadMotor();
     await loadServices();
   } catch (e) {
@@ -620,7 +694,61 @@ async function loadMotor() {
       document.getElementById('pz-x').textContent = r.x;
       document.getElementById('pz-y').textContent = r.y;
     }
+    /* Preset list from motor_ctrl status -j */
+    const listEl = document.getElementById('preset-list');
+    if (listEl) {
+      const presets = Array.isArray(r.presets) ? r.presets : [];
+      listEl.innerHTML = '';
+      if (presets.length === 0) {
+        const none = document.createElement('span');
+        none.className = 'muted';
+        none.textContent = 'No presets saved';
+        listEl.appendChild(none);
+      } else {
+        presets.forEach((p) => {
+          const row = document.createElement('div');
+          row.className = 'preset-item';
+          const name = document.createElement('span');
+          name.textContent = '[' + p.slot + '] ' + p.name + ' (X:' + p.x + ' Y:' + p.y + ')';
+          const go = document.createElement('button');
+          go.textContent = 'Goto';
+          go.addEventListener('click', async () => {
+            await api('/motor/preset/goto?n=' + p.slot);
+            loadMotor();
+          });
+          const del = document.createElement('button');
+          del.textContent = 'Del';
+          del.addEventListener('click', async () => {
+            if (!confirm('Delete preset [' + p.slot + ']?')) return;
+            await api('/motor/preset/clear?n=' + p.slot);
+            loadMotor();
+          });
+          row.appendChild(name); row.appendChild(go); row.appendChild(del);
+          listEl.appendChild(row);
+        });
+      }
+    }
   } catch (e) { /* ignore */ }
+}
+
+function wirePresets() {
+  const saveBtn = document.getElementById('preset-save');
+  if (!saveBtn) return;
+  saveBtn.addEventListener('click', async () => {
+    const slot = document.getElementById('preset-slot').value;
+    const name = document.getElementById('preset-name').value.trim();
+    if (slot === '') { toast('Enter a slot (0-15)', 'err'); return; }
+    const body = new URLSearchParams();
+    body.append('n', slot);
+    if (name) body.append('name', name);
+    const r = await api('/motor/preset/save', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: body,
+    });
+    toast((r.message || ('Preset saved to ' + slot)), r.status === 'error' ? 'err' : '');
+    loadMotor();
+  });
 }
 
 async function loadServices() {
@@ -822,6 +950,40 @@ document.getElementById('btn-stream-stop').addEventListener('click', stopStream)
 document.getElementById('config-reload').addEventListener('click', loadConfig);
 document.getElementById('config-save').addEventListener('click', saveConfig);
 
+async function exportConfig() {
+  window.location.href = '/api/config/export';
+}
+async function restoreConfigBackup() {
+  const r = await api('/config/restore', { method: 'POST' });
+  if (r.status === 'ok') { setMsg('Backup restored.'); loadConfig(); }
+  else setMsg(r.message || 'Restore failed', 'err');
+}
+function wireConfigImport() {
+  const f = document.getElementById('config-file');
+  if (!f) return;
+  f.addEventListener('change', async () => {
+    const file = f.files[0];
+    if (!file) return;
+    const raw = await file.text();
+    fetch('/api/config/import', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ raw: raw }),
+    }).then((res) => res.json()).then((r) => {
+      if (r.status === 'ok') { setMsg('Config imported (' + file.name + ').'); loadConfig(); }
+      else setMsg(r.message || 'Import failed', 'err');
+    });
+    f.value = '';
+  });
+}
+if (document.getElementById('config-download')) {
+  document.getElementById('config-download').addEventListener('click', exportConfig);
+}
+if (document.getElementById('config-restore')) {
+  document.getElementById('config-restore').addEventListener('click', restoreConfigBackup);
+}
+wireConfigImport();
+
 document.getElementById('info-refresh').addEventListener('click', loadInfo);
 
 document.getElementById('pz-goto').addEventListener('click', async () => {
@@ -842,6 +1004,7 @@ document.querySelectorAll('[data-motor]').forEach((b) => {
     loadMotor();
   });
 });
+wirePresets();
 
 /* ---------------- Init ---------------- */
 fetch('/api/status').then((r) => r.json()).then((d) => {

@@ -629,6 +629,40 @@ try {
                     }
                     run_cmd([$b, 'goto', (string)$x, (string)$y], $rc);
                     json(['motor' => 'goto', 'x' => $x, 'y' => $y, 'rc' => $rc]);
+                case 'preset':
+                    $act = $segments[2] ?? req('preset_action', sget('preset_action'));
+                    if ('list' === $act) {
+                        /* motor_ctrl status -j already reports presets. */
+                        $out = run_cmd([$b, 'status', '-j'], $rc);
+                        $dec = extract_json($out);
+                        json(['presets' => (is_array($dec) && isset($dec['presets'])) ? $dec['presets'] : []]);
+                    }
+                    if (!in_array($act, ['save', 'goto', 'clear'], true)) {
+                        fail('Unknown preset action: ' . (string)$act, 404);
+                    }
+                    $n = req('n', sget('n'));
+                    if ($n === null || !is_numeric($n)) {
+                        fail('Missing preset slot n');
+                    }
+                    $n = (int)$n;
+                    if ($n < 0 || $n > 15) {
+                        fail('Preset slot must be 0-15');
+                    }
+                    $args = [$b, 'preset', $act, (string)$n];
+                    if ($act === 'save') {
+                        $name = req('name', sget('name'));
+                        if ($name === null || $name === '') {
+                            fail('Missing preset name');
+                        }
+                        $args[] = $name;
+                    }
+                    $out = run_cmd($args, $rc);
+                    json(['preset' => [
+                        'action' => $act,
+                        'n'   => $n,
+                        'rc'  => $rc,
+                        'output' => trim(implode("\n", $out)),
+                    ]]);
                 case 'stop':
                     /* motor_ctrl has no stop; use home as safe fallback. */
                     run_cmd([$b, 'home'], $rc);
@@ -644,6 +678,9 @@ try {
             if ($sub === 'info') {
                 $out = run_cmd([$b, '-j'], $rc);
                 json(['camera' => extract_json($out)]);
+            } elseif ($sub === 'reset') {
+                $out = run_cmd([$b, '-r'], $rc);
+                json(['camera' => 'reset', 'rc' => $rc, 'output' => implode("\n", $out)]);
             } else {
                 $type = $sub; // brightness|contrast|hue|...
                 $val = req('value', sget('value'));
@@ -674,6 +711,51 @@ try {
             break;
 
         case 'config':
+            $sub = $segments[1] ?? '';
+            if ($sub === 'export') {
+                if (!is_file(CFG)) {
+                    fail('Config file not found', 404);
+                }
+                $name = 'miicam-config.cfg';
+                $host = trim((string)@file_get_contents('/proc/sys/kernel/hostname'));
+                if ($host !== '') {
+                    $name = $host . '-config.cfg';
+                }
+                while (@ob_get_level()) {
+                    @ob_end_flush();
+                }
+                header('Content-Type: text/plain');
+                header('Content-Disposition: attachment; filename="' . $name . '"');
+                readfile(CFG);
+                exit;
+            }
+            if ($sub === 'restore') {
+                /* Restore the backup taken on every write (.bak). */
+                if (!is_file(CFG . '.bak')) {
+                    fail('No backup available', 404);
+                }
+                @copy(CFG, CFG . '.prev');
+                if (copy(CFG . '.bak', CFG) === false) {
+                    fail('Failed to restore backup', 500);
+                }
+                ok(['restored' => true, 'from' => CFG . '.bak']);
+            }
+            if ($sub === 'import') {
+                $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
+                if ($method !== 'POST') {
+                    fail('Method not allowed', 405);
+                }
+                $raw = req('raw');
+                if ($raw === null) {
+                    /* Support multipart file upload: name=file */
+                    $raw = isset($_FILES['file']) ? (string)@file_get_contents($_FILES['file']['tmp_name']) : null;
+                }
+                if ($raw === null || trim((string)$raw) === '') {
+                    fail('Provide raw config text or a file');
+                }
+                $_REQUEST['raw'] = $raw;
+                ep_config_write();
+            }
             if ($method === 'POST') {
                 ep_config_write();
             }
@@ -693,8 +775,9 @@ try {
             /* List all managed services + running state. */
             $list = [
                 'rtsp', 'lighttpd', 'dropbear', 'telnet', 'ftpd',
-                'crond', 'mqtt-control', 'mqtt-interval', 'restartd',
-                'auto_night_mode', 'restore_state',
+                'crond', 'ntpd', 'onvif', 'logging',
+                'mqtt-control', 'mqtt-interval', 'restartd',
+                'auto_night_mode', 'restore_state', 'timelapse',
             ];
             $res = [];
             foreach ($list as $s) {
@@ -717,6 +800,31 @@ try {
 
         case 'sdcard':
             ep_sdcard();
+            break;
+
+        case 'record':
+            /* Manual video recording. take_video writes /dev/shm/rtspd_video
+             * and blocks until rtspd records a segment (RTSPD_REQUEST_VIDEO,
+             * same trigger as motion RECORD). */
+            $b = need_binary('take_video');
+            $out = run_cmd([$b], $rc);
+            $txt = trim(implode("\n", $out));
+            if ($rc !== 0) {
+                fail('Record failed (is rtspd running?): ' . $txt, 500);
+            }
+            /* take_video prints the last video path; resolve to URL form. */
+            $path = trim(preg_replace('/\s+/', ' ', $txt));
+            preg_match('/\S+\.h264\b/', $path, $m);
+            $rel = null;
+            if (!empty($m[0]) && is_file($m[0])) {
+                $rel = str_replace([IMAGES, VIDEOS], ['/snapshots/', '/videos/'], $m[0]);
+            }
+            json([
+                'record' => 'started',
+                'path'   => $m[0] ?? null,
+                'url'    => $rel,
+                'output' => $txt,
+            ]);
             break;
 
         case 'last':

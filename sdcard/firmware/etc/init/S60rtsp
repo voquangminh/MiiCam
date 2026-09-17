@@ -80,6 +80,21 @@ if [ "$MOTION_TRACKING" -eq 1 ] ; then
     TRACKING_OPTS="-s ${TRACKING_SPEED} -d ${TRACKING_DEADZONE}"
 fi
 
+## Tamper detection
+if [ "${TAMPER_ENABLED}" -eq 1 ] ; then
+    DAEMON_OPTS="${DAEMON_OPTS} -T 1 -W ${TAMPER_THRESHOLD}:${TAMPER_SENSITIVE_B}:${TAMPER_SENSITIVE_H}"
+fi
+
+## ROI encoding region (-Z x,y,w,h)
+if [ "${ROI_ENABLED}" -eq 1 ] && [ -n "${ROI_RECT}" ] ; then
+    DAEMON_OPTS="${DAEMON_OPTS} -Z ${ROI_RECT}"
+fi
+
+## Capture prescale reduce (-p WxH, 0 = off)
+if [ -n "${PRESCALE}" ] && [ "${PRESCALE}" != "0" ] ; then
+    DAEMON_OPTS="${DAEMON_OPTS} -p ${PRESCALE}"
+fi
+
 ## export RTSP settings for subshells
 if [ "x${RTSP_USER}" != "x" ] && [ "x${RTSP_PASS}" != "x" ]
 then
