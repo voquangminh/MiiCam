@@ -396,6 +396,15 @@ static int motor_pwm_init(void)
         PWM_IOCTL_02,&config[1]);
     if (rc < 0)
         goto fail;
+
+    /* /dev/ftpwmtmr010 is a single-opener device: only one process may hold
+     * it open at a time (subsequent open() returns EINVAL). onvif only needs
+     * it to configure the MS41909 clock during init — actual PTZ moves go
+     * through /dev/motor. The driver persists register state across close()
+     * (same reason ir_led -e -> -s keeps working), so release it now to stop
+     * starving ir_led/motor_ctrl/tracking for the daemon's whole lifetime. */
+    close(pwm_fd);
+    pwm_fd = -1;
     return 0;
 
 fail:
