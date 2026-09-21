@@ -1827,10 +1827,7 @@ void gm_enc_init(int cap_ch, int cap_path, int rec_track, int enc_type, int mode
 
         // * GM813x capture path 0(liveview), 1(substream), 2(substream), 3(mainstream)
         cap_attr.path = cap_path;
-        /* MV data output costs capture bandwidth and on this SoC it appears to
-         * hold the sensor at a lower rate than requested; only enable it when
-         * motion detection actually needs it. */
-        cap_attr.enable_mv_data = (cliArgs.motion == 1) ? 1 : 0;
+        cap_attr.enable_mv_data = 1;
         cap_attr.dma_path = 0;                 // * DMA path 0
         if (cliArgs.prescale_w > 0 && cliArgs.prescale_h > 0) {
             cap_attr.prescale_reduce_width  = cliArgs.prescale_w;
@@ -2147,70 +2144,6 @@ static void audio_init() {
     }
 }
 
-static int sensor_fps_set(int fps)
-{
-    char cmd[64];
-    int fd;
-    snprintf(cmd, sizeof(cmd), "w sen_fps %d", fps);
-    fd = open("/proc/isp328/command", O_WRONLY);
-    if (fd < 0)
-        return -1;
-    if (write(fd, cmd, strlen(cmd)) < 0) {
-        close(fd);
-        return -1;
-    }
-    close(fd);
-    return 0;
-}
-
-/* Cold-boot self-heal state. At boot the ISP/sensor is slow to accept
- * `w sen_fps N` (it only responds after the sensor warms up, ~60-90s), so
- * gm_graph_init() clamps the encoder to the stale capture max (15/3 fps).
- * We remember the requested rate and, ~90s later, if the sensor has come
- * up to it, self-restart so the fresh process (same argv, still -fN) binds
- * at the full rate. */
-static int  boot_fp_clamped = 0;
-static int  boot_fp_requested = 0;
-static double boot_clamp_uptime = 0.0;
-
-/* Elapsed seconds since boot, from /proc/uptime. NOT time()/clock_gettime:
- * the RTC starts at 1970 before NTP syncs, so wall-clock deltas across that
- * jump are negative and meaningless. */
-static double uptime_secs(void)
-{
-    FILE *f = fopen("/proc/uptime", "r");
-    double up = 0.0;
-    if (f) {
-        if (fscanf(f, "%lf", &up) != 1)
-            up = 0.0;
-        fclose(f);
-    }
-    return up;
-}
-
-/* Current live sensor framerate from /proc/isp328/info, 0 on error. */
-static int sensor_fps_probe(void)
-{
-    char buf[512];
-    const char *p;
-    int fd, n, fps = 0;
-    fd = open("/proc/isp328/info", O_RDONLY);
-    if (fd < 0)
-        return 0;
-    n = read(fd, buf, sizeof(buf) - 1);
-    close(fd);
-    if (n <= 0)
-        return 0;
-    buf[n] = '\0';
-    p = strstr(buf, "fps");
-    if (!p)
-        return 0;
-    while (*p && !(*p >= '0' && *p <= '9'))
-        p++;
-    fps = atoi(p);
-    return (fps >= 0) ? fps : 0;
-}
-
 void gm_graph_init(void)
 {
     int cap_fps;
@@ -2227,36 +2160,10 @@ void gm_graph_init(void)
      * /proc/videograph/gmlib_setting and the stream stays empty. Clamp. */
     if (gm_system.cap[0].framerate > 0 &&
         cliArgs.framerate > gm_system.cap[0].framerate) {
-        /* At cold boot the ISP/sensor is still warming up (it may even run at
-         * a few fps) and silently drops `w sen_fps N` commands for a while, so
-         * gm_get_sysinfo reports the old capture rate and a single re-assert
-         * would still clamp. Keep re-asserting the requested rate until the
-         * capture actually rises (or the sensor is clearly not going to). */
-        int tries;
-        for (tries = 0; tries < 20; tries++) {
-            if (sensor_fps_set(cliArgs.framerate) < 0)
-                break;
-            usleep(500000);
-            gm_get_sysinfo(&gm_system);
-            if (gm_system.cap[0].framerate <= 0 ||
-                cliArgs.framerate <= gm_system.cap[0].framerate)
-                break;
-        }
-        if (gm_system.cap[0].framerate > 0 &&
-            cliArgs.framerate > gm_system.cap[0].framerate) {
-            log_error("Framerate %d exceeds capture maximum %d, clamping to %d",
-                      cliArgs.framerate, gm_system.cap[0].framerate,
-                      gm_system.cap[0].framerate);
-            /* Remember for the late self-restart below: the sensor may still
-             * come up to the requested rate, at which point we re-launch. */
-            boot_fp_requested = cliArgs.framerate;
-            boot_fp_clamped   = 1;
-            boot_clamp_uptime = uptime_secs();
-            cliArgs.framerate = gm_system.cap[0].framerate;
-        } else {
-            log_info("Framerate %d applied (capture max now %d)",
-                     cliArgs.framerate, gm_system.cap[0].framerate);
-        }
+        log_error("Framerate %d exceeds capture maximum %d, clamping to %d",
+                  cliArgs.framerate, gm_system.cap[0].framerate,
+                  gm_system.cap[0].framerate);
+        cliArgs.framerate = gm_system.cap[0].framerate;
     }
 
     if (cliArgs.osd)
@@ -2912,25 +2819,6 @@ static void *rtspd_ctrl_thread(void *arg)
             }
             fclose(f);
             remove(RTSPD_CTRL_FILE);
-        }
-        /* Late boot-time fps recovery. If gm_graph_init() clamped the
-         * requested rate because the sensor hadn't accepted `w sen_fps N`
-         * yet, keep re-asserting it once the sensor has had ~90s to wake up
-         * (the scheduler drops the write only during warm-up), then
-         * self-restart so the graph binds at the requested rate instead of
-         * being stuck at the clamped one until the next manual restart. */
-        if (boot_fp_clamped &&
-            (uptime_secs() - boot_clamp_uptime) >= 90.0) {
-            sensor_fps_set(boot_fp_requested);
-            usleep(200000);
-            if (sensor_fps_probe() >= boot_fp_requested) {
-                log_info("Ctrl: sensor framerate now >= %d fps, self-restarting to "
-                         "raise capture from %d to %d fps",
-                         boot_fp_requested, cliArgs.framerate, boot_fp_requested);
-                boot_fp_clamped = 0;   /* one-shot: don't restart every poll */
-                rtspd_reboot();
-                usleep(200000);
-            }
         }
         if (need_reboot) {
             log_info("Ctrl: restarting rtspd to apply changes");
