@@ -369,29 +369,26 @@ struct CommandLineArguments {
     int fps_ratio_den;
 } cliArgs;
 
-/* Read HOSTNAME from config file. Try common locations. */
+/* Read the camera hostname from the kernel (set from CAMERA_HOSTNAME in
+ * config.cfg by .ft_boot.sh), NOT from the SD config — the OSD line 1
+ * default must track what the camera is actually called, and the old
+ * function looked for a HOSTNAME= key that config.cfg never contains
+ * (it's CAMERA_HOSTNAME=), so OSD always fell back to "chuangmi". */
 static void read_hostname(char *out, size_t outlen)
 {
     FILE *f;
-    char line[256];
+    char line[64];
     out[0] = '\0';
-    f = fopen("/tmp/sd/config.cfg", "r");
-	
+    f = fopen("/proc/sys/kernel/hostname", "r");
     if (!f)
         return;
-    while (fgets(line, sizeof(line), f)) {
-        if (strncmp(line, "HOSTNAME=", 9) != 0)
-            continue;
-        char *v = line + 9;
-        if (*v == '"')
-            v++;
-        char *end = v + strlen(v);
-        while (end > v && (end[-1] == '\n' || end[-1] == '\r' || end[-1] == '"'  || end[-1] == ' ')) {
+    if (fgets(line, sizeof(line), f)) {
+        char *end = line + strlen(line);
+        while (end > line && (end[-1] == '\n' || end[-1] == '\r' || end[-1] == ' ')) {
             *--end = '\0';
         }
-        strncpy(out, v, outlen - 1);
+        strncpy(out, line, outlen - 1);
         out[outlen - 1] = '\0';
-        break;
     }
     fclose(f);
 }
