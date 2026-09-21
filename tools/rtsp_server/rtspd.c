@@ -2176,13 +2176,21 @@ void gm_graph_init(void)
      * /proc/videograph/gmlib_setting and the stream stays empty. Clamp. */
     if (gm_system.cap[0].framerate > 0 &&
         cliArgs.framerate > gm_system.cap[0].framerate) {
-        /* At cold boot the sensor rate may not have settled yet (the init
-         * script's `w sen_fps N` can race the graph start), so gm_get_sysinfo
-         * reports the old capture rate and we'd wrongly clamp. Re-assert the
-         * requested rate on the ISP and re-read before giving up. */
-        sensor_fps_set(cliArgs.framerate);
-        usleep(300000);
-        gm_get_sysinfo(&gm_system);
+        /* At cold boot the ISP/sensor is still warming up (it may even run at
+         * a few fps) and silently drops `w sen_fps N` commands for a while, so
+         * gm_get_sysinfo reports the old capture rate and a single re-assert
+         * would still clamp. Keep re-asserting the requested rate until the
+         * capture actually rises (or the sensor is clearly not going to). */
+        int tries;
+        for (tries = 0; tries < 20; tries++) {
+            if (sensor_fps_set(cliArgs.framerate) < 0)
+                break;
+            usleep(500000);
+            gm_get_sysinfo(&gm_system);
+            if (gm_system.cap[0].framerate <= 0 ||
+                cliArgs.framerate <= gm_system.cap[0].framerate)
+                break;
+        }
         if (gm_system.cap[0].framerate > 0 &&
             cliArgs.framerate > gm_system.cap[0].framerate) {
             log_error("Framerate %d exceeds capture maximum %d, clamping to %d",
