@@ -236,7 +236,7 @@ async function loadSettings() {
     fieldNumber('settings-format', 'Height', 'RTSP_HEIGHT', keys, { min: 120, max: 720 });
     fieldNumber('settings-format', 'Bitrate (kbps)', 'RTSP_BITRATE', keys, { min: 100, max: 16000 });
     fieldNumber('settings-format', 'Bitrate mode (1-4)', 'RTSP_BITRATE_MODE', keys, { min: 1, max: 4 });
-    fieldNumber('settings-format', 'FPS (1-15)', 'RTSP_FRAMERATE', keys, { min: 1, max: 15 });
+    fieldNumber('settings-format', 'FPS (1-30)', 'RTSP_FRAMERATE', keys, { min: 1, max: 30 });
     const flipEl = toggleField('Flip (live)', (cam.flipmode === undefined || cam.flipmode === null) ? 0 : cam.flipmode,
         async () => setMode('flipmode', 'on'),
         async () => setMode('flipmode', 'off'));
@@ -627,7 +627,7 @@ async function loadDeviceSettings() {
     codecWrap.innerHTML = '';
     if (st && st.codec) {
       const v = st.codec.video || {};
-      [['framerate', 'FPS (1-15)'], ['bitrate', 'Bitrate (kbps)'], ['gop', 'GOP'], ['rate_mode', 'Mode (1-4)']].forEach(([k, label]) => {
+      [['framerate', 'FPS (1-30)'], ['bitrate', 'Bitrate (kbps)'], ['gop', 'GOP'], ['rate_mode', 'Mode (1-4)']].forEach(([k, label]) => {
         buildSettings('settings-codec', 'codec-' + k, label, v[k]);
       });
       const applyBtn = document.createElement('button');

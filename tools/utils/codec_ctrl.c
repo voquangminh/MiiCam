@@ -22,7 +22,7 @@ static void print_usage(void)
         "  keyframe            Request an immediate keyframe\n"
         "  bitrate <kbps>      Change video bitrate (requires rtspd)\n"
         "  mode <1-4>          Change bitrate mode: 1=CBR 2=VBR 3=ECBR 4=EVBR (requires rtspd)\n"
-        "  fps <num>           Change framerate 1-15, this camera's max (requires rtspd)\n"
+        "  fps <num>           Change framerate 1-30, this camera's max (requires rtspd)\n"
         "  gop <num>           Change GOP length (requires rtspd)\n"
         "  resolution WxH      Change encoder resolution, e.g. 640x360, 1280x720 (requires rtspd restart)\n"
         "  bitrate_max <kbps>  Change max bitrate ceiling (requires rtspd)\n"
@@ -41,7 +41,7 @@ static void print_usage(void)
         "  codec_ctrl status -j         # show as JSON\n"
         "  codec_ctrl bitrate 4096      # change to 4096 kbps\n"
         "  codec_ctrl mode 4            # change to EVBR\n"
-        "  codec_ctrl fps 15            # change to 15 fps (max)\n"
+        "  codec_ctrl fps 30            # change to 30 fps (max)\n"
         "  codec_ctrl resolution 640x360  # change resolution\n"
         "  codec_ctrl flip h            # flip horizontally\n"
     );
@@ -303,8 +303,8 @@ int main(int argc, char *argv[])
     else if (strcmp(argv[argi], "fps") == 0) {
         if (argi + 1 >= argc) { fprintf(stderr, "Usage: codec_ctrl fps <num>\n"); return 1; }
         int f = atoi(argv[argi + 1]);
-        if (f < 1 || f > 15) {
-            fprintf(stderr, "fps must be 1-15 (this camera's capture maximum)\n");
+        if (f < 1 || f > 30) {
+            fprintf(stderr, "fps must be 1-30 (this camera's capture maximum)\n");
             return 1;
         }
         char cmd[64];
@@ -326,7 +326,7 @@ int main(int argc, char *argv[])
     else if (strcmp(argv[argi], "bitrate_max") == 0) {
         if (argi + 1 >= argc) { fprintf(stderr, "Usage: codec_ctrl bitrate_max <kbps>\n"); return 1; }
         int v = atoi(argv[argi + 1]);
-        if (v < 1 || v > 16384) { fprintf(stderr, "bitrate_max must be 1-16384\n"); return 1; }
+        if (v < 1 || v > 10240) { fprintf(stderr, "bitrate_max must be 1-10240\n"); return 1; }
         char cmd[64];
         snprintf(cmd, sizeof(cmd), "bitrate_max %d", v);
         return write_ctrl(cmd);

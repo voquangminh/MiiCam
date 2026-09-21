@@ -98,9 +98,11 @@
 #define MAX_ZOOM_FACTOR          4.0f
 #define ZOOM_SMOOTH_STEP         0.05f
 
-/* Highest framerate this camera's sensor/capture supports. Requesting more
- * makes gm_bind() fail silently, leaving a running daemon with no encoder. */
-#define MAX_FPS                  15
+/* Highest framerate this camera's sensor/capture supports (gmlib.cfg
+ * capture_max_fps=30, encode CONFIG1 720P/1/30). Requesting more than
+ * gm_system.cap[0].framerate makes gm_bind() fail silently, leaving a running
+ * daemon with no encoder, so gm_graph_init() clamps at the live capture max. */
+#define MAX_FPS                  30
 
 #define OSD_PALETTE_COLOR_AQUA              0xCA48CA93        /* YCrYCb */
 #define OSD_PALETTE_COLOR_BLACK             0x10801080
@@ -2609,7 +2611,7 @@ static void apply_pending_args(void)
     }
     fclose(f);
 
-    if (bitrate > 0 && bitrate <= 16384) { cliArgs.bitrate = bitrate; log_info("Pending args: bitrate=%d", bitrate); }
+    if (bitrate > 0 && bitrate <= 10240) { cliArgs.bitrate = bitrate; log_info("Pending args: bitrate=%d", bitrate); }
     if (mode >= 1 && mode <= 4)           { cliArgs.bitrateMode = mode; log_info("Pending args: mode=%d", mode); }
     if (fps > 0 && fps <= MAX_FPS)        { cliArgs.framerate = fps;   log_info("Pending args: fps=%d", fps); }
     else if (fps > MAX_FPS) {
@@ -2619,7 +2621,7 @@ static void apply_pending_args(void)
     if (gop > 0 && gop <= 120)            { cliArgs.gop = gop;         log_info("Pending args: gop=%d", gop); }
     if (width > 0 && width <= 1920)       { cliArgs.width = width;     log_info("Pending args: width=%d", width); }
     if (height > 0 && height <= 1080)     { cliArgs.height = height;   log_info("Pending args: height=%d", height); }
-    if (bitrate_max > 0 && bitrate_max <= 16384) {
+    if (bitrate_max > 0 && bitrate_max <= 10240) {
         cliArgs.bitrate_max = bitrate_max;
         log_info("Pending args: bitrate_max=%d", bitrate_max);
     }
@@ -2684,7 +2686,7 @@ static void *rtspd_ctrl_thread(void *arg)
                 }
                 else if (strncmp(buf, "bitrate ", 8) == 0) {
                     int val = atoi(buf + 8);
-                    if (val > 0 && val <= 16384) {
+                    if (val > 0 && val <= 10240) {
                         write_pending_arg("bitrate", val);
                         log_info("Ctrl: bitrate=%d pending restart", val);
                         need_reboot = 1;
@@ -2727,7 +2729,7 @@ static void *rtspd_ctrl_thread(void *arg)
                 }
                 else if (strncmp(buf, "bitrate_max ", 12) == 0) {
                     int val = atoi(buf + 12);
-                    if (val > 0 && val <= 16384) {
+                    if (val > 0 && val <= 10240) {
                         write_pending_arg("bitrate_max", val);
                         log_info("Ctrl: bitrate_max=%d pending restart", val);
                         need_reboot = 1;
@@ -3358,8 +3360,8 @@ static void print_usage(void)
     printf(" ./rtspd [-bfwhmotzB] [-j|-4|-d|-s|-r] [-XARSCPq] [-FGHVLEIUNZQY] [-TW]\n");
     printf(
         "\nAvailable options:\n"
-        "-b [1-16384]   - Set the bitrate         (default: 8192)\n"
-        "-f [1-15]      - Set the framerate       (default: 15)\n"
+        "-b [1-10240]   - Set the bitrate         (default: 8192)\n"
+        "-f [1-30]      - Set the framerate       (default: 15)\n"
         "-w [1-1280]    - Set the image width     (default: 1280 pixels)\n"
         "-h [1-720]     - Set the image height    (default: 720 pixels)\n"
         "-m [1-4]       - Set the bitrate mode    (default: 1, CBR)\n"
@@ -3449,7 +3451,7 @@ int main(int argc, char *argv[])
         saved_argv[argc] = NULL;
 
     cliArgs.bitrate     = 8192;
-    cliArgs.bitrate_max = 16384;
+    cliArgs.bitrate_max = 10240;
     cliArgs.framerate   = 15;
     cliArgs.width       = 1280;
     cliArgs.height      = 720;
@@ -3988,8 +3990,8 @@ int main(int argc, char *argv[])
     if (from_restart)
         apply_pending_args();
 
-    if ((cliArgs.bitrate < 1) || (cliArgs.bitrate > 16384)) {
-        log_error("Use a maximum bitrate of 16384 and a minimum of 1");
+    if ((cliArgs.bitrate < 1) || (cliArgs.bitrate > 10240)) {
+        log_error("Use a maximum bitrate of 10240 and a minimum of 1");
         return 1;
     }
 
