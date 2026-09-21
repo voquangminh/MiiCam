@@ -2915,18 +2915,22 @@ static void *rtspd_ctrl_thread(void *arg)
         }
         /* Late boot-time fps recovery. If gm_graph_init() clamped the
          * requested rate because the sensor hadn't accepted `w sen_fps N`
-         * yet, poll until it does (typically ~60-90s after boot), then
+         * yet, keep re-asserting it once the sensor has had ~90s to wake up
+         * (the scheduler drops the write only during warm-up), then
          * self-restart so the graph binds at the requested rate instead of
          * being stuck at the clamped one until the next manual restart. */
         if (boot_fp_clamped &&
-            (uptime_secs() - boot_clamp_uptime) >= 90.0 &&
-            sensor_fps_probe() >= boot_fp_requested) {
-            log_info("Ctrl: sensor framerate now >= %d fps, self-restarting to "
-                     "raise capture from %d to %d fps",
-                     boot_fp_requested, cliArgs.framerate, boot_fp_requested);
-            boot_fp_clamped = 0;   /* one-shot: don't restart every poll */
-            rtspd_reboot();
+            (uptime_secs() - boot_clamp_uptime) >= 90.0) {
+            sensor_fps_set(boot_fp_requested);
             usleep(200000);
+            if (sensor_fps_probe() >= boot_fp_requested) {
+                log_info("Ctrl: sensor framerate now >= %d fps, self-restarting to "
+                         "raise capture from %d to %d fps",
+                         boot_fp_requested, cliArgs.framerate, boot_fp_requested);
+                boot_fp_clamped = 0;   /* one-shot: don't restart every poll */
+                rtspd_reboot();
+                usleep(200000);
+            }
         }
         if (need_reboot) {
             log_info("Ctrl: restarting rtspd to apply changes");
