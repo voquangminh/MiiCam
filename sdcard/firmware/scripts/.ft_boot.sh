@@ -123,6 +123,21 @@ then
     mount --rbind /tmp/sd/firmware/etc/gmlib.cfg /gm/config/gmlib.cfg
 fi
 
+##################################################################################
+## Mount VG boot configuration                                                  ##
+## The stock /mnt/data/vg_boot.sh insmods the OV9732 sensor with fps=15, which  ##
+## caps capture at 15 until the sensor accepts `w sen_fps 30` (only after warm- ##
+## up). Ship the 30 fps insmod from SD and bind it over the flash copy so the   ##
+## sensor comes up at 30 from the very first frame.                             ##
+##################################################################################
+
+echo "*** Setting up our own vg_boot config"
+
+if [ -f /tmp/sd/firmware/etc/vg_boot.sh ]
+then
+    mount --bind /tmp/sd/firmware/etc/vg_boot.sh /gm/config/vg_boot.sh
+fi
+
 
 ##################################################################################
 ## Set root Password                                                            ##
