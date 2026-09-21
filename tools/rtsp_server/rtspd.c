@@ -2163,6 +2163,54 @@ static int sensor_fps_set(int fps)
     return 0;
 }
 
+/* Cold-boot self-heal state. At boot the ISP/sensor is slow to accept
+ * `w sen_fps N` (it only responds after the sensor warms up, ~60-90s), so
+ * gm_graph_init() clamps the encoder to the stale capture max (15/3 fps).
+ * We remember the requested rate and, ~90s later, if the sensor has come
+ * up to it, self-restart so the fresh process (same argv, still -fN) binds
+ * at the full rate. */
+static int  boot_fp_clamped = 0;
+static int  boot_fp_requested = 0;
+static double boot_clamp_uptime = 0.0;
+
+/* Elapsed seconds since boot, from /proc/uptime. NOT time()/clock_gettime:
+ * the RTC starts at 1970 before NTP syncs, so wall-clock deltas across that
+ * jump are negative and meaningless. */
+static double uptime_secs(void)
+{
+    FILE *f = fopen("/proc/uptime", "r");
+    double up = 0.0;
+    if (f) {
+        if (fscanf(f, "%lf", &up) != 1)
+            up = 0.0;
+        fclose(f);
+    }
+    return up;
+}
+
+/* Current live sensor framerate from /proc/isp328/info, 0 on error. */
+static int sensor_fps_probe(void)
+{
+    char buf[512];
+    const char *p;
+    int fd, n, fps = 0;
+    fd = open("/proc/isp328/info", O_RDONLY);
+    if (fd < 0)
+        return 0;
+    n = read(fd, buf, sizeof(buf) - 1);
+    close(fd);
+    if (n <= 0)
+        return 0;
+    buf[n] = '\0';
+    p = strstr(buf, "fps");
+    if (!p)
+        return 0;
+    while (*p && !(*p >= '0' && *p <= '9'))
+        p++;
+    fps = atoi(p);
+    return (fps >= 0) ? fps : 0;
+}
+
 void gm_graph_init(void)
 {
     int cap_fps;
@@ -2464,54 +2512,6 @@ static void write_pidfile(void)
 
 static int  saved_argc = 0;
 static char *saved_argv[64];
-
-/* Cold-boot self-heal state. At boot the ISP/sensor is slow to accept
- * `w sen_fps N` (it only responds after the sensor warms up, ~60-90s), so
- * gm_graph_init() clamps the encoder to the stale capture max (15/3 fps).
- * We remember the requested rate and, ~90s later, if the sensor has come
- * up to it, self-restart so the fresh process (same argv, still -fN) binds
- * at the full rate. */
-static int  boot_fp_clamped = 0;
-static int  boot_fp_requested = 0;
-static double boot_clamp_uptime = 0.0;
-
-/* Elapsed seconds since boot, from /proc/uptime. NOT time()/clock_gettime:
- * the RTC starts at 1970 before NTP syncs, so wall-clock deltas across that
- * jump are negative and meaningless. */
-static double uptime_secs(void)
-{
-    FILE *f = fopen("/proc/uptime", "r");
-    double up = 0.0;
-    if (f) {
-        if (fscanf(f, "%lf", &up) != 1)
-            up = 0.0;
-        fclose(f);
-    }
-    return up;
-}
-
-/* Current live sensor framerate from /proc/isp328/info, 0 on error. */
-static int sensor_fps_probe(void)
-{
-    char buf[512];
-    const char *p;
-    int fd, n, fps = 0;
-    fd = open("/proc/isp328/info", O_RDONLY);
-    if (fd < 0)
-        return 0;
-    n = read(fd, buf, sizeof(buf) - 1);
-    close(fd);
-    if (n <= 0)
-        return 0;
-    buf[n] = '\0';
-    p = strstr(buf, "fps");
-    if (!p)
-        return 0;
-    while (*p && !(*p >= '0' && *p <= '9'))
-        p++;
-    fps = atoi(p);
-    return (fps >= 0) ? fps : 0;
-}
 
 /* Merge key=val into RTSPD_ARGS_FILE, preserving other keys. */
 static void write_pending_arg(const char *key, int val)
