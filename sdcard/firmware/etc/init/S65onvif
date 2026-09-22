@@ -47,7 +47,9 @@ case "$1" in
     ## but stop_daemon would choke on a dead pid in between.
     [ -f "${PIDFILE}" ] && rm -f "${PIDFILE}"
     echo "*** Starting ${NAME} ${DESC}... "
-    nohup "${DAEMON}" ${DAEMON_OPTS} </dev/null >>/var/log/${NAME}.log 2>&1 &
+    ## Spawn from the bin dir as ./${NAME} so `ps` shows a short argv[0].
+    ( cd "${SD_MOUNTDIR}/firmware/bin" && \
+        nohup ./${NAME} ${DAEMON_OPTS} </dev/null >>/var/log/${NAME}.log 2>&1 & )
     ;;
   stop)
     stop_daemon

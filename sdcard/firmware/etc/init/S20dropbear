@@ -61,7 +61,9 @@ case "$1" in
         ## SIGHUP an ssh-session close sends to its children). dropbear writes
         ## its own pidfile via -P, so stop/restart always target the live
         ## listener (start-stop-daemon --make-pidfile was writing stale pids).
-        nohup "${DAEMON}" ${DAEMON_OPTS} </dev/null >>/var/log/dropbear.log 2>&1 &
+        ## Spawn from the bin dir as ./${NAME} so `ps` shows a short argv[0].
+        ( cd "${SD_MOUNTDIR}/firmware/bin" && \
+            nohup ./${NAME} ${DAEMON_OPTS} </dev/null >>/var/log/dropbear.log 2>&1 & )
 
         ## Save the key to the sdcard
         save_key

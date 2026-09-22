@@ -173,12 +173,29 @@ enable_binary()
 ## Daemon functions                                                             ##
 ##################################################################################
 
+## Daemons that live under ${SD_MOUNTDIR}/firmware/ are spawned from their own
+## directory as ./name, so `ps` shows a short ./rtspd instead of the long
+## /tmp/sd/firmware/bin/rtspd path. System daemons (/usr/sbin/..., /sbin/...,
+## /mnt/data/...) keep their absolute path. The cd happens in a subshell so the
+## calling script's cwd is not disturbed; the backgrounded child inherits the
+## bin/scripts dir as its cwd (daemons use absolute paths, so this is safe).
+
 ## Start daemon
 start_daemon()
 {
     echo "*** Starting ${NAME} ${DESC}... "
 
-    start-stop-daemon --start --quiet --oknodo --exec "${DAEMON}" -- ${DAEMON_OPTS}
+    (
+        EXEC="${DAEMON}"
+        case "${DAEMON}" in
+            "${SD_MOUNTDIR}/firmware/"*)
+                cd "${DAEMON%/*}"
+                EXEC="./${DAEMON##*/}"
+                ;;
+        esac
+
+        start-stop-daemon --start --quiet --oknodo --exec "${EXEC}" -- ${DAEMON_OPTS}
+    )
     RC="$?"
 
 
@@ -190,7 +207,17 @@ start_daemon_background()
 {
     echo "*** Starting ${NAME} ${DESC}... "
 
-    start-stop-daemon --start --quiet --oknodo --pidfile "${PIDFILE}" --make-pidfile --background --exec "${DAEMON}" -- ${DAEMON_OPTS}
+    (
+        EXEC="${DAEMON}"
+        case "${DAEMON}" in
+            "${SD_MOUNTDIR}/firmware/"*)
+                cd "${DAEMON%/*}"
+                EXEC="./${DAEMON##*/}"
+                ;;
+        esac
+
+        start-stop-daemon --start --quiet --oknodo --pidfile "${PIDFILE}" --make-pidfile --background --exec "${EXEC}" -- ${DAEMON_OPTS}
+    )
     RC="$?"
 
     return "${RC}"

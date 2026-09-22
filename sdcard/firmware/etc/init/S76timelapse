@@ -22,7 +22,9 @@ check_daemon_bin "${DAEMON}" "${DESC}"
 case "$1" in
     start)
         if [ "${ENABLE_TIMELAPSE:-0}" -eq 1 ]; then
-            /bin/sh "${DAEMON}" start
+            ## Run from the scripts dir as ./timelapse.sh so `ps` shows a short
+            ## argv[0]; the background nohup loop inherits this cwd.
+            ( cd "${SD_MOUNTDIR}/firmware/scripts" && /bin/sh ./timelapse.sh start )
         else
             echo "*** ${DESC} disabled (ENABLE_TIMELAPSE != 1)."
         fi

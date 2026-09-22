@@ -110,8 +110,9 @@ case "$1" in
     if [ "$MOTION_TRACKING" -eq 1 ] ; then
         echo "*** Starting tracking daemon..."
         if [ -x "${SD_MOUNTDIR}/firmware/bin/tracking" ]; then
-            start-stop-daemon --start --quiet --oknodo --pidfile /var/run/tracking.pid \
-                --background --exec "${SD_MOUNTDIR}/firmware/bin/tracking" -- ${TRACKING_OPTS}
+            ( cd "${SD_MOUNTDIR}/firmware/bin" && \
+                start-stop-daemon --start --quiet --oknodo --pidfile /var/run/tracking.pid \
+                    --background --exec ./tracking -- ${TRACKING_OPTS} )
         else
             echo "tracking binary not found"
         fi
