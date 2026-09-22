@@ -210,7 +210,7 @@ fi
 # Watch rtspd too, so a boot-time crash (audio/video graph race) self-heals.
 if [ -f /tmp/etc/restartd.conf ] && ! grep -q '"\([^"]*\)rtspd"' /tmp/etc/restartd.conf
 then
-    echo "rtspd \"/tmp/sd/firmware/bin/rtspd\" \"/tmp/sd/firmware/etc/init/S60rtsp restart\" \"/bin/echo '*** rtspd was restarted from restartd... '\"" >> /tmp/etc/restartd.conf
+    echo "rtspd \"rtspd\" \"/tmp/sd/firmware/etc/init/S60rtsp restart\" \"/bin/echo '*** rtspd was restarted from restartd... '\"" >> /tmp/etc/restartd.conf
 fi
 
 

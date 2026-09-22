@@ -15,18 +15,20 @@
 #define AUDIO_BS_BUF_LEN   (256 * 1024)
 #define POLL_TIMEOUT_MS    500
 
-/* gm_file_attr_t / gm_audio_render_attr_t layout of the on-camera vendor
- * libgm.so differs from the 2015 SDK header; these offsets are the ones
- * proven by the vendor aac_player reconstruction (see tools/rtsp_server/aac_play.c). */
+/* gm_file_attr_t / gm_audio_render_attr_t layout of the on-camera
+ * libgm.so (SDK header, md5 matches camera): priv 32B | vch@32 |
+ * encode_type@36 | block_size@40 | sync_with_lcd_vch@44. */
 #define GM_FILE_ATTR_SIZE       68
 #define GM_RENDER_ATTR_SIZE     64
 #define GM_STREAM_DESC_SIZE     128
 #define FILE_SAMPLE_RATE_OFF    48
 #define FILE_SAMPLE_SIZE_OFF    50
 #define FILE_CHANNEL_TYPE_OFF   52
-#define RENDER_VALUE0_OFF       40
-#define RENDER_VALUE1_OFF       44
-#define RENDER_VALUE2_OFF       48
+#define RENDER_VCH_OFF          32
+#define RENDER_ENCODE_TYPE_OFF  36
+#define RENDER_BLOCK_SIZE_OFF   40
+#define RENDER_SYNC_LCD_OFF     44
+#define SYNC_LCD_DISABLE        0xFEFEFEFE
 #define STREAM_BIND_OFF         0
 #define STREAM_DATA_OFF         4
 #define STREAM_LENGTH_OFF       8
@@ -643,10 +645,13 @@ int codec_audio_play_start(int sample_rate)
     play_put_u16(file_attr, FILE_SAMPLE_SIZE_OFF, 16);
     play_put_u32(file_attr, FILE_CHANNEL_TYPE_OFF, 1);
 
-    /* Exact values used by the vendor player: AAC-LC, block 1024, no LCD sync */
-    play_put_u32(render_attr, RENDER_VALUE0_OFF, 0);
-    play_put_u32(render_attr, RENDER_VALUE1_OFF, GM_AAC);
-    play_put_u32(render_attr, RENDER_VALUE2_OFF, 1024);
+    /* Field offsets follow gm_audio_render_attr_t: vch@32, encode_type@36,
+     * block_size@40, sync_with_lcd_vch@44 (SDK header, matches on-camera
+     * libgm.so), AAC-LC block 1024, sync_with_lcd disabled. */
+    play_put_u32(render_attr, RENDER_VCH_OFF, 0);
+    play_put_u32(render_attr, RENDER_ENCODE_TYPE_OFF, GM_AAC);
+    play_put_u32(render_attr, RENDER_BLOCK_SIZE_OFF, 1024);
+    play_put_u32(render_attr, RENDER_SYNC_LCD_OFF, SYNC_LCD_DISABLE);
 
     if (gm_set_attr(audio_play.file_obj, file_attr) < 0 ||
         gm_set_attr(audio_play.render_obj, render_attr) < 0)

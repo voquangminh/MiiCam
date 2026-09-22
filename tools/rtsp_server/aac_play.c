@@ -30,13 +30,16 @@
 #define AAC_FRAME_MAX           12800U
 #define GM_SEND_TIMEOUT_MS      500
 
-/* Offsets recovered from the vendor binary. */
+/* Offsets per SDK gm_audio_render_attr_t (libgm.so md5 matches camera).
+ * priv 32B | vch@32 | encode_type@36 | block_size@40 | sync_with_lcd_vch@44 */
 #define FILE_SAMPLE_RATE_OFF    48U
 #define FILE_SAMPLE_SIZE_OFF    50U
 #define FILE_CHANNEL_TYPE_OFF   52U
-#define RENDER_VALUE0_OFF       40U
-#define RENDER_VALUE1_OFF       44U
-#define RENDER_VALUE2_OFF       48U
+#define RENDER_VCH_OFF          32U
+#define RENDER_ENCODE_TYPE_OFF  36U
+#define RENDER_BLOCK_SIZE_OFF   40U
+#define RENDER_SYNC_LCD_OFF     44U
+#define SYNC_LCD_DISABLE        0xFEFEFEFEU
 #define STREAM_BIND_OFF          0U
 #define STREAM_DATA_OFF          4U
 #define STREAM_LENGTH_OFF        8U
@@ -288,10 +291,13 @@ int main(int argc, char **argv)
     put_u16(file_attr, FILE_SAMPLE_SIZE_OFF, 16);
     put_u32(file_attr, FILE_CHANNEL_TYPE_OFF, 1); /* mono */
 
-    /* Exact values and offsets used by the vendor player. */
-    put_u32(render_attr, RENDER_VALUE0_OFF, 0);
-    put_u32(render_attr, RENDER_VALUE1_OFF, 2);
-    put_u32(render_attr, RENDER_VALUE2_OFF, 1024);
+    /* Field offsets follow gm_audio_render_attr_t: vch@32, encode_type@36,
+     * block_size@40, sync_with_lcd_vch@44 (SDK header, matches on-camera
+     * libgm.so). */
+    put_u32(render_attr, RENDER_VCH_OFF, 0);
+    put_u32(render_attr, RENDER_ENCODE_TYPE_OFF, 2);
+    put_u32(render_attr, RENDER_BLOCK_SIZE_OFF, 1024);
+    put_u32(render_attr, RENDER_SYNC_LCD_OFF, SYNC_LCD_DISABLE);
 
     if (gm_set_attr(file_object, file_attr) < 0) {
         fprintf(stderr,
