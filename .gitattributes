@@ -3,6 +3,9 @@
 # core.autocrlf on the checkout machine.
 sdcard/firmware/etc/init/* text eol=lf
 sdcard/firmware/etc/lighttpd.conf text eol=lf
+sdcard/firmware/etc/logrotate.conf text eol=lf
+sdcard/firmware/etc/crontab text eol=lf
+sdcard/firmware/etc/php.ini text eol=lf
 sdcard/firmware/scripts/** text eol=lf
 sdcard/ft/*.sh text eol=lf
 sdcard/ft/*.pem text eol=lf
