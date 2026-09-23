@@ -53,7 +53,7 @@ killall mosquitto_sub 2>/dev/null
 ## Overrule logfile
 ########################################
 
-LOGFILE="${SD_MOUNTDIR}/log/mqtt.log"
+LOGFILE="/var/log/mqtt.log"
 
 
 ########################################

@@ -3,8 +3,8 @@ PATH=/tmp/sd/firmware/bin:/tmp/sd/firmware/scripts:/sbin:/bin:/usr/sbin:/usr/bin
 
 # min hour day_of_month month day_of_week command
 
-## Setup logrotation every night
-59    23   *            *     *           flock -n -x /tmp/.logrotate.lock -c logrotate /tmp/sd/firmware/etc/logrotate.conf
+## Setup logrotation every night (flushes /var/log tmpfs -> SD gzip archive)
+59    23   *            *     *           flock -n -x /tmp/.logrotate.lock -c /tmp/sd/firmware/scripts/logrotate.sh
 
 ## Save the state file every hour
 00    *    *            *     *           flock -n -x /tmp/.save_state.lock -c /tmp/sd/firmware/etc/init/S10restore_state save

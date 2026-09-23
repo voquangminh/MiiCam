@@ -12,12 +12,9 @@ else
     exit 1
 fi
 
-if [ -d "/mnt/media/mmcblk0p1" ]
-then
-    LOGDIR="/mnt/media/mmcblk0p1/log"
-else
-    LOGDIR="/tmp/log"
-fi
+## Logs live in tmpfs (RAM) so constant writes never hit the SD card;
+## nightly logrotate flushes+gzips them to /tmp/sd/log/archive.
+LOGDIR="/var/log"
 
 [ -d "${LOGDIR}" ] || mkdir -p "${LOGDIR}"
 

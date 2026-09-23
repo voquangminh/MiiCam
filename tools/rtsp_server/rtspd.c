@@ -80,7 +80,7 @@
 #define TRACKING_FILE            "/dev/shm/rtspd_tracking"
 #define TRACKING_STATE_FILE      "/dev/shm/rtspd_tracking_state"
 
-#define RTSPD_LOGFILE            "/tmp/sd/log/rtspd.log"
+#define RTSPD_LOGFILE            "/var/log/rtspd.log"
 
 #define CREATE_SNAPSHOT_FILE     "/dev/shm/rtspd_snapshot"
 #define LAST_SNAPSHOT_PATH       "/dev/shm/rtspd_last_snapshot_path"
@@ -1337,7 +1337,7 @@ void get_enc_res(gm_enc_info_t *enc, int *enc_type, int *width, int *height)
         *height = h;
 }
 
-#define PRINT_INTERVAL_MS 30000
+#define PRINT_INTERVAL_MS 300000
 static unsigned int frame_counts[CAP_CH_NUM][RTSP_NUM_PER_CAP] = {{0}};
 static unsigned int rec_bs_len[CAP_CH_NUM][RTSP_NUM_PER_CAP]   = {{0}};
 static void print_enc_average(int ch_num, int sub_num, int bs_len, struct timeval *cur_timeval)
@@ -1393,9 +1393,6 @@ static void print_enc_average(int ch_num, int sub_num, int bs_len, struct timeva
                         VideoRecorder.recording,
                         motion_detected);
 
-                if (VideoRecorder.recording == 1) {
-                    log_info("Recording to %s", VideoRecorder.file_path);
-                }
                 frame_counts[i][j] = 0;
                 rec_bs_len[i][j] = 0;
             }
