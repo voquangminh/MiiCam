@@ -110,6 +110,10 @@
 #define MAX_CLIENTS             8
 #define RPC_MSG_MAX             4096
 
+/* MQTT topics (used by the motion/MQTT sections below their definition) */
+#define MQTT_TOPIC_EVENT        "miio/avstreamer/event"
+#define MQTT_TOPIC_CTRL         "miio/avstreamer/ctrl"
+
 /* ------------------------------------------------------------------ */
 /* globals                                                            */
 /* ------------------------------------------------------------------ */
@@ -131,6 +135,8 @@ static void *audio_grab_obj = NULL;
 static void *audio_enc_obj = NULL;
 static void *audio_render_obj = NULL;
 static void *audio_render_groupfd = NULL;
+static void *audio_groupfd = NULL;
+static int motion_alg_setup(int ch);   /* defined in motion section */
 
 /* encoder state mirrors rtspd2MP gm_enc_t */
 typedef struct {
@@ -757,7 +763,7 @@ static int enc_state_from_config(void)
     return 0;
 }
 
-static void gm_stream_init(void)
+static int gm_stream_init(void)
 {
     DECLARE_ATTR(cap_attr, gm_cap_attr_t);
     DECLARE_ATTR(h264e_attr, gm_h264e_attr_t);
@@ -858,6 +864,7 @@ static void gm_stream_init(void)
              g_enc.width, g_enc.height, g_enc.framerate,
              g_enc.bitrate / 8, g_enc.gop, g_enc.mode,
              g_audio_type == GM_AAC ? "aac" : "alaw", g_audio_rate);
+    return 0;
 }
 
 static void gm_stream_release(void)
@@ -865,8 +872,7 @@ static void gm_stream_release(void)
     if (bindfd)   gm_unbind(bindfd);
     if (sub_bindfd) gm_unbind(sub_bindfd);
     if (audio_bindfd) gm_unbind(audio_bindfd);
-    if (groupfd)  gm_release(groupfd);
-    if (audio_groupfd) gm_release(audio_groupfd);
+    gm_release();
 }
 
 /* ------------------------------------------------------------------ */
@@ -1829,8 +1835,13 @@ static int pb_parse_index(const char *json, pb_ent_t **out, int *nout)
 
         e = strchr(p, '}');
         if (!e) break;
-        frame = strndup(p + 1, e - p - 1);
-        if (!frame) break;
+        {
+            size_t flen = (size_t)(e - p - 1);
+            frame = (char *)malloc(flen + 1);
+            if (!frame) break;
+            memcpy(frame, p + 1, flen);
+            frame[flen] = '\0';
+        }
         is_audio = json_get_int_field(frame, "t");
         key = json_get_int_field(frame, "key");
         len = (unsigned)json_get_int_field(frame, "len");
@@ -1972,7 +1983,7 @@ static int playback_start(int sid, const char *path)
 /* snapshot (av_TFpicture / take_snapshot)                             */
 /* ------------------------------------------------------------------ */
 
-static int take_snapshot(const char *outpath, size_t outsz, int broadcast)
+static int take_snapshot(char *outpath, size_t outsz, int broadcast)
 {
     snapshot_t snapshot;
     struct tm *sTm;
@@ -2151,9 +2162,6 @@ static void motion_alarm_start(void)
 /* ------------------------------------------------------------------ */
 /* MQTT (mosq_sub_init / topic_ble_events ↔ topic_avstreamer_to_ble)   */
 /* ------------------------------------------------------------------ */
-
-#define MQTT_TOPIC_EVENT "miio/avstreamer/event"
-#define MQTT_TOPIC_CTRL  "miio/avstreamer/ctrl"
 
 /* defined with the RPC server below */
 static void rpc_run_cmd(const char *cmd, const char *arg);
