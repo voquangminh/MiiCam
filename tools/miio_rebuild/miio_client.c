@@ -51,6 +51,7 @@
 /* ------------------------------------------------------------------ */
 /* includes                                                            */
 /* ------------------------------------------------------------------ */
+#define _GNU_SOURCE
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdarg.h>
@@ -68,11 +69,18 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <sys/socket.h>
+#include <sys/sysinfo.h>
 #include <sys/timerfd.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <netdb.h>
+#include <poll.h>
+#include <getopt.h>
 #include <pthread.h>
+
+#ifndef IP_PKTINFO
+#define IP_PKTINFO 8          /* uclibc may not expose it w/o _GNU_SOURCE */
+#endif
 
 /* ------------------------------------------------------------------ */
 /* tunables                                                            */
@@ -2015,7 +2023,7 @@ static void mobile_msg_callback(int fd, const char *msg)
     } else if (json_verify_method(msg,
                                   "_internal.res_wifi_conf_status") == 0) {
         log_printf(LOG_INFO, "Got _internal.res_wifi_conf_status.");
-        state_set(STATE_WIFI_STA_MODE);
+        state_set(STATE_STA_MODE);
         method_local_broadcast_msg("local.status", "internet_connected");
     } else if (json_verify_method(msg, "_internal.res_didkeymac") == 0) {
         cmd_internal_response_didkeymac(fd, msg);
@@ -2118,7 +2126,7 @@ static void ot_agent_recv_handler_one(int fd)
     if (buf == NULL)
         goto out;
     while (total < need) {
-        n = recv(fd, buf + total, (size_t)(need - total), 0);
+        ssize_t n = recv(fd, buf + total, (size_t)(need - total), 0);
         if (n <= 0)
             break;
         total += (int)n;
