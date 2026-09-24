@@ -24,74 +24,44 @@
 #include "gmlib.h"
 
 #define BITSTREAM_LEN     12800
+#define PATTERN_NAME      "audio_8khz_16bit"
 
 gm_system_t gm_system;
 void *groupfd;    // return of gm_new_groupfd()
-void *bindfd;      // return of gm_bind()
+void *bindfd;  // return of gm_bind()
 void *file_object;
 void *audio_render_object;
 pthread_t thread_id;
 int pb_exit = 0;
-static char playback_filename[256];
-static char playback_len_filename[256];
 
 static void *playback_thread(void *arg)
 {
     int ret, length;
+    char filename[50];
     FILE *bs_fd, *len_fd;
     char *bitstream_data;
     gm_dec_multi_bitstream_t multi_bs[1];
+    
 
-    bs_fd = fopen(playback_filename, "rb");
+    sprintf(filename, "%s.aac", PATTERN_NAME);
+    bs_fd = fopen(filename, "rb");
     if (bs_fd == NULL) {
-        printf("[ERROR] Open %s failed!!\n", playback_filename);
+        printf("[ERROR] Open %s failed!!\n", filename);
         exit(1);
     }
 
-    printf("Play file: [%s]\n", playback_filename);
-    if (strlen(playback_filename) > 4 && strcmp(playback_filename + strlen(playback_filename) - 4, ".aac") == 0) {
-        strncpy(playback_len_filename, playback_filename, strlen(playback_filename) - 4);
-        playback_len_filename[strlen(playback_filename) - 4] = '\0';
-    } else {
-        strncpy(playback_len_filename, playback_filename, sizeof(playback_len_filename) - 1);
-        playback_len_filename[sizeof(playback_len_filename) - 1] = '\0';
-    }
-    strncat(playback_len_filename, ".len", sizeof(playback_len_filename) - strlen(playback_len_filename) - 1);
-    len_fd = fopen(playback_len_filename, "rb");
+    printf("Play file: [%s]\n", filename);
+    sprintf(filename, "%s.len", PATTERN_NAME);
+    len_fd = fopen(filename, "rb");
+    if (len_fd == NULL) {
+        printf("[ERROR] Open %s failed!!\n", filename);
+        exit(1);
+    } 
 
     bitstream_data = (char *)malloc(BITSTREAM_LEN);
     if (!bitstream_data) {
         printf("Error allocation\n");
         exit(1);
-    }
-
-    if (len_fd == NULL) {
-        long file_size;
-        printf("No %s found, playing the whole AAC file as a single chunk\n", playback_len_filename);
-        if (fseek(bs_fd, 0, SEEK_END) != 0) {
-            printf("Failed to seek %s\n", playback_filename);
-            goto playback_done;
-        }
-        file_size = ftell(bs_fd);
-        if (file_size <= 0 || file_size > BITSTREAM_LEN) {
-            printf("Invalid file size %ld for %s\n", file_size, playback_filename);
-            goto playback_done;
-        }
-        rewind(bs_fd);
-        if (fread(bitstream_data, 1, file_size, bs_fd) != (size_t)file_size) {
-            printf("Failed to read %ld bytes from %s\n", file_size, playback_filename);
-            goto playback_done;
-        }
-
-        memset(multi_bs, 0, sizeof(multi_bs));
-        multi_bs[0].bindfd = bindfd;
-        multi_bs[0].bs_buf = bitstream_data;
-        multi_bs[0].bs_buf_len = file_size;
-
-        if ((ret = gm_send_multi_bitstreams(multi_bs, 1, 500)) < 0) {
-            printf("<send bitstream fail(%d)!>\n", ret);
-        }
-        goto playback_done;
     }
 
     while (1) {
@@ -113,11 +83,8 @@ static void *playback_thread(void *arg)
         }
 
         if (fread(bitstream_data, 1, length, bs_fd) != (size_t)length) {
-            fseek(bs_fd, 0, SEEK_SET);
-            if (fread(bitstream_data, 1, length, bs_fd) != (size_t)length) {
-                printf("Failed to read %d bytes from %s\n", length, playback_filename);
-                break;
-            }
+            printf("Failed to read %d bytes\n", length);
+            break;
         }
 
         memset(multi_bs, 0, sizeof(multi_bs));  //clear all mutli bs         
@@ -131,10 +98,8 @@ static void *playback_thread(void *arg)
         }
     }
 
-playback_done:
     fclose(bs_fd);
-    if (len_fd)
-        fclose(len_fd);
+    fclose(len_fd);
     free(bitstream_data);
     return 0;
 }
@@ -142,7 +107,6 @@ playback_done:
 
 void show_message(void)
 {
-    printf("Usage:\n  #./aac_play <file.aac> [output_vch]\n\n");
     printf("You may use commands to know GM standard EVB audio setting:\n");
     printf("  #cat /proc/videograph/vpd/au_grab\n");
     printf("  #cat /proc/videograph/vpd/au_render\n");
@@ -172,21 +136,18 @@ void show_message(void)
 
 int main(int argc, char *argv[])
 {
-    int key, ch = 0;
+    int key, ch;
     DECLARE_ATTR(file_attr, gm_file_attr_t);
     DECLARE_ATTR(audio_render_attr, gm_audio_render_attr_t);
 
     if (argc < 2) {
+        printf("Usage:\n  #./audio_playback [output vch]\n\n");
         show_message();
         exit(0);
     }
 
-    strncpy(playback_filename, argv[1], sizeof(playback_filename) - 1);
-    playback_filename[sizeof(playback_filename) - 1] = '\0';
-    if (argc >= 3)
-        ch = atoi(argv[2]);
-
-    printf("Audio playback output vch %d from file %s\n", ch, playback_filename);
+    ch = atoi(argv[1]);
+    printf("Audio playback output vch %d\n", ch);
 
     /**
      * This sample demonstrates audio playback output to one device.
