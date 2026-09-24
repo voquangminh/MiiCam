@@ -283,6 +283,16 @@ static int cfg_load_path(const char *path)
         sscanf(p, "%63[^= ]=%254[^\r\n]", k, v);
         if (!k[0])
             continue;
+        /* configupdate writes values quoted ('KEY="30"'); strip a single
+         * layer of double/single quotes and trailing spaces so atoi() and
+         * string compares see the bare value. */
+        if ((v[0] == '"' && v[strlen(v)-1] == '"') ||
+            (v[0] == '\'' && v[strlen(v)-1] == '\'')) {
+            v[strlen(v)-1] = 0;
+            memmove(v, v + 1, strlen(v));
+        }
+        while (*k && (k[strlen(k)-1] == ' ')) k[strlen(k)-1] = 0;
+        while (*v && (v[strlen(v)-1] == ' ')) v[strlen(v)-1] = 0;
         snprintf(g_cfg[g_cfg_n].key, sizeof(g_cfg[g_cfg_n].key), "%s", k);
         snprintf(g_cfg[g_cfg_n].val, sizeof(g_cfg[g_cfg_n].val), "%s", v);
         g_cfg_n++;
@@ -751,6 +761,8 @@ static int enc_state_from_config(void)
     }
     if (h > 720) h = 720;
     if (w > 1280) w = 1280;
+    if (fps < 1)
+        fps = gm_system.cap[0].framerate > 0 ? gm_system.cap[0].framerate : 15;
 
     g_enc.width = w; g_enc.height = h;
     g_enc.framerate = fps; g_enc.bitrate = br;
