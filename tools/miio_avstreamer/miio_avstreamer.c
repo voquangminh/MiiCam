@@ -765,6 +765,7 @@ static int enc_state_from_config(void)
 
 static int gm_stream_init(void)
 {
+    int rc = 0, cap_rc = 0;
     gm_init();
     gm_get_sysinfo(&gm_system);
 
@@ -775,6 +776,14 @@ static int gm_stream_init(void)
     DECLARE_ATTR(audio_encode_attr, gm_audio_enc_attr_t);
 
     enc_state_from_config();
+
+    log_info("gmlib: cap[0]=%dx%d@%d enc=%dx%d@%d gop=%d br=%d mode=%d",
+             gm_system.cap[0].dim.width, gm_system.cap[0].dim.height,
+             gm_system.cap[0].framerate,
+             g_enc.width, g_enc.height, g_enc.framerate,
+             g_enc.gop, g_enc.bitrate, g_enc.mode);
+    log_info("gmlib: cap attr_type=%d h264e attr_type=%d",
+             cap_attr.priv.data[0], h264e_attr.priv.data[0]);
 
     groupfd = gm_new_groupfd();
 
@@ -789,7 +798,9 @@ static int gm_stream_init(void)
         dnr_attr.enabled = 1;
         gm_set_attr(cap_obj, &dnr_attr);
     }
-    gm_set_attr(cap_obj, &cap_attr);
+    cap_rc = gm_set_attr(cap_obj, &cap_attr);
+    log_info("gmlib: gm_set_attr(cap=%p, attr_type=%d, rc=%d)",
+             cap_obj, cap_attr.priv.data[0], cap_rc);
 
     h264e_attr.dim.width  = g_enc.width;
     h264e_attr.dim.height = g_enc.height;
@@ -801,9 +812,13 @@ static int gm_stream_init(void)
     h264e_attr.b_frame_num = 0;
     h264e_attr.enable_mv_data = 0;
     enc_obj = gm_new_obj(GM_ENCODER_OBJECT);
-    gm_set_attr(enc_obj, &h264e_attr);
+    log_info("gmlib: gm_set_attr(enc=%p, attr_type=%d)",
+             enc_obj, h264e_attr.priv.data[0]);
+    rc = gm_set_attr(enc_obj, &h264e_attr);
+    log_info("gmlib: rc_cap=%d rc_enc=%d", cap_rc, rc);
 
     bindfd = gm_bind(groupfd, cap_obj, enc_obj);
+    log_info("gmlib: gm_bind -> %p", bindfd);
 
     /* scaler sub-stream (360p) - only created explicitly on v5 1080p */
     if (g_enc.width > 1280 || g_enc.height > 720) {
