@@ -30,6 +30,7 @@ PATCHESDIR     := $(TOOLSDIR)/patches
 GMLIBDIR       := $(TOOLSDIR)/gm_lib
 RTSPDDIR       := $(TOOLSDIR)/rtsp_server
 ONVIFDIR	   := $(TOOLSDIR)/onvif_server
+MIIOAVDIR      := $(TOOLSDIR)/miio_avstreamer
 UTILSDIR       := $(TOOLSDIR)/utils
 
 BINARIESDIR    := $(TOPDIR)/sdcard/firmware/bin
@@ -180,6 +181,27 @@ $(BUILDDIR)/rtspd2MP: $(PREFIXDIR)/bin
 	@touch $@
 
 build/rtspd2MP: $(BUILDDIR)/rtspd2MP
+	@:
+
+#################################################################
+## MIIO-AVSTREAMER (local reimplementation of the Mijia cloud   ##
+## daemon; local stream + JSON-RPC, no TUTK/MiCloud)           ##
+#################################################################
+
+$(BUILDDIR)/miio_avstreamer: $(PREFIXDIR)/bin
+	@mkdir -p $(BUILDDIR) $(TOOLSDIR)/bin
+	$(TARGET)-gcc 				\
+		-Os 					\
+		-Wall					\
+		-I$(GMLIBDIR)/inc		\
+		-I$(RTSPDDIR)			\
+		$(MIIOAVDIR)/miio_avstreamer.c	\
+		-L$(GMLIBDIR)/lib		\
+		-lpthread -lm -lrt -lgm -o $(TOOLSDIR)/bin/miio_avstreamer && \
+		$(TARGET)-strip $(TOOLSDIR)/bin/miio_avstreamer
+	@touch $@
+
+build/miio_avstreamer: $(BUILDDIR)/miio_avstreamer
 	@:
 
 #################################################################

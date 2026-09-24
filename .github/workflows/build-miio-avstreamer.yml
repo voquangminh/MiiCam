@@ -1,0 +1,66 @@
+name: Build MiiCam MIIO-AVSTREAMER
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'tools/miio_avstreamer/**'
+      - 'Makefile'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Giải nén SDK sạch trực tiếp trên Linux (Siêu tốc 2 giây)
+        run: |
+          cd ${{ github.workspace }}/sdk
+          # Giải nén trực tiếp trên Linux để bảo toàn các liên kết mềm không bị hỏng
+          tar -xzf toolchain_gnueabi-4.4.0_ARMv5TE.tgz
+          tar -xzf gm_lib_2015-01-09-IPCAM.tgz
+
+      - name: Cài đặt nóng thư viện MPFR 32-bit (Sửa lỗi cc1 trong 2 giây)
+        run: |
+          sudo dpkg --add-architecture i386
+          sudo apt-get update || true
+          sudo apt-get install -y libc6:i386 libstdc++6:i386 lib32z1 libmpfr6:i386 libgmp10:i386
+          sudo ln -sf /usr/lib/i386-linux-gnu/libmpfr.so.6 /usr/lib/i386-linux-gnu/libmpfr.so.4
+          sudo ln -sf /usr/lib/i386-linux-gnu/libgmp.so.10 /usr/lib/i386-linux-gnu/libgmp.so.3
+
+      - name: Biên dịch file Binary MIIO-AVSTREAMER trực tiếp
+        run: |
+          # 1. Tự động dò tìm đường dẫn thư mục bin của bộ compiler vừa giải nén xịn trên Linux
+          REAL_BIN_DIR=$(dirname $(find ${{ github.workspace }}/sdk -name "arm-unknown-linux-uclibcgnueabi-gcc" | head -n 1))
+          echo "Đường dẫn Toolchain chuẩn: $REAL_BIN_DIR"
+
+          # 2. Cấp quyền thực thi toàn bộ cho bộ compiler và các tiến trình con
+          REAL_SDK_ROOT=$(dirname $(dirname $REAL_BIN_DIR))
+          chmod -R +x $REAL_SDK_ROOT/
+
+          # 3. Đưa đường dẫn bộ compiler vào PATH hệ thống
+          export PATH="$REAL_BIN_DIR:$PATH"
+
+          # 4. Định nghĩa tiền tố TARGET chuẩn cho Makefile
+          REAL_TARGET_PREFIX=${REAL_BIN_DIR}/arm-unknown-linux-uclibcgnueabi
+
+          # 5. Kích hoạt lệnh make biên dịch riêng miio_avstreamer
+          make TARGET="$REAL_TARGET_PREFIX" build/miio_avstreamer
+
+      - name: Commit và Push file Binary trực tiếp lên GitHub (Siêu tốc 1 giây)
+        run: |
+          # 1. Cấu hình định danh Git cá nhân của Bot hệ thống
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          # 2. Ép Git nhận diện thư mục tools/bin/ bất chấp file .gitignore chặn
+          git add -f tools/bin/miio_avstreamer || exit 1
+
+          # 3. Tiến hành commit file chạy
+          git commit -m "Automated build: update camera binary miio_avstreamer" || echo "No changes to commit"
+
+          # 4. Kéo code mới nhất từ GitHub về gộp tự động trước khi đẩy (Tránh lỗi fetch first)
+          git pull origin HEAD --no-rebase || true
+
+          # 5. Đẩy thẳng file lên chính nhánh (branch) hiện tại
+          git push origin HEAD
