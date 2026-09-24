@@ -765,14 +765,15 @@ static int enc_state_from_config(void)
 
 static int gm_stream_init(void)
 {
+    gm_init();
+    gm_get_sysinfo(&gm_system);
+
     DECLARE_ATTR(cap_attr, gm_cap_attr_t);
     DECLARE_ATTR(h264e_attr, gm_h264e_attr_t);
     DECLARE_ATTR(dnr_attr, gm_3dnr_attr_t);
     DECLARE_ATTR(audio_grab_attr, gm_audio_grab_attr_t);
     DECLARE_ATTR(audio_encode_attr, gm_audio_enc_attr_t);
 
-    gm_init();
-    gm_get_sysinfo(&gm_system);
     enc_state_from_config();
 
     groupfd = gm_new_groupfd();
