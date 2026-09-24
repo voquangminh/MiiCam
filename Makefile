@@ -204,6 +204,45 @@ $(BUILDDIR)/miio_avstreamer: $(PREFIXDIR)/bin
 build/miio_avstreamer: $(BUILDDIR)/miio_avstreamer
 	@:
 
+$(BUILDDIR)/recv_line: $(PREFIXDIR)/bin
+	@mkdir -p $(BUILDDIR) $(TOOLSDIR)/bin
+	$(TARGET)-gcc 				\
+		-Os 					\
+		-Wall					\
+		$(MIIOAVDIR)/recv_line.c		\
+		-o $(TOOLSDIR)/bin/recv_line && \
+		$(TARGET)-strip $(TOOLSDIR)/bin/recv_line
+	@touch $@
+
+build/recv_line: $(BUILDDIR)/recv_line
+	@:
+
+$(BUILDDIR)/miot_devicekit: $(PREFIXDIR)/bin
+	@mkdir -p $(BUILDDIR) $(TOOLSDIR)/bin
+	$(TARGET)-gcc 				\
+		-Os 					\
+		-Wall					\
+		$(MIIOAVDIR)/miot_devicekit.c	\
+		-lpthread -lm -lrt -o $(TOOLSDIR)/bin/miot_devicekit && \
+		$(TARGET)-strip $(TOOLSDIR)/bin/miot_devicekit
+	@touch $@
+
+build/miot_devicekit: $(BUILDDIR)/miot_devicekit
+	@:
+
+$(BUILDDIR)/miio_client: $(PREFIXDIR)/bin
+	@mkdir -p $(BUILDDIR) $(TOOLSDIR)/bin
+	$(TARGET)-gcc 				\
+		-Os 					\
+		-Wall					\
+		$(MIIOAVDIR)/miio_client.c		\
+		-lpthread -lm -lrt -o $(TOOLSDIR)/bin/miio_client && \
+		$(TARGET)-strip $(TOOLSDIR)/bin/miio_client
+	@touch $@
+
+build/miio_client: $(BUILDDIR)/miio_client
+	@:
+
 #################################################################
 ## RTSPD-V5 (syslog, internal paths)						   ##
 #################################################################

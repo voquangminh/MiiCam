@@ -28,7 +28,7 @@ jobs:
           sudo ln -sf /usr/lib/i386-linux-gnu/libmpfr.so.6 /usr/lib/i386-linux-gnu/libmpfr.so.4
           sudo ln -sf /usr/lib/i386-linux-gnu/libgmp.so.10 /usr/lib/i386-linux-gnu/libgmp.so.3
 
-      - name: Biên dịch file Binary MIIO-AVSTREAMER trực tiếp
+      - name: Biên dịch toàn bộ Binary MIIO-AVSTREAMER + IOT cloud stack trực tiếp
         run: |
           # 1. Tự động dò tìm đường dẫn thư mục bin của bộ compiler vừa giải nén xịn trên Linux
           REAL_BIN_DIR=$(dirname $(find ${{ github.workspace }}/sdk -name "arm-unknown-linux-uclibcgnueabi-gcc" | head -n 1))
@@ -44,8 +44,8 @@ jobs:
           # 4. Định nghĩa tiền tố TARGET chuẩn cho Makefile
           REAL_TARGET_PREFIX=${REAL_BIN_DIR}/arm-unknown-linux-uclibcgnueabi
 
-          # 5. Kích hoạt lệnh make biên dịch riêng miio_avstreamer
-          make TARGET="$REAL_TARGET_PREFIX" build/miio_avstreamer
+          # 5. Kích hoạt lệnh make biên dịch tất cả (media stream + 3 daemon cloud/binding)
+          make TARGET="$REAL_TARGET_PREFIX" build/miio_avstreamer build/recv_line build/miot_devicekit build/miio_client
 
       - name: Commit và Push file Binary trực tiếp lên GitHub (Siêu tốc 1 giây)
         run: |
@@ -53,11 +53,11 @@ jobs:
           git config --global user.name "github-actions[bot]"
           git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          # 2. Ép Git nhận diện thư mục tools/bin/ bất chấp file .gitignore chặn
-          git add -f tools/bin/miio_avstreamer || exit 1
+          # 2. Ép Git nhận diện thư mục tools/bin/ bất chấp file .gitignore chặn (4 binary không bắt buộc có mặt đủ mỗi lần)
+          git add -f tools/bin/miio_avstreamer tools/bin/recv_line tools/bin/miot_devicekit tools/bin/miio_client || exit 1
 
           # 3. Tiến hành commit file chạy
-          git commit -m "Automated build: update camera binary miio_avstreamer" || echo "No changes to commit"
+          git commit -m "Automated build: update camera binaries miio_avstreamer/recv_line/miot_devicekit/miio_client" || echo "No changes to commit"
 
           # 4. Kéo code mới nhất từ GitHub về gộp tự động trước khi đẩy (Tránh lỗi fetch first)
           git pull origin HEAD --no-rebase || true
