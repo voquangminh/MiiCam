@@ -12,3 +12,4 @@ sdcard/ft/*.pem text eol=lf
 sdcard/config.cfg text eol=lf
 sdcard/firmware/etc/gmlib.cfg text eol=lf
 sdcard/firmware/etc/vg_boot.sh text eol=lf
+tools/note9-hub/** text eol=lf
