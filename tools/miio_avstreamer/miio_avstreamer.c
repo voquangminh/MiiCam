@@ -1090,8 +1090,6 @@ static int nal_is_idr(const unsigned char *buf, int len)
     return 0;
 }
 
-static int dbg_pump_first = 1;
-
 static void *thread_VideoFrameData(void *arg)
 {
     gm_pollfd_t poll_fd;
@@ -1134,25 +1132,15 @@ static void *thread_VideoFrameData(void *arg)
             log_error("gm_recv_multi_bitstreams: %d", ret);
             continue;
         }
-        if (bs.retval < 0)
+if (bs.retval < 0)
             continue;
-
-        /* debug: log the very first received frame */
-        if (dbg_pump_first) {
-            const unsigned char *p = (const unsigned char *)bs.bs.bs_buf;
-            log_info("pump dbg: len=%d keyflag=%d idr=%d head=%02x%02x%02x%02x%02x%02x",
-                     bs.bs.bs_len, bs.bs.keyframe,
-                     nal_is_idr(p, bs.bs.bs_len),
-                     p[0], p[1], p[2], p[3], p[4], p[5]);
-            dbg_pump_first = 0;
-        }
 
         /* capture SPS/PPS from any frame until found (keyframe flag is
          * unreliable on this gmlib) */
         if (!g_enc.have_spspps) {
             nal_extract_spspps((unsigned char *)bs.bs.bs_buf, bs.bs.bs_len);
             if (g_enc.have_spspps)
-                log_info("pump dbg: SPS/PPS captured (%d/%d bytes)",
+                log_info("pump: SPS/PPS captured (%d/%d bytes)",
                          g_enc.sps_len, g_enc.pps_len);
         }
 
@@ -2157,11 +2145,19 @@ static int motion_alg_setup(int ch)
     return motion_detection_update(bindfd, &motion_alg);
 }
 
+static unsigned long long motion_now_ms(void)
+{
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    return (unsigned long long)tv.tv_sec * 1000 + tv.tv_usec / 1000;
+}
+
 static void *thread_MotionDetect(void *arg)
 {
     gm_multi_cap_md_t cap_md;
     char *md_buf;
     int ret;
+    unsigned long long last_switch_ms = 0;
 
     (void)arg;
     md_buf = malloc(CAP_MOTION_SIZE);
@@ -2177,6 +2173,7 @@ static void *thread_MotionDetect(void *arg)
              motion_alg.alarm_th, g_motion_sensitivity);
 
     while (g_running) {
+        unsigned long long now;
         ret = gm_recv_multi_cap_md(&cap_md, 1);
         if (ret < 0) {
             log_error("motion: gm_recv_multi_cap_md failed");
@@ -2189,10 +2186,14 @@ static void *thread_MotionDetect(void *arg)
             continue;
         }
 
+        now = motion_now_ms();
         if (mdt_result[0].result == MOTION_DETECTED) {
             gettimeofday(&g_last_motion, NULL);
             if (g_motion_on == 0) {
+                if (last_switch_ms == 0 || now - last_switch_ms < 1000)
+                    continue;
                 g_motion_on = 1;
+                last_switch_ms = now;
                 log_info("motion ON - event.motion");
                 mqtt_publish(MQTT_TOPIC_EVENT, "{\"type\":\"event.motion\",\"on\":1}");
                 if (g_motion_snapshot)
@@ -2202,7 +2203,10 @@ static void *thread_MotionDetect(void *arg)
             }
         } else if (mdt_result[0].result == NO_MOTION) {
             if (g_motion_on == 1) {
+                if (last_switch_ms == 0 || now - last_switch_ms < 1000)
+                    continue;
                 g_motion_on = 0;
+                last_switch_ms = now;
                 log_info("motion OFF");
                 mqtt_publish(MQTT_TOPIC_EVENT, "{\"type\":\"event.motion\",\"on\":0}");
             }
@@ -2465,11 +2469,11 @@ static void night_mode_apply(int mode)
 static int sd_freespace_mb(void)
 {
     struct statfs st;
-    off_t free_bytes;
+    uint64_t free_bytes;
 
     if (statfs("/tmp/sd", &st) != 0)
         return 0;
-    free_bytes = (off_t)st.f_bavail * (off_t)st.f_bsize;
+    free_bytes = (uint64_t)st.f_bavail * (uint64_t)st.f_bsize;
     return (int)(free_bytes / (1024 * 1024));
 }
 
