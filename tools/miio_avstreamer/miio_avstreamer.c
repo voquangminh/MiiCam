@@ -1089,6 +1089,8 @@ static int nal_is_idr(const unsigned char *buf, int len)
     return 0;
 }
 
+static int dbg_pump_first = 1;
+
 static void *thread_VideoFrameData(void *arg)
 {
     gm_pollfd_t poll_fd;
@@ -1104,6 +1106,12 @@ static void *thread_VideoFrameData(void *arg)
     memset(&poll_fd, 0, sizeof(poll_fd));
     poll_fd.bindfd = bindfd;
     poll_fd.event = GM_POLL_READ;
+    /* prime the encoder so the very first frames are IDR with SPS/PPS
+     * (rtspd requests a keyframe per client for the same reason) */
+    gm_request_keyframe(bindfd);
+    usleep(100000);
+    gm_request_keyframe(bindfd);
+
     prctl(PR_SET_NAME, "av_p2p", 0, 0, 0);
     log_info("thread_VideoFrameData start OK");
 
@@ -1128,10 +1136,24 @@ static void *thread_VideoFrameData(void *arg)
         if (bs.retval < 0)
             continue;
 
+        /* debug: log the very first received frame */
+        if (dbg_pump_first) {
+            const unsigned char *p = (const unsigned char *)bs.bs.bs_buf;
+            log_info("pump dbg: len=%d keyflag=%d idr=%d head=%02x%02x%02x%02x%02x%02x",
+                     bs.bs.bs_len, bs.bs.keyframe,
+                     nal_is_idr(p, bs.bs.bs_len),
+                     p[0], p[1], p[2], p[3], p[4], p[5]);
+            dbg_pump_first = 0;
+        }
+
         /* capture SPS/PPS from any frame until found (keyframe flag is
          * unreliable on this gmlib) */
-        if (!g_enc.have_spspps)
+        if (!g_enc.have_spspps) {
             nal_extract_spspps((unsigned char *)bs.bs.bs_buf, bs.bs.bs_len);
+            if (g_enc.have_spspps)
+                log_info("pump dbg: SPS/PPS captured (%d/%d bytes)",
+                         g_enc.sps_len, g_enc.pps_len);
+        }
 
         /* push to local streaming clients */
         if (bs.bs.bs_len > 0)
@@ -2054,7 +2076,14 @@ static int take_snapshot(char *outpath, size_t outsz, int broadcast)
     snapshot.bs_width = g_enc.width;
     snapshot.bs_height = g_enc.height;
 
+    gm_request_keyframe(bindfd);
     len = gm_request_snapshot(&snapshot, 500);
+    if (len <= 0) {
+        /* retry once after another keyframe request */
+        gm_request_keyframe(bindfd);
+        usleep(100000);
+        len = gm_request_snapshot(&snapshot, 700);
+    }
     if (len <= 0) {
         log_error("snapshot: gm_request_snapshot rc=%d", len);
         return -1;
