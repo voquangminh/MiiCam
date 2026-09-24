@@ -62,6 +62,7 @@
 #include <sys/time.h>
 #include <sys/types.h>
 #include <sys/stat.h>
+#include <sys/vfs.h>
 #include <sys/ioctl.h>
 #include <sys/prctl.h>
 #include <sys/socket.h>
@@ -1024,7 +1025,7 @@ static void nal_extract_spspps(const unsigned char *buf, int len)
             sc = 4;
         } else { i++; continue; }
 
-        nal_type = (buf[i + sc] >> 5) & 0x1f;
+        nal_type = buf[i + sc] & 0x1f;
 
         /* find the next start code boundary */
         next = len;
@@ -1082,7 +1083,7 @@ static int nal_is_idr(const unsigned char *buf, int len)
         } else if (buf[i + 2] == 0 && i + 3 < len && buf[i + 3] == 1) {
             sc = 4;
         } else { i++; continue; }
-        if (i + sc < len && ((buf[i + sc] >> 5) & 0x1f) == 5)
+        if (i + sc < len && (buf[i + sc] & 0x1f) == 5)
             return 1;
         i += sc + 1;
     }
@@ -2463,23 +2464,13 @@ static void night_mode_apply(int mode)
 
 static int sd_freespace_mb(void)
 {
-    FILE *fp = popen("df -k /tmp/sd 2>/dev/null | tail -n 1", "r");
-    char line[256];
-    int fields = 0, free_kb = 0;
-    int i;
+    struct statfs st;
+    off_t free_bytes;
 
-    if (!fp) return -1;
-    while (fields < 4 && fscanf(fp, "%255s", line) == 1)
-        fields++;
-    if (fields < 4) {
-        pclose(fp);
-        return -1;
-    }
-    for (i = 0; i < 4; i++)
-        if (fscanf(fp, "%255s", line) == 1 && i == 3)
-            free_kb = atoi(line);
-    pclose(fp);
-    return free_kb / 1024;
+    if (statfs("/tmp/sd", &st) != 0)
+        return 0;
+    free_bytes = (off_t)st.f_bavail * (off_t)st.f_bsize;
+    return (int)(free_bytes / (1024 * 1024));
 }
 
 /* vendor loop_record_delete: wipe oldest recordings when SD is tight */
