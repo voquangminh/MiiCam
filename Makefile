@@ -30,7 +30,7 @@ PATCHESDIR     := $(TOOLSDIR)/patches
 GMLIBDIR       := $(TOOLSDIR)/gm_lib
 RTSPDDIR       := $(TOOLSDIR)/rtsp_server
 ONVIFDIR	   := $(TOOLSDIR)/onvif_server
-MIIOAVDIR      := $(TOOLSDIR)/miio_avstreamer
+MIIOREBUILDDIR := $(TOOLSDIR)/miio_rebuild
 UTILSDIR       := $(TOOLSDIR)/utils
 
 BINARIESDIR    := $(TOPDIR)/sdcard/firmware/bin
@@ -195,7 +195,7 @@ $(BUILDDIR)/miio_avstreamer: $(PREFIXDIR)/bin
 		-Wall					\
 		-I$(GMLIBDIR)/inc		\
 		-I$(RTSPDDIR)			\
-		$(MIIOAVDIR)/miio_avstreamer.c	\
+		$(MIIOREBUILDDIR)/miio_avstreamer.c	\
 		-L$(GMLIBDIR)/lib		\
 		-lpthread -lm -lrt -lgm -o $(TOOLSDIR)/bin/miio_avstreamer && \
 		$(TARGET)-strip $(TOOLSDIR)/bin/miio_avstreamer
@@ -209,7 +209,7 @@ $(BUILDDIR)/recv_line: $(PREFIXDIR)/bin
 	$(TARGET)-gcc 				\
 		-Os 					\
 		-Wall					\
-		$(MIIOAVDIR)/recv_line.c		\
+		$(MIIOREBUILDDIR)/recv_line.c		\
 		-o $(TOOLSDIR)/bin/recv_line && \
 		$(TARGET)-strip $(TOOLSDIR)/bin/recv_line
 	@touch $@
@@ -222,7 +222,7 @@ $(BUILDDIR)/miot_devicekit: $(PREFIXDIR)/bin
 	$(TARGET)-gcc 				\
 		-Os 					\
 		-Wall					\
-		$(MIIOAVDIR)/miot_devicekit.c	\
+		$(MIIOREBUILDDIR)/miot_devicekit.c	\
 		-lpthread -lm -lrt -o $(TOOLSDIR)/bin/miot_devicekit && \
 		$(TARGET)-strip $(TOOLSDIR)/bin/miot_devicekit
 	@touch $@
@@ -235,7 +235,7 @@ $(BUILDDIR)/miio_client: $(PREFIXDIR)/bin
 	$(TARGET)-gcc 				\
 		-Os 					\
 		-Wall					\
-		$(MIIOAVDIR)/miio_client.c		\
+		$(MIIOREBUILDDIR)/miio_client.c		\
 		-lpthread -lm -lrt -o $(TOOLSDIR)/bin/miio_client && \
 		$(TARGET)-strip $(TOOLSDIR)/bin/miio_client
 	@touch $@
