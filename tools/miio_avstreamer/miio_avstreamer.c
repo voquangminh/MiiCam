@@ -789,14 +789,6 @@ static int gm_stream_init(void)
 
     enc_state_from_config();
 
-    log_info("gmlib: cap[0]=%dx%d@%d enc=%dx%d@%d gop=%d br=%d mode=%d",
-             gm_system.cap[0].dim.width, gm_system.cap[0].dim.height,
-             gm_system.cap[0].framerate,
-             g_enc.width, g_enc.height, g_enc.framerate,
-             g_enc.gop, g_enc.bitrate, g_enc.mode);
-    log_info("gmlib: cap attr_type=%d h264e attr_type=%d",
-             cap_attr.priv.data[0], h264e_attr.priv.data[0]);
-
     groupfd = gm_new_groupfd();
 
     /* video captured (main path) */
@@ -811,8 +803,10 @@ static int gm_stream_init(void)
         gm_set_attr(cap_obj, &dnr_attr);
     }
     cap_rc = gm_set_attr(cap_obj, &cap_attr);
-    log_info("gmlib: gm_set_attr(cap=%p, attr_type=%d, rc=%d)",
-             cap_obj, cap_attr.priv.data[0], cap_rc);
+    if (cap_rc < 0) {
+        log_error("gm_set_attr(cap) failed rc=%d", cap_rc);
+        return -1;
+    }
 
     h264e_attr.dim.width  = g_enc.width;
     h264e_attr.dim.height = g_enc.height;
@@ -824,13 +818,17 @@ static int gm_stream_init(void)
     h264e_attr.b_frame_num = 0;
     h264e_attr.enable_mv_data = 0;
     enc_obj = gm_new_obj(GM_ENCODER_OBJECT);
-    log_info("gmlib: gm_set_attr(enc=%p, attr_type=%d)",
-             enc_obj, h264e_attr.priv.data[0]);
     rc = gm_set_attr(enc_obj, &h264e_attr);
-    log_info("gmlib: rc_cap=%d rc_enc=%d", cap_rc, rc);
+    if (rc < 0) {
+        log_error("gm_set_attr(enc) failed rc=%d", rc);
+        return -1;
+    }
 
     bindfd = gm_bind(groupfd, cap_obj, enc_obj);
-    log_info("gmlib: gm_bind -> %p", bindfd);
+    if (!bindfd) {
+        log_error("gm_bind(cap->enc) failed");
+        return -1;
+    }
 
     /* scaler sub-stream (360p) - only created explicitly on v5 1080p */
     if (g_enc.width > 1280 || g_enc.height > 720) {
@@ -1072,6 +1070,25 @@ static int  playback_start(int sid, const char *path);
 /* bitstream receive threads (thread_VideoFrameData / thread_AudioFrameData)*/
 /* ------------------------------------------------------------------ */
 
+static int nal_is_idr(const unsigned char *buf, int len)
+{
+    int i, sc;
+
+    i = 0;
+    while (i + 3 < len) {
+        if (buf[i] != 0 || buf[i + 1] != 0) { i++; continue; }
+        if (buf[i + 2] == 1) {
+            sc = 3;
+        } else if (buf[i + 2] == 0 && i + 3 < len && buf[i + 3] == 1) {
+            sc = 4;
+        } else { i++; continue; }
+        if (i + sc < len && ((buf[i + sc] >> 5) & 0x1f) == 5)
+            return 1;
+        i += sc + 1;
+    }
+    return 0;
+}
+
 static void *thread_VideoFrameData(void *arg)
 {
     gm_pollfd_t poll_fd;
@@ -1111,18 +1128,19 @@ static void *thread_VideoFrameData(void *arg)
         if (bs.retval < 0)
             continue;
 
-        /* capture SPS/PPS from the first IDR (for MP4 moov) */
-        if (!g_enc.have_spspps && bs.bs.keyframe) {
+        /* capture SPS/PPS from any frame until found (keyframe flag is
+         * unreliable on this gmlib) */
+        if (!g_enc.have_spspps)
             nal_extract_spspps((unsigned char *)bs.bs.bs_buf, bs.bs.bs_len);
-        }
 
         /* push to local streaming clients */
         if (bs.bs.bs_len > 0)
             stream_broadcast(STREAM_TYPE_VIDEO, (unsigned char *)bs.bs.bs_buf, bs.bs.bs_len);
 
-        /* feed the MP4 muxer when a record is active */
+        /* feed the MP4 muxer when a record is active (scan for real IDR) */
         record_feed_video((unsigned char *)bs.bs.bs_buf, bs.bs.bs_len,
-                          bs.bs.keyframe, bs.bs.timestamp);
+                          bs.bs.keyframe || nal_is_idr((unsigned char *)bs.bs.bs_buf, bs.bs.bs_len),
+                          bs.bs.timestamp);
     }
     free(bs_buf);
     log_info("thread_VideoFrameData exit");
