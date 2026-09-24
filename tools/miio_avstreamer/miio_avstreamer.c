@@ -2569,14 +2569,35 @@ static void *thread_RebootTask(void *arg)
 
 static void *audio_render_bindfd = NULL;
 
+static void *audio_file_obj = NULL;
+
 static int audio_player_init(void)
 {
+    DECLARE_ATTR(file_attr, gm_file_attr_t);
     DECLARE_ATTR(render_attr, gm_audio_render_attr_t);
+
+    if (audio_render_groupfd) return 0;
 
     audio_render_groupfd = gm_new_groupfd();
     if (!audio_render_groupfd) return -1;
 
     audio_render_obj = gm_new_obj(GM_AUDIO_RENDER_OBJECT);
+    audio_file_obj = gm_new_obj(GM_FILE_OBJECT);
+    if (!audio_render_obj || !audio_file_obj) {
+        log_error("audio player: GM object allocation failed");
+        return -1;
+    }
+
+    /* GM_FILE_OBJECT is the data-injecting source (aac_play uses the same
+     * file-object -> audio-render binding for RTP/ADTS playback). */
+    file_attr.sample_rate = g_audio_rate;
+    file_attr.sample_size = 16;
+    file_attr.channel_type = (gm_audio_channel_type_t) g_audio_ch;
+    if (gm_set_attr(audio_file_obj, &file_attr) < 0) {
+        log_error("audio player: gm_set_attr(file) failed");
+        return -1;
+    }
+
     render_attr.vch = 0;
     render_attr.encode_type = (gm_audio_encode_type_t) g_audio_type;
     render_attr.block_size = g_audio_framesamples;
@@ -2585,7 +2606,11 @@ static int audio_player_init(void)
         log_error("audio player: gm_set_attr(render) failed");
         return -1;
     }
-    audio_render_bindfd = gm_bind(audio_render_groupfd, NULL, audio_render_obj);
+    audio_render_bindfd = gm_bind(audio_render_groupfd, audio_file_obj, audio_render_obj);
+    if (!audio_render_bindfd) {
+        log_error("audio player: gm_bind failed");
+        return -1;
+    }
     if (gm_apply(audio_render_groupfd) < 0) {
         log_error("audio player: gm_apply failed");
         return -1;
