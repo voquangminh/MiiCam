@@ -31,6 +31,10 @@ function showTab(name) {
     p.classList.remove('active');
   });
   document.getElementById('tab-' + name).classList.add('active');
+  /* Home's live view auto-starts on entry; stop the poll timer when the
+   * user leaves so snapshots aren't hammered in the background. */
+  if (name === 'home') startStream();
+  else stopStream();
   if (tabLoaders[name]) tabLoaders[name]();
 }
 document.querySelectorAll('.topnav a').forEach((a) => {
@@ -40,31 +44,151 @@ document.querySelectorAll('.topnav a').forEach((a) => {
 /* ---------------- Home / live ---------------- */
 let streamActive = false;
 let streamTimer = null;
+let streamMode = 'img';    /* img | mse | hls */
+let mediaSource = null;
+let liveAbort = null;      /* AbortController for the /live/fmp4 fetch */
 
-/* lighttpd mod_cgi buffers all PHP output until exit, so multipart MJPEG
- * streaming is not possible; poll /api/snapshot (rtspd snapshots ~1-2s each,
- * and the API coalesces triggers so rtspd is never overloaded). */
+/* rtspd can serve a real live stream on its own HTTP port when started with
+ * `-D <port>` (config: LIVE_HTTP_PORT). lighttpd mod_cgi buffers PHP output,
+ * so the multiplexed stream cannot go through /api; we hit the rtspd port
+ * directly. Priority: fMP4 via Media Source Extensions > HLS > snapshot poll
+ * (the old UPS-style fallback, always available). */
+const LIVE_PORT = 8081;
+const MSE_CODECS = ['avc1.64001E', 'avc1.4D401E', 'avc1.42E01E'];
+
+function liveBaseUrl() {
+  return location.protocol + '//' + location.hostname + ':' + LIVE_PORT + '/live';
+}
+
+function probeLive() {
+  return new Promise((resolve) => {
+    const c = new AbortController();
+    const t = setTimeout(() => { c.abort(); resolve(false); }, 2500);
+    fetch(liveBaseUrl() + '/init.mp4', { signal: c.signal })
+      .then((r) => { clearTimeout(t); resolve(r.ok); })
+      .catch(() => { clearTimeout(t); resolve(false); });
+  });
+}
+
 function startStream() {
-  const img = document.getElementById('live-stream');
-  const tick = () => {
-    if (!streamActive) return;
-    img.onerror = () => toast('Snapshot error - is rtspd running?', 'err');
-    img.src = '/api/snapshot?' + Date.now(); // cache-buster forces a fresh request
-  };
+  if (streamActive) return; /* already running (auto-start + button click) */
   streamActive = true;
   document.getElementById('btn-stream-start').disabled = true;
   document.getElementById('btn-stream-stop').disabled = false;
-  tick();
-  streamTimer = setInterval(tick, 3000);
+  probeLive().then(async (up) => {
+    if (up && window.MediaSource && MediaSource.isTypeSupported('video/mp4'))
+      streamMode = await mseStart();
+    else if (up) streamMode = hlsStart();
+    if (streamMode === 'img') snapshotStart(); /* fallback */
+    else snapshotStop();                       /* tear down any img poller */
+  });
+}
+async function mseStart() {
+  const img = document.getElementById('live-stream');
+  const video = document.getElementById('live-video');
+  const ok = MediaSource.isTypeSupported('video/mp4');
+  const codecs = MSE_CODECS.find((c) => ok && SourceBuffer.isTypeSupported('video/mp4; codecs="' + c + '"'));
+  if (!codecs) return 'img';
+  try {
+    await mediaSourceInit(codecs);
+  } catch (e) { toast('Live (MSE) failed, falling back', 'err'); return 'img'; }
+  img.hidden = true;
+  video.hidden = false;
+  video.play().catch(() => {});
+  return 'mse';
+}
+function mediaSourceInit(codecs) {
+  return new Promise((resolve, reject) => {
+    const video = document.getElementById('live-video');
+    mediaSource = new MediaSource();
+    video.src = URL.createObjectURL(mediaSource);
+    mediaSource.addEventListener('sourceopen', async () => {
+      let sb = null;
+      try { sb = mediaSource.addSourceBuffer('video/mp4; codecs="' + codecs + '"'); }
+      catch (e) { reject(e); return; }
+      liveAbort = new AbortController();
+      try {
+        const r = await fetch(liveBaseUrl() + '/fmp4', { signal: liveAbort.signal });
+        if (!r.ok || !r.body) { reject(new Error('fmp4 http ' + r.status)); return; }
+        const reader = r.body.getReader();
+        sb.mode = 'segments';
+        const pump = () => reader.read().then(({ done, value }) => {
+          if (done) { reject(new Error('stream closed')); return; }
+          try { sb.appendBuffer(value); } catch (e) { /* fragment boundary */ }
+          if (mediaSource.readyState === 'open' && sb.updating) {
+            /* back-pressure: wait for append to finish before next chunk */
+            sb.addEventListener('updateend', pump, { once: true });
+          } else pump();
+        }, (e) => reject(e));
+        pump();
+        resolve();
+      } catch (e) { reject(e); }
+    });
+    mediaSource.addEventListener('sourceended', () => reject(new Error('source ended')));
+  });
+}
+function hlsStart() {
+  const img = document.getElementById('live-stream');
+  const video = document.getElementById('live-video');
+  img.hidden = true;
+  video.hidden = false;
+  video.src = liveBaseUrl() + '/index.m3u8';
+  video.play().catch(() => {});
+  video.onerror = () => toast('HLS unavailable, using snapshots', 'err');
+  return 'hls';
 }
 function stopStream() {
   streamActive = false;
-  if (streamTimer) { clearInterval(streamTimer); streamTimer = null; }
+  if (streamMode === 'mse') {
+    try { if (liveAbort) liveAbort.abort(); } catch (e) {}
+    try { if (mediaSource && mediaSource.readyState === 'open') mediaSource.endOfStream(); } catch (e) {}
+    const video = document.getElementById('live-video');
+    if (mediaSource) URL.revokeObjectURL(video.src);
+    video.removeAttribute('src');
+    video.load();
+    video.onerror = null;
+  } else if (streamMode === 'hls') {
+    const video = document.getElementById('live-video');
+    video.pause();
+    video.removeAttribute('src');
+    video.load();
+    video.onerror = null;
+  }
+  if (streamTimer) { clearTimeout(streamTimer); streamTimer = null; }
   const img = document.getElementById('live-stream');
-  img.src = 'data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==';
   img.onload = null; img.onerror = null;
+  img.hidden = false;
+  document.getElementById('live-video').hidden = true;
+  mediaSource = null; liveAbort = null;
+  streamMode = 'img';
   document.getElementById('btn-stream-start').disabled = false;
   document.getElementById('btn-stream-stop').disabled = true;
+}
+function snapshotStart() {
+  const img = document.getElementById('live-stream');
+  img.hidden = false;
+  document.getElementById('live-video').hidden = true;
+  /* Self-refresh chain à la stock live.html: each loaded frame schedules the
+   * next after STREAM_INTERVAL, so requests never overlap and the loop dies
+   * with the tab. A slow snapshot just delays the next poll, no queueing. */
+  img.onload = () => { scheduleStreamRefresh(); };
+  img.onerror = () => {
+    toast('Snapshot error - is rtspd running?', 'err');
+    scheduleStreamRefresh(5000); /* retry slower instead of hammering */
+  };
+  scheduleStreamRefresh(0);
+}
+function snapshotStop() {
+  const img = document.getElementById('live-stream');
+  img.onload = null; img.onerror = null;
+}
+function scheduleStreamRefresh(delayMs) {
+  if (!streamActive) return;
+  if (streamTimer) clearTimeout(streamTimer);
+  streamTimer = setTimeout(() => {
+    streamTimer = null;
+    document.getElementById('live-stream').src = '/api/snapshot?' + Date.now(); // cache-buster
+  }, delayMs === undefined ? 3000 : delayMs);
 }
 
 /* ---------------- Motion tracking controls ---------------- */

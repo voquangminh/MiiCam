@@ -57,7 +57,8 @@ code { background: var(--panel); padding: 2px 5px; border-radius: 3px; }
 
 /* live */
 .live-container { max-width: 640px; }
-#live-stream {
+#live-stream,
+#live-video {
   width: 100%;
   background: #000;
   border: 1px solid var(--border);
