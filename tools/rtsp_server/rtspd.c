@@ -36,6 +36,7 @@
 #include <ctype.h>
 #include "librtsp.h"
 #include "log/log.h"
+#include "live_http.h"
 #include "algorithm/capture_motion_detection.c"
 
 #define DVR_ENC_EBST_ENABLE      0x55887799
@@ -367,6 +368,9 @@ struct CommandLineArguments {
     /* Fractional framerate (gm_h264e_attr_t.fps_ratio) */
     int fps_ratio_num;
     int fps_ratio_den;
+
+    /* HTTP live streaming (fMP4 + HLS) */
+    int live_http_port;       /* 0 = disabled */
 } cliArgs;
 
 /* Read the camera hostname from the kernel (set from CAMERA_HOSTNAME in
@@ -2971,6 +2975,12 @@ void *encode_thread(void *ptr)
                             pb->video.len  = 0;
                         }
                     }
+                    /* HTTP live streaming (fMP4/HLS) - video only, independent of RTSP clients */
+                    if (live_http_enabled() && avbs->video.enc_type == ENC_TYPE_H264)
+                        live_http_feed_video((unsigned char *)bs[i][j].bs.bs_buf,
+                                             bs[i][j].bs.bs_len,
+                                             bs[i][j].bs.timestamp,
+                                             bs[i][j].bs.keyframe);
                     print_enc_average(i, j, bs[i][j].bs.bs_len, &prev);
                 }
             }
@@ -3226,6 +3236,15 @@ static int rtspd_start(int port)
 
     rtspd_sysinit = 1;
 
+    // * HTTP live streaming (fMP4 + HLS), video only
+    if (cliArgs.live_http_port > 0) {
+        if (live_http_init(cliArgs.live_http_port, cliArgs.width, cliArgs.height,
+                           cliArgs.framerate) == 0)
+            log_info("HTTP live streaming enabled on port %d", cliArgs.live_http_port);
+        else
+            log_error("Failed to start HTTP live streaming on port %d", cliArgs.live_http_port);
+    }
+
     // * Encode Thread
     if (encode_thread_id == (pthread_t)NULL) {
         pthread_attr_init(&attr);
@@ -3328,6 +3347,7 @@ static void rtspd_stop(void)
         free(snapshot_buf);
         snapshot_buf = NULL;
     }
+    live_http_stop();
     pthread_mutex_destroy(&stream_queue_mutex);
     rtspd_sysinit = 0;
 }
@@ -3399,7 +3419,11 @@ static void print_usage(void)
         "-T [0|1]       - Enable tamper detection (default: off)\n"
         "-W [th:sb[:sh]] - Tamper params: threshold(1-255), sensitive_b(0-100),\n"
         "                  sensitive_h(0-100), 0 sensitivity disables it\n"
-        "                  (default: 128:50:50, implies -T on)\n"
+        "                  (default: 128:50:50, implies -T on)\n\n"
+
+        "Live streaming options:\n"
+        "-D [port]      - Enable HTTP live streaming (fMP4 + HLS) on this port\n"
+        "                  (default: 0=disabled)\n"
     );
 
 	exit(EXIT_FAILURE);
@@ -3512,6 +3536,9 @@ int main(int argc, char *argv[])
     /* Fractional framerate defaults: 0 = use integer framerate */
     cliArgs.fps_ratio_num = 0;
     cliArgs.fps_ratio_den = 0;
+
+    /* HTTP live streaming defaults: off */
+    cliArgs.live_http_port = 0;
 
     /* Tamper detection defaults: disabled */
     cliArgs.tamper_enabled   = 0;
@@ -3776,6 +3803,18 @@ int main(int argc, char *argv[])
                         cliArgs.h264_level = atoi(&argv[i][2]);
                         if (argv[i][2] == '\0' && (i + 1) < argc && argv[i + 1][0] != '-')
                             cliArgs.h264_level = atoi(argv[++i]);
+                        break;
+
+                    /* --- HTTP live streaming port (fMP4 + HLS) --- */
+                    case 'D':
+                        cliArgs.live_http_port = atoi(&argv[i][2]);
+                        if (argv[i][2] == '\0' && (i + 1) < argc && argv[i + 1][0] != '-' &&
+                            isdigit((unsigned char)argv[i + 1][0]))
+                            cliArgs.live_http_port = atoi(argv[++i]);
+                        if (cliArgs.live_http_port < 0 || cliArgs.live_http_port > 65535) {
+                            log_error("Invalid live streaming port: %d", cliArgs.live_http_port);
+                            return 1;
+                        }
                         break;
 
                     /* --- H264 coding: CABAC vs CAVLC --- */

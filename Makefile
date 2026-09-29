@@ -148,6 +148,7 @@ $(BUILDDIR)/rtspd: $(PREFIXDIR)/bin
 		-Wall					\
 		-I$(GMLIBDIR)/inc		\
 		$(RTSPDDIR)/log/log.c	\
+		$(RTSPDDIR)/live_http.c	\
 		$(RTSPDDIR)/rtspd.c		\
 		$(RTSPDDIR)/librtsp.a	\
 		$(RTSPDDIR)/librtsp_glibc.a	\

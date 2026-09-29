@@ -331,6 +331,10 @@ ROI_RECT="${ROI_RECT:-"320,180,640,360"}"
 ## Capture prescale reduce (-p WxH) to lower processing load, or 0 for off
 PRESCALE="${PRESCALE:-0}"
 
+## HTTP live streaming (-D port): serves fMP4 (web/MSE) + HLS on its own
+## port (lighttpd mod_cgi can't stream). LIVE_HTTP_PORT=0 disables it.
+LIVE_HTTP_PORT="${LIVE_HTTP_PORT:-0}"
+
 
 ############################################################
 ## Camera Access                                          ##

@@ -95,6 +95,11 @@ if [ -n "${PRESCALE}" ] && [ "${PRESCALE}" != "0" ] ; then
     DAEMON_OPTS="${DAEMON_OPTS} -p ${PRESCALE}"
 fi
 
+## HTTP live streaming (-D port, fMP4 + HLS; 0 = off)
+if [ -n "${LIVE_HTTP_PORT}" ] && [ "${LIVE_HTTP_PORT}" != "0" ] ; then
+    DAEMON_OPTS="${DAEMON_OPTS} -D ${LIVE_HTTP_PORT}"
+fi
+
 ## export RTSP settings for subshells
 if [ "x${RTSP_USER}" != "x" ] && [ "x${RTSP_PASS}" != "x" ]
 then
