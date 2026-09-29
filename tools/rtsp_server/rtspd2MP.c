@@ -84,7 +84,11 @@
 /* Highest framerate this camera's sensor/capture supports. */
 #define MAX_FPS                  30
 
-#define RTSPD_LOGFILE            "/tmp/sd/log/rtspd.log"
+/* Log to RAM (/var is tmpfs). Logging straight onto the SD card causes constant
+ * BlockIO, which stalls the video pipeline. Matches rtspd.c. */
+#define RTSPD_LOGFILE            "/var/log/rtspd.log"
+/* Fallback only used if /var/log cannot be opened (no tmpfs, permissions...). */
+#define RTSPD_LOGFILE_FALLBACK   "/tmp/sd/log/rtspd.log"
 
 #define CREATE_SNAPSHOT_FILE     "/dev/shm/rtspd_snapshot"
 #define LAST_SNAPSHOT_PATH       "/dev/shm/rtspd_last_snapshot_path"
@@ -3987,6 +3991,8 @@ void signal_handler(int sig)
 void setup_logging(void)
 {
     logfile = fopen(RTSPD_LOGFILE, "a");
+    if(!logfile)
+        logfile = fopen(RTSPD_LOGFILE_FALLBACK, "a");
     if(logfile)
         log_set_fp(logfile);
 }
