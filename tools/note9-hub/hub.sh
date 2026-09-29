@@ -52,10 +52,23 @@ status_pipe() {
     fi
 }
 
+SNAP_DIR="${AI_SNAPSHOT_DIR:-$HOME/.note9-hub/snapshots}"
+HTTP_PORT="${AI_HTTP_PORT:-8080}"
+
 case "${1:-}" in
     start)
+        mkdir -p "$SNAP_DIR"
         command -v termux-wake-lock >/dev/null 2>&1 && termux-wake-lock
-        start_pipe youtube "$HERE/pipelines/youtube.sh"
+        if [ -x "$HOME/go2rtc/go2rtc" ] && [ -f "$HOME/go2rtc/go2rtc.yaml" ]; then
+            start_pipe go2rtc "$HERE/pipelines/go2rtc.sh"
+        else
+            echo "go2rtc: disabled (~/go2rtc/go2rtc binary/config missing)"
+        fi
+        if [ -n "${YOUTUBE_RTMP_URL:-}" ]; then
+            start_pipe youtube "$HERE/pipelines/youtube.sh"
+        else
+            echo "youtube: disabled (YOUTUBE_RTMP_URL empty in config)"
+        fi
         if [ "${AI_ENABLED:-1}" = "1" ]; then
             start_pipe ai "$HERE/pipelines/ai.sh"
         else
@@ -63,8 +76,10 @@ case "${1:-}" in
         fi
         ;;
     stop)
+        stop_pipe go2rtc
         stop_pipe youtube
         stop_pipe ai
+        stop_pipe http
         command -v termux-wake-unlock >/dev/null 2>&1 && termux-wake-unlock
         ;;
     restart)
@@ -73,14 +88,29 @@ case "${1:-}" in
         "$0" start
         ;;
     status)
+        status_pipe go2rtc
         status_pipe youtube
         status_pipe ai
+        status_pipe http
         ;;
     logs)
         tail -n "${2:-50}" "$LOG"/*.log
         ;;
+    serve)
+        ## Snapshot viewer: serves AI_SNAPSHOT_DIR over HTTP (e.g. over
+        ## Tailscale: http://<tailscale-ip>:$(AI_HTTP_PORT)/). Pure python, no
+        ## extra deps.
+        if [ -f "$RUN/http.pid" ] && kill -0 "$(cat "$RUN/http.pid")" 2>/dev/null; then
+            echo "http already serving :$HTTP_PORT (pid $(cat "$RUN/http.pid"))"
+            exit 0
+        fi
+        mkdir -p "$SNAP_DIR"
+        nohup python3 -m http.server "$HTTP_PORT" --directory "$SNAP_DIR" >>"$LOG/http.log" 2>&1 &
+        echo $! >"$RUN/http.pid"
+        echo "snapshots http server on :$HTTP_PORT (pid $!, dir $SNAP_DIR)"
+        ;;
     *)
-        echo "usage: $0 {start|stop|restart|status|logs [n]}"
+        echo "usage: $0 {start|stop|restart|status|logs [n]|serve}"
         exit 1
         ;;
 esac
