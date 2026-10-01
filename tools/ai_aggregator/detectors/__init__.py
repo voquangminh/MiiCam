@@ -1,0 +1,1 @@
+"""Detector registry package for the AI aggregator."""

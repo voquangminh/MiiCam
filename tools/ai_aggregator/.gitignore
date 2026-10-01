@@ -1,0 +1,17 @@
+# AI aggregator — runtime artifacts
+# Weights are downloaded per-user or trained in Roboflow; never commit them.
+weights/*.pt
+*.onnx
+*.engine
+*.torchscript
+__pycache__/
+*.pyc
+.venv/
+venv/
+# Ultralytics may drop stock weights in cwd on first run (yolo11n.pt etc).
+# These are auto-downloaded and must never be committed.
+*.pt.tmp
+/yolo11*.pt
+/yolov8*.pt
+/yolo12*.pt
+runs/

@@ -1,0 +1,126 @@
+# AI Aggregator config
+#
+# Detectors run OFF by default. Toggle `enabled` per detector, then restart.
+# Every enabled detector costs real CPU: this box is an i5-8350U, CPU-only.
+#
+# model: leave blank to use the detector default. Custom-model detectors
+#        (fire/ppe/rat/plate) need their weights in ./weights/ — see README.
+
+source:
+  # Camera RTSP, pulled with a SINGLE connection shared by all detectors.
+  # Do not point several processes at a single-session camera.
+  #
+  # Credentials must NOT be committed. Override with env vars, or pass
+  # --source on the command line:
+  #   export AI_RTSP_URL='rtsp://user:pass@host:554/live/ch00_0'
+  #   python3 aggregator.py -e fall
+  rtsp: "${AI_RTSP_URL}"
+  # Optional: transport tweaks for flaky cams.
+  ffmpeg_in_args: ["-rtsp_transport", "tcp", "-fflags", "nobuffer", "-flags", "low_delay"]
+
+output:
+  # YouTube ingest. RTMP push happens on the Note9 (rtsp2rtmp), so normally
+  # you leave this off and instead run:  --rtmp rtmp://a.rtmp.youtube.com/live2/<KEY>
+  rtmp: ""
+  # Bitrate for the final H.264 encode. 4500 is a safe YouTube value for 720p.
+  bitrate_kbps: 4500
+  fps: 30
+  preset: "veryfast"
+  # Write annotated frames locally for debugging (0 = off).
+  preview_mp4: ""
+
+hud:
+  show_panel: true
+  # Banner text when any detector reports level=alert.
+  show_banner: true
+  panel_scale: 1.0
+
+detectors:
+
+  # ---- stock YOLO11 weights, work immediately ----
+
+  presence:
+    enabled: false
+    model: "yolo11n.pt"
+    conf: 0.4
+    imgsz: 320
+    every_n_frames: 2
+
+  crowd:
+    enabled: false
+    model: "yolo11n.pt"
+    conf: 0.4
+    imgsz: 320
+    every_n_frames: 6
+    decay: 0.98
+    radius: 30
+    alpha: 0.3
+
+  fall:
+    enabled: false
+    model: "yolo11n-pose.pt"
+    conf: 0.5
+    imgsz: 320
+    every_n_frames: 3
+    window: 8
+    drop_thresh: 0.5
+    lying_ratio: 1.2
+    cooldown: 5.0
+
+  intrusion:
+    enabled: false
+    model: "yolo11n.pt"
+    conf: 0.45
+    imgsz: 320
+    every_n_frames: 6
+    cooldown: 5.0
+    show_zone: true
+    # Normalized [0..1] polygon: x,y pairs.
+    polygon: [[0.35, 0.35], [0.65, 0.35], [0.65, 0.70], [0.35, 0.70]]
+
+  person_count:
+    enabled: false
+    model: "yolo11n.pt"
+    conf: 0.45
+    imgsz: 320
+    every_n_frames: 6
+    cooldown: 5.0
+    # Vertical counting line, normalized 0..1.
+    line: 0.5
+
+  vehicle:
+    enabled: false
+    model: "yolo11n.pt"
+    conf: 0.4
+    imgsz: 320
+    every_n_frames: 6
+
+  # ---- need custom weights in ./weights/ ----
+
+  fire:
+    enabled: false
+    model: "fire.pt"
+    conf: 0.4
+    imgsz: 320
+    every_n_frames: 4
+
+  ppe:
+    enabled: false
+    model: "ppe.pt"
+    conf: 0.4
+    imgsz: 320
+    every_n_frames: 4
+
+  rat:
+    enabled: false
+    model: "rat.pt"
+    conf: 0.4
+    imgsz: 320
+    every_n_frames: 6
+
+  plate:
+    enabled: false
+    model: "plate.pt"
+    conf: 0.4
+    imgsz: 320
+    every_n_frames: 6
